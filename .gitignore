@@ -6,3 +6,4 @@ data/
 .env
 .session-secret
 release/
+converter/*.exe
