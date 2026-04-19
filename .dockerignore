@@ -1,0 +1,22 @@
+node_modules/
+runtime/
+# converter/ нельзя игнорировать целиком — в образ нужен converter/fb2cng.yaml (COPY в Dockerfile).
+converter/fbc
+converter/fbc.exe
+converter/*.zip
+data/
+.git/
+.env
+.env.local
+.windsurf/
+*.db
+*.db-wal
+*.db-shm
+*.cmd
+*.md
+start.sh
+stop.sh
+restart.sh
+docker-compose.yml
+Dockerfile
+LICENSE

@@ -1,0 +1,1 @@
+node scripts/build-release.js

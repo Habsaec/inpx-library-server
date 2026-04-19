@@ -1,0 +1,41 @@
+{
+  "name": "inpx-library-server",
+  "version": "1.5.6",
+  "description": "Self-hosted web server for INPX/FB2 book libraries with search, online reader, OPDS catalog and e-reader delivery",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/server-entry.js",
+    "test": "node --test test/",
+    "dev": "node --watch src/server-entry.js",
+    "reindex": "node src/server-entry.js --reindex",
+    "index:worker": "node scripts/index-worker.js",
+    "server:status": "node scripts/server-control.js status",
+    "server:start": "node scripts/server-control.js start",
+    "server:stop": "node scripts/server-control.js stop",
+    "server:restart": "node scripts/server-control.js restart",
+    "user:create": "node scripts/create-user.js",
+    "repair:metadata": "node scripts/repair-metadata.js",
+    "install:linux": "sudo bash install.sh"
+  },
+  "dependencies": {
+    "7zip-bin": "^5.2.0",
+    "archiver": "^7.0.1",
+    "basic-auth": "^2.0.1",
+    "better-sqlite3": "^12.8.0",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "foliate-js": "^1.0.1",
+    "iconv-lite": "^0.6.3",
+    "jxl-oxide-wasm": "^0.12.5",
+    "nodemailer": "^8.0.2",
+    "sharp": "^0.34.5",
+    "unzipper": "^0.12.3"
+  }
+}

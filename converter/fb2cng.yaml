@@ -1,0 +1,71 @@
+version: 1
+
+document:
+  open_from_cover: true
+  insert_soft_hyphen: false
+
+  metainformation:
+    transliterate: false
+    title_template: |
+      {{- if gt (len .Series) 0 -}}
+      {{-   with first .Series -}}
+      {{-     "(" }}{{ .Name }}{{ " - " }}{{ printf "%02d" .Number }}{{ ") " -}}
+      {{-   end -}}
+      {{- end -}}
+      {{ .Title -}}
+    creator_name_template: |
+      {{- .LastName -}}
+      {{- if .FirstName }} {{.FirstName}}{{ end -}}
+      {{- if .MiddleName }} {{.MiddleName }}{{ end -}}
+
+  images:
+    optimize: true
+    jpeg_quality_level: 85
+    remove_transparency: false
+    scale_factor: 1.0
+    screen:
+      width: 1264
+      height: 1680
+    cover:
+      generate: true
+      resize: stretch
+
+  page_map:
+    enable: true
+    size: 2300
+    adobe_de: false
+
+  footnotes:
+    mode: float
+    bodies: ["notes", "comments", "примечания", "комментарии"]
+    backlinks: "[<]"
+
+  annotation:
+    enable: true
+    title: "Аннотация"
+    in_toc: true
+
+  toc_page:
+    placement: before
+    include_chapters_without_title: false
+
+  dropcaps:
+    enable: false
+
+  text_transformations:
+    speech:
+      enable: true
+      from: "‐‑−–—―"
+      to: "— "
+    dashes:
+      enable: true
+      from: "‐‑−–—―"
+      to: "—"
+    dialogue:
+      enable: false
+
+logging:
+  console:
+    level: normal
+  file:
+    level: none
