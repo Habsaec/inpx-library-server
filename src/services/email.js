@@ -19,7 +19,10 @@ export function createSmtpTransport() {
     host: smtp.host,
     port: smtp.port,
     secure: smtp.secure,
-    auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined
+    auth: smtp.user ? { user: smtp.user, pass: (smtp.pass || '').replace(/\s/g, '') } : undefined,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000
   });
   const senderEmail = smtp.from || smtp.user || 'library@localhost';
   return { transporter, senderEmail };
@@ -31,5 +34,8 @@ export function createSmtpTransport() {
  */
 export async function verifySmtpConnection() {
   const { transporter } = createSmtpTransport();
-  await transporter.verify();
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('SMTP connection timeout (10s)')), 10000)
+  );
+  await Promise.race([transporter.verify(), timeout]);
 }

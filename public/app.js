@@ -1783,6 +1783,14 @@ function attachFormSubmitSpinners() {
     form.addEventListener('submit', (e) => {
       const btn = e.submitter || form.querySelector('button[type="submit"]');
       if (!btn || btn.disabled) return;
+      // Preserve submitter name/value before disabling (disabled buttons are excluded from form data)
+      if (btn.name) {
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = btn.name;
+        hidden.value = btn.value;
+        form.appendChild(hidden);
+      }
       btn.disabled = true;
       btn.innerHTML = '<span class="btn-spinner"></span>' + escapeHtml(uiT('app.running') || '\u0412\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f\u2026');
     });
