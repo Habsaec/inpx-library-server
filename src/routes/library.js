@@ -4,7 +4,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import iconv from 'iconv-lite';
 import { config } from '../config.js';
-import { t, tp } from '../i18n.js';
+import { t, tp, getLocale } from '../i18n.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireBrowseAuth, requireBrowseOrOpds, requireWebAuth, requireAdminWeb } from '../middleware/auth.js';
 import { getCachedPageData, clearPageDataCache, invalidateHomeUserSnapshot } from '../services/cache.js';
@@ -388,7 +388,7 @@ export function registerLibraryRoutes(app, deps) {
     const csrfToken = req.csrfToken || '';
     const homeSubtitle = getSetting('home_subtitle') || '';
     const html = canUseAnonymousHomeHtmlCache
-      ? getCachedPageData('page:home:anon', () => renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken: '' }), PAGE_CACHE_TTL_MS)
+      ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken: '' }), PAGE_CACHE_TTL_MS)
       : renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken });
     res.send(html);
   });

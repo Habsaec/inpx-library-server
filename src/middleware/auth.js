@@ -158,6 +158,17 @@ export function requireDownloadAuth(req, res, next) {
   if (isAnonymousAllowed('allow_anonymous_download')) return next();
   const opdsBypass = String(req.query?.opds || '') === '1' && isAnonymousAllowed('allow_anonymous_opds');
   if (opdsBypass) return next();
+  // OPDS clients may send Basic Auth to download URLs even when anonymous OPDS is off
+  if (String(req.query?.opds || '') === '1') {
+    const credentials = basicAuth(req);
+    if (credentials) {
+      const basicUser = getUserByUsername(credentials.name);
+      if (basicUser && !basicUser.blocked && verifyPassword(credentials.pass, basicUser.passwordHash || DUMMY_PASSWORD_HASH)) {
+        req.user = { username: basicUser.username, role: basicUser.role || 'user' };
+        return next();
+      }
+    }
+  }
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ ok: false, code: ApiErrorCode.UNAUTHORIZED, error: t('api.auth.unauthorized') });
   }

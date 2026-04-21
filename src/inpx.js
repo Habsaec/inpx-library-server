@@ -3773,7 +3773,7 @@ export function opdsSearchAuthors(term, { page = 1, pageSize = 100 } = {}) {
 
 export function getAuthorBooksOpds(authorName, genre = '') {
   const rankOrder =
-    'COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, \'\'), b.imported_at) DESC, b.imported_at DESC, b.id DESC';
+    'b.series, CAST(b.series_no AS INTEGER), b.title';
   let sql;
   let params;
   if (genre) {
@@ -3787,7 +3787,7 @@ export function getAuthorBooksOpds(authorName, genre = '') {
       JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genreParams.map(() => '?').join(',')})
       LEFT JOIN sources s ON s.id = b.source_id
       GROUP BY b.id
-      ORDER BY ${rankOrder}, b.series, CAST(b.series_no AS INTEGER), b.title
+      ORDER BY ${rankOrder}
       LIMIT 500`;
     params = [authorName, ...genreParams];
   } else {
@@ -3797,7 +3797,7 @@ export function getAuthorBooksOpds(authorName, genre = '') {
       JOIN book_authors ba ON ba.book_id = b.id
       JOIN authors a ON a.id = ba.author_id AND a.name = ?
       LEFT JOIN sources s ON s.id = b.source_id
-      ORDER BY ${rankOrder}, b.series, CAST(b.series_no AS INTEGER), b.title
+      ORDER BY ${rankOrder}
       LIMIT 500`;
     params = [authorName];
   }
@@ -3806,8 +3806,6 @@ export function getAuthorBooksOpds(authorName, genre = '') {
 
 export function getSeriesBooksOpds(seriesName) {
   const name = resolveSeriesCatalogName(String(seriesName || ''));
-  const rankOrder =
-    'COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, \'\'), b.imported_at) DESC, b.imported_at DESC, b.id DESC';
   return db
     .prepare(
       `
@@ -3816,7 +3814,7 @@ export function getSeriesBooksOpds(seriesName) {
     JOIN book_series bs ON bs.book_id = b.id
     JOIN series_catalog sc ON sc.id = bs.series_id AND sc.name = ?
     LEFT JOIN sources s ON s.id = b.source_id
-    ORDER BY ${rankOrder}, CAST(b.series_no AS INTEGER), b.title
+    ORDER BY CAST(b.series_no AS INTEGER), b.title
     LIMIT 500
   `
     )

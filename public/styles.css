@@ -1,9 +1,9 @@
 /* === Kavita-inspired dark library UI === */
 :root {
-  --bg: #2a2520;
-  --bg-side: #221e19;
-  --surface: #221e19;
-  --surface-hover: #2c261f;
+  --bg: #1e1a16;
+  --bg-side: #1a1612;
+  --surface: #1a1612;
+  --surface-hover: #231f1a;
   --border: rgba(145, 109, 43, 0.14);
   --text: #e8e0d4;
   --muted: #9a8e7e;
@@ -13,33 +13,33 @@
   --link: #d4ac5c;
   --link-hover: #efc06f;
   --danger: #c61700;
-  --shell-bg: #262118;
-  --sidebar-bg: #232019;
+  --shell-bg: #1c1814;
+  --sidebar-bg: #181510;
   --sidebar-brand-border: rgba(180,145,80,0.08);
-  --topbar-bg: rgba(38,33,24,0.88);
+  --topbar-bg: rgba(24,20,16,0.92);
   --topbar-border: rgba(180,145,80,0.12);
   --field-bg: rgba(180,145,80,0.04);
   --button-bg: rgba(180,145,80,0.06);
   --button-bg-hover: rgba(180,145,80,0.12);
   --button-border-hover: rgba(180,145,80,0.22);
-  --card-cover-bg: linear-gradient(135deg, #26201a 0%, #1c1814 100%);
-  --card-cover-fallback-bg: linear-gradient(180deg, #1e1a15 0%, #16130f 100%);
+  --card-cover-bg: linear-gradient(135deg, #1e1a15 0%, #141210 100%);
+  --card-cover-fallback-bg: linear-gradient(180deg, #181410 0%, #100e0b 100%);
   --card-cover-border: rgba(180,145,80,0.10);
   --card-cover-shadow:
-      6px 10px 16px rgba(0,0,0,0.50),
-      2px 2px 4px rgba(0,0,0,0.35);
+      6px 10px 16px rgba(0,0,0,0.55),
+      2px 2px 4px rgba(0,0,0,0.40);
   --panel-soft-bg: rgba(180,145,80,0.03);
   --flash-bg: rgba(74,198,148,0.1);
   --flash-border: rgba(74,198,148,0.25);
-  --login-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  --login-shadow: 0 8px 32px rgba(0,0,0,0.45);
   --radius: 10px;
   --radius-lg: 16px;
   --radius-xl: 20px;
   --sidenav-w: 220px;
   --topbar-h: 60px;
-  --shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
-  --shadow-md: 0 8px 24px rgba(0,0,0,0.10);
-  --shadow-lg: 0 16px 48px rgba(0,0,0,0.14);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.08);
+  --shadow-md: 0 8px 24px rgba(0,0,0,0.14);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,0.18);
   --card-bg: rgba(180,145,80,0.025);
   --card-bg-hover: rgba(180,145,80,0.055);
 }
@@ -203,7 +203,7 @@ a.table-row-link:hover {
 
 /* ── Admin panel design system ── */
 .topbar-admin {
-  background: rgba(20,17,14,0.82);
+  background: rgba(14,12,10,0.88);
 }
 html[data-theme="light"] .topbar-admin {
   background: rgba(232,222,206,0.88);
