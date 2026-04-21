@@ -1114,19 +1114,20 @@ async function pollAdminIndexControls() {
   };
 
   const refresh = async () => {
-    try {
-      // Check deletion status first (higher priority)
-      const delRes = await fetch('/api/admin/sources/delete-progress', { credentials: 'same-origin' });
-      if (delRes.ok) {
-        const delStatus = await delRes.json();
-        if (applyDeleteStatus(delStatus)) {
-          window.setTimeout(scheduleRefresh, 500);
-          return;
-        }
-      }
-    } catch {}
-    // Then check indexing status
+    // On sources page, attachSourceDelete handles deletion progress — skip here to avoid conflicts.
     if (!isSourcesPage) {
+      try {
+        // Check deletion status first (higher priority)
+        const delRes = await fetch('/api/admin/sources/delete-progress', { credentials: 'same-origin' });
+        if (delRes.ok) {
+          const delStatus = await delRes.json();
+          if (applyDeleteStatus(delStatus)) {
+            window.setTimeout(scheduleRefresh, 500);
+            return;
+          }
+        }
+      } catch {}
+      // Then check indexing status
       try {
         const res = await fetch('/api/index-status', { credentials: 'same-origin' });
         if (res.ok) {
@@ -3700,6 +3701,7 @@ function attachSourceDelete() {
     books: uiT('app.adminDeleteStageBooks') || 'Удаление книг…',
     catalogs: uiT('app.adminDeleteStageCatalogs') || 'Очистка каталогов…',
     fts: uiT('app.adminDeleteStageFts') || 'Перестроение поиска…',
+    vacuum: uiT('app.adminDeleteStageVacuum') || 'Сжатие базы…',
     done: uiT('app.adminDeleteStageDone') || 'Готово'
   };
 
@@ -3719,7 +3721,7 @@ function attachSourceDelete() {
     if (bannerText) bannerText.innerHTML = label;
     if (bannerBar) {
       bannerBar.style.width = Math.min(100, Math.max(0, percent)) + '%';
-      bannerBar.style.background = '';
+      bannerBar.style.background = 'var(--accent)';
     }
     if (bannerArchive) bannerArchive.textContent = detail || '';
     if (bannerTime) bannerTime.textContent = '';
