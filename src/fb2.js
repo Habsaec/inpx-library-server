@@ -97,16 +97,70 @@ function extractCover(xml) {
   }
 }
 
+/**
+ * Flibusta range-archive fallback: archives like f.fb2-862059-866064.zip contain
+ * books with numeric IDs in [start, end]. When the INPX-declared archive name
+ * doesn't exist on disk (e.g. "usr-ru-ok-poetry.zip"), we scan for range archives
+ * that may contain the book by its libId.
+ */
+const _rangeArchiveCache = new Map();
+const RANGE_CACHE_TTL = 120_000;
+
+function findRangeArchive(libraryRoot, book) {
+  const libId = Number(book.libId || book.fileName || '');
+  if (!Number.isFinite(libId) || libId <= 0) return null;
+
+  const root = path.resolve(libraryRoot);
+  const now = Date.now();
+  let cached = _rangeArchiveCache.get(root);
+  if (!cached || cached.expiresAt < now) {
+    const entries = [];
+    try {
+      for (const f of fs.readdirSync(root)) {
+        // Match patterns like: f.fb2-862059-866064.zip, f.usr-862059-866064.zip
+        const m = f.match(/^(.+)-(\d+)-(\d+)\.(zip|7z)$/i);
+        if (!m) continue;
+        const abs = path.join(root, f);
+        try { if (!fs.statSync(abs).isFile()) continue; } catch { continue; }
+        entries.push({ file: f, start: Number(m[2]), end: Number(m[3]) });
+      }
+    } catch { /* no access */ }
+    cached = { entries, expiresAt: now + RANGE_CACHE_TTL };
+    _rangeArchiveCache.set(root, cached);
+    // Limit cache size
+    if (_rangeArchiveCache.size > 32) {
+      const oldest = _rangeArchiveCache.keys().next().value;
+      if (oldest !== undefined) _rangeArchiveCache.delete(oldest);
+    }
+  }
+
+  for (const entry of cached.entries) {
+    if (libId >= entry.start && libId <= entry.end) {
+      const abs = path.join(root, entry.file);
+      if (abs.startsWith(root + path.sep)) return abs;
+    }
+  }
+  return null;
+}
+
 export async function readBookBuffer(book) {
   if (!book.archiveName) {
     return readDirectFile(book);
   }
 
   const libraryRoot = book.sourceId ? getSourceRoot(book.sourceId) : getLibraryRoot();
-  const archivePath =
+  const resolvedRoot = path.resolve(libraryRoot);
+  let archivePath =
     resolveLibraryArchiveFile(libraryRoot, book.archiveName) ||
     path.resolve(libraryRoot, book.archiveName);
-  if (!archivePath.startsWith(path.resolve(libraryRoot) + path.sep) && archivePath !== path.resolve(libraryRoot)) {
+
+  // Fallback: if the declared archive doesn't exist, try Flibusta range-based archives
+  if (!fs.existsSync(archivePath)) {
+    const rangePath = findRangeArchive(libraryRoot, book);
+    if (rangePath) archivePath = rangePath;
+  }
+
+  if (!archivePath.startsWith(resolvedRoot + path.sep) && archivePath !== resolvedRoot) {
     throw new Error('Invalid archive path');
   }
   const normalizedFileName = `${book.fileName}.${book.ext}`;

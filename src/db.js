@@ -47,6 +47,21 @@ db.pragma('cache_size = -65536');      // 64 MB page cache (default is 2 MB)
 db.pragma('mmap_size = 268435456');     // 256 MB memory-mapped I/O
 db.pragma('temp_store = MEMORY');       // temp tables in RAM
 
+// Enable incremental auto-vacuum so deleted pages can be reclaimed
+// without a full VACUUM (which can't truncate the file while mmap is active).
+{
+  const av = db.pragma('auto_vacuum', { simple: true });
+  if (av === 0) {
+    // Switching from NONE to INCREMENTAL requires a one-time VACUUM.
+    // Temporarily release mmap so the file can be truncated.
+    db.pragma('mmap_size = 0');
+    db.pragma('auto_vacuum = INCREMENTAL');
+    db.exec('VACUUM');
+    db.pragma('mmap_size = 268435456');
+    console.log('[db] auto_vacuum switched to INCREMENTAL (one-time VACUUM)');
+  }
+}
+
 // Force WAL checkpoint on startup to clear stale locks from crashed processes
 try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore if locked briefly */ }
 
@@ -994,6 +1009,12 @@ export async function deleteSourceProgressive(
     interChunkDelayMs = 0
   } = {}
 ) {
+  // Wait for post-index maintenance (ANALYZE) to finish before modifying the DB
+  try {
+    const { waitForPostIndexMaintenance } = await import('./server.js');
+    await waitForPostIndexMaintenance(60_000);
+  } catch { /* server.js not available in worker context */ }
+
   const sid = Number(id);
   if (!Number.isFinite(sid)) {
     throw new Error('Некорректный id источника');
@@ -1068,6 +1089,27 @@ export async function deleteSourceProgressive(
     onProgress?.({ deleted, total, stage: 'catalogs' });
     try { await cleanupOrphanedCatalogs(); } catch {}
     await new Promise(r => setImmediate(r));
+
+    // Reclaim disk space after mass deletion.
+    // With auto_vacuum=INCREMENTAL, we just need incremental_vacuum to release free pages.
+    // Temporarily disable mmap so the OS can truncate the file on Windows.
+    onProgress?.({ deleted, total, stage: 'vacuum' });
+    try {
+      db.pragma('mmap_size = 0');
+      const freed = db.pragma('freelist_count', { simple: true });
+      if (freed > 0) {
+        db.pragma(`incremental_vacuum(${freed})`);
+        console.log(`[db] incremental_vacuum released ${freed} pages after source delete`);
+      } else {
+        console.log('[db] no free pages to reclaim after source delete');
+      }
+      // Flush WAL to main db file and truncate WAL
+      db.pragma('wal_checkpoint(TRUNCATE)');
+      db.pragma('mmap_size = 268435456');
+    } catch (vacErr) {
+      console.warn('[db] incremental_vacuum after source delete failed:', vacErr.message);
+      try { db.pragma('mmap_size = 268435456'); } catch {}
+    }
 
     // No full FTS rebuild needed — targeted FTS deletes above kept the index consistent.
 

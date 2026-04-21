@@ -163,6 +163,21 @@ function gracefulExit(code = 0) {
 // --- Graceful shutdown on SIGTERM/SIGINT ---
 let shuttingDown = false;
 let postIndexMaintenanceTimer = null;
+let postIndexMaintenanceRunning = false;
+
+/** Check if post-index maintenance (ANALYZE etc.) is currently running. */
+export function isPostIndexMaintenanceRunning() {
+  return postIndexMaintenanceRunning;
+}
+
+/** Wait until post-index maintenance finishes (max ~60s). */
+export async function waitForPostIndexMaintenance(maxMs = 60_000) {
+  if (!postIndexMaintenanceRunning) return;
+  const start = Date.now();
+  while (postIndexMaintenanceRunning && Date.now() - start < maxMs) {
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
 function handleShutdownSignal(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -716,6 +731,7 @@ function schedulePostIndexMaintenance() {
   const delayMs = config.postIndexMaintenanceDelayMs;
   postIndexMaintenanceTimer = setTimeout(() => {
     postIndexMaintenanceTimer = null;
+    postIndexMaintenanceRunning = true;
     logSystemEvent('info', 'index', 'post-index maintenance started', {
       delayMs,
       walCheckpoint: 'PASSIVE'
@@ -731,6 +747,7 @@ function schedulePostIndexMaintenance() {
     const a0 = Date.now();
     analyzeDatabaseYielding()
       .then(() => {
+        postIndexMaintenanceRunning = false;
         const sec = ((Date.now() - a0) / 1000).toFixed(1);
         console.log(`[analyze] post-index готово за ${sec} с`);
         appendIndexDiaryLine(`ANALYZE готово за ${Date.now() - a0} ms`);
@@ -748,6 +765,7 @@ function schedulePostIndexMaintenance() {
         }
       })
       .catch((err) => {
+        postIndexMaintenanceRunning = false;
         console.error('[analyze] post-index error:', err.message);
         logSystemEvent('error', 'index', 'post-index ANALYZE failed', { error: err.message });
       });

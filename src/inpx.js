@@ -772,7 +772,47 @@ export function resolveAuthorName(value) {
   return null;
 }
 
-function parseLine(line, archiveName, sourceId = null) {
+/**
+ * Default field indices for standard INPX format.
+ * Matches the default structure: AUTHOR;GENRE;TITLE;SERIES;SERNO;FILE;SIZE;LIBID;DEL;EXT;DATE;LANG;LIBRATE;KEYWORDS
+ * Can be overridden by structure.info inside the INPX archive.
+ */
+const DEFAULT_FIELD_MAP = {
+  authors: 0, genres: 1, title: 2, series: 3, seriesNo: 4,
+  fileName: 5, size: 6, libId: 7, deleted: 8, ext: 9,
+  date: 10, lang: 11, libRate: 12, keywords: 13, insNo: -1, folder: -1
+};
+
+/**
+ * Parse structure.info from INPX to determine field positions.
+ * Format: one line with semicolon-separated field names like
+ * AUTHOR;GENRE;TITLE;SERIES;SERNO;FILE;SIZE;LIBID;DEL;EXT;DATE;LANG;FOLDER
+ */
+function parseStructureInfo(text) {
+  const nameToKey = {
+    AUTHOR: 'authors', GENRE: 'genres', TITLE: 'title',
+    SERIES: 'series', SERNO: 'seriesNo', FILE: 'fileName',
+    SIZE: 'size', LIBID: 'libId', DEL: 'deleted', EXT: 'ext',
+    DATE: 'date', LANG: 'lang', KEYWORDS: 'keywords',
+    LIBRATE: 'libRate', STARS: 'libRate',
+    INSNO: 'insNo', FOLDER: 'folder'
+  };
+  const map = {};
+  for (const key of Object.values(nameToKey)) map[key] = -1;
+  const lines = String(text || '').trim().split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const fields = line.trim().toUpperCase().split(';');
+    for (let i = 0; i < fields.length; i++) {
+      const k = nameToKey[fields[i].trim()];
+      if (k) map[k] = i;
+    }
+    break; // only first non-empty line matters
+  }
+  return map;
+}
+
+function parseLine(line, archiveName, sourceId = null, fieldMap = null) {
   if (!line) {
     return null;
   }
@@ -781,29 +821,33 @@ function parseLine(line, archiveName, sourceId = null) {
     return null;
   }
   const parts = line.split(FIELD_SEPARATOR).map(normalizeText);
-  if (parts.length < 12) {
-    console.warn(`[index] Skipped malformed line (${parts.length} fields, need 12+): ${line.slice(0, 80)}…`);
+  const fm = fieldMap || DEFAULT_FIELD_MAP;
+  const minFields = Math.max(6, ...(Object.values(fm).filter(v => v >= 0)));
+  if (parts.length <= Math.min(5, minFields - 6)) {
+    console.warn(`[index] Skipped malformed line (${parts.length} fields): ${line.slice(0, 80)}…`);
     return null;
   }
-  const authors = parts[0] || '';
-  const genres = parts[1] || '';
-  const title = parts[2] || '';
-  const series = parts[3] || '';
-  const seriesNo = parts[4] || '';
-  const fileName = parts[5] || '';
-  const size = parts[6] || '';
-  const libId = parts[7] || '';
-  const deleted = parts[8] || '';
-  const ext = parts[9] || 'fb2';
-  const date = parts[10] || '';
-  const lang = parts[11] || '';
-  /** Расширенный INPX (Flibusta и др.): после языка идут рейтинг, год издания, источник — не ключевые слова. */
-  let keywords = '';
-  if (parts.length === 13) {
-    keywords = parts[12] || '';
-  } else if (parts.length > 13) {
-    keywords = '';
-  }
+  const g = (key) => (fm[key] >= 0 && fm[key] < parts.length) ? parts[fm[key]] : '';
+  const authors = g('authors');
+  const genres = g('genres');
+  const title = g('title');
+  const series = g('series');
+  const seriesNo = g('seriesNo');
+  const fileName = g('fileName');
+  const size = g('size');
+  const libId = g('libId');
+  const deleted = g('deleted');
+  const ext = g('ext') || 'fb2';
+  const date = g('date');
+  const lang = g('lang');
+  const keywords = g('keywords');
+  const folder = g('folder');
+
+  // If FOLDER field is present and non-empty, use it as archive name
+  const effectiveArchive = folder
+    ? (folder.match(/\.(zip|7z)$/i) ? folder : folder + '.zip')
+    : archiveName;
+
   const rawId = String(libId || fileName || '').trim();
   if (!rawId || !title) {
     return null;
@@ -822,7 +866,7 @@ function parseLine(line, archiveName, sourceId = null) {
     series,
     seriesNo,
     fileName,
-    archiveName,
+    archiveName: effectiveArchive,
     size: Number(size || 0),
     libId: libId || '',
     deleted: Number(deleted || 0),
@@ -1278,6 +1322,41 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
   );
   const inpEntries = directory.files.filter((entry) => entry.path.endsWith('.inp'));
 
+  // Read structure.info if present — defines field positions (FOLDER, custom order, etc.)
+  let fieldMap = DEFAULT_FIELD_MAP;
+  const structureEntry = directory.files.find((e) => /^structure\.info$/i.test(e.path));
+  if (structureEntry) {
+    try {
+      const buf = await structureEntry.buffer();
+      const parsed = parseStructureInfo(buf.toString('utf8'));
+      // Only use if it has at least the essential fields
+      if (parsed.title >= 0 && parsed.fileName >= 0) {
+        fieldMap = parsed;
+        console.log('[index] INPX structure.info parsed:', JSON.stringify(fieldMap));
+      }
+    } catch (err) {
+      console.warn('[index] Failed to read structure.info:', err.message);
+    }
+  }
+
+  // Read collection.info and version.info — store as metadata for display
+  for (const infoName of ['collection.info', 'version.info']) {
+    const infoEntry = directory.files.find((e) => e.path.toLowerCase() === infoName);
+    if (infoEntry) {
+      try {
+        const buf = await infoEntry.buffer();
+        const val = buf.toString('utf8').trim();
+        if (val) {
+          const metaKey = sourceId
+            ? `${infoName.replace('.info', '')}_info_${sourceId}`
+            : `${infoName.replace('.info', '')}_info`;
+          setMeta(metaKey, val);
+          console.log(`[index] INPX ${infoName}: ${val.slice(0, 200)}`);
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
   const sizesKey = sourceId ? `inp_sizes_${sourceId}` : 'inp_sizes';
   let previousSizes = {};
   if (incremental) {
@@ -1478,7 +1557,7 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
 
   const processChunk = db.transaction((batch, archiveName) => {
     for (const line of batch) {
-      const row = enrichBookRow(parseLine(line, archiveName, sourceId));
+      const row = enrichBookRow(parseLine(line, archiveName, sourceId, fieldMap));
       if (row && !row.deleted && !suppressedIds.has(row.id)) {
         row.sourceId = sourceId;
         insert.run(row);
@@ -1767,8 +1846,21 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
       setMeta(BOOKS_FTS_DIRTY_META_KEY, '0');
       indexState.currentArchive = '';
     } else if (ftsBulkMode) {
-      ensureBooksFtsTriggers();
-      setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
+      // Indexing was interrupted (cancelled / error). FTS is out of sync with books table.
+      // We MUST rebuild FTS before restoring triggers, otherwise any DELETE/UPDATE on
+      // books will fire FTS triggers against a stale FTS index → "database disk image is malformed".
+      console.log('[index] FTS: rebuilding after interrupted indexing…');
+      logSystemEvent('info', 'index', 'INPX FTS rebuild after interruption', { sourceId });
+      try {
+        await rebuildBooksFtsFromContent();
+        console.log('[index] FTS: rebuild after interruption completed');
+        ensureBooksFtsTriggers();
+        setMeta(BOOKS_FTS_DIRTY_META_KEY, '0');
+      } catch (ftsErr) {
+        console.error('[index] FTS rebuild after interruption failed:', ftsErr.message);
+        // Leave triggers dropped and dirty flag set — boot will rebuild
+        setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
+      }
     }
     if (ftsBulkMode) {
       endFastSqliteImport();
