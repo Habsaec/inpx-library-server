@@ -19,14 +19,15 @@ import {
   formatGenreLabel, parseGenreCodes
 } from './shared.js';
 
-export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], continueBooks = [], csrfToken = '' }) {
+export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], continueBooks = [], homeSubtitle = '', csrfToken = '' }) {
   const isAuthenticated = Boolean(user);
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
+  const subtitleText = homeSubtitle === '-' ? '' : (homeSubtitle || t('home.subtitle'));
   const content = `
     <section class="page-intro page-intro-home">
       <div class="page-intro-copy">
         <h1>${escapeHtml(t('home.title'))}</h1>
-        <p>${escapeHtml(t('home.subtitle'))}</p>
+        ${subtitleText ? `<p>${escapeHtml(subtitleText)}</p>` : ''}
       </div>
     </section>
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}

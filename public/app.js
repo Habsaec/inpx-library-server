@@ -1010,10 +1010,14 @@ async function pollIndexStatus() {
 async function pollAdminIndexControls() {
   const root = document.querySelector('[data-admin-index-controls]');
   if (!root) return;
-  if (document.querySelector('[data-reindex-btn]')) return;
+  // On sources page, attachSourcesReindex handles indexing progress,
+  // but we still need to handle deletion progress on all pages.
+  const isSourcesPage = Boolean(document.querySelector('[data-reindex-btn]'));
   const currentController = String(root.dataset.progressController || '');
-  if (currentController && currentController !== 'admin-poll') return;
-  root.dataset.progressController = 'admin-poll';
+  if (!isSourcesPage) {
+    if (currentController && currentController !== 'admin-poll') return;
+    root.dataset.progressController = 'admin-poll';
+  }
   const textNode = document.getElementById('sources-progress-text');
   const archiveNode = document.getElementById('sources-progress-archive');
   const barNode = document.getElementById('sources-progress-bar');
@@ -1026,6 +1030,9 @@ async function pollAdminIndexControls() {
       return;
     }
     root.style.display = '';
+    // Hide pause/stop buttons on non-sources pages
+    const actionsRow = root.querySelector('.admin-actions-row');
+    if (actionsRow) actionsRow.style.display = isSourcesPage ? '' : 'none';
     const total = Number(status?.totalArchives || 0);
     const processed = Number(status?.processedArchives || 0);
     const imported = Math.max(0, Math.floor(Number(status?.importedBooks) || 0));
@@ -1041,37 +1048,92 @@ async function pollAdminIndexControls() {
       const parts = [];
       if (elapsed) parts.push(uiTp('app.indexElapsed', { time: elapsed }));
       if (eta) parts.push(uiTp('app.indexEta', { time: eta }));
-      timeNode.textContent = parts.join('  ·  ');
+      timeNode.textContent = parts.join('  \u00b7  ');
     }
     if (archiveNode) {
       archiveNode.textContent = status?.currentArchive ? String(status.currentArchive) : '';
     }
     if (barNode) {
       barNode.style.width = `${percent}%`;
-      barNode.style.background = '';
+      barNode.style.background = 'var(--accent)';
     }
-    const pauseButtons = [...root.querySelectorAll('[data-operation-action="reindex-toggle-pause"]')];
-    for (const button of pauseButtons) {
-      button.disabled = false;
-      button.dataset.reindexPaused = paused ? '1' : '0';
-      button.dataset.operationLabel = paused ? uiT('app.adminIndexResumeLabel') : uiT('app.adminIndexPauseLabel');
-      button.textContent = paused ? uiT('app.adminIndexResume') : uiT('app.adminIndexPause');
+    if (!isSourcesPage) {
+      const pauseButtons = [...root.querySelectorAll('[data-operation-action="reindex-toggle-pause"]')];
+      for (const button of pauseButtons) {
+        button.disabled = false;
+        button.dataset.reindexPaused = paused ? '1' : '0';
+        button.dataset.operationLabel = paused ? uiT('app.adminIndexResumeLabel') : uiT('app.adminIndexPauseLabel');
+        button.textContent = paused ? uiT('app.adminIndexResume') : uiT('app.adminIndexPause');
+      }
+      const stopButtons = [...root.querySelectorAll('[data-operation-action="reindex-stop"]')];
+      for (const button of stopButtons) {
+        button.disabled = false;
+      }
     }
-    const stopButtons = [...root.querySelectorAll('[data-operation-action="reindex-stop"]')];
-    for (const button of stopButtons) {
-      button.disabled = false;
+  };
+
+  const applyDeleteStatus = (status) => {
+    if (!status?.running) {
+      return false;
     }
+    root.style.display = '';
+    const actionsRow = root.querySelector('.admin-actions-row');
+    if (actionsRow) actionsRow.style.display = 'none';
+    const stage = status.stage || 'prepare';
+    const stageLabels = {
+      prepare: uiT('app.adminDeleteStagePrepare') || '\u041f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u043a\u0430\u2026',
+      cleanup: uiT('app.adminDeleteStageCleanup') || '\u041e\u0447\u0438\u0441\u0442\u043a\u0430 \u0441\u0432\u044f\u0437\u0435\u0439\u2026',
+      books: uiT('app.adminDeleteStageBooks') || '\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435 \u043a\u043d\u0438\u0433\u2026',
+      catalogs: uiT('app.adminDeleteStageCatalogs') || '\u041e\u0447\u0438\u0441\u0442\u043a\u0430 \u043a\u0430\u0442\u0430\u043b\u043e\u0433\u043e\u0432\u2026',
+      fts: uiT('app.adminDeleteStageFts') || '\u041f\u0435\u0440\u0435\u0441\u0442\u0440\u043e\u0435\u043d\u0438\u0435 \u043f\u043e\u0438\u0441\u043a\u0430\u2026',
+      vacuum: uiT('app.adminDeleteStageVacuum') || '\u0421\u0436\u0430\u0442\u0438\u0435 \u0431\u0430\u0437\u044b\u2026',
+      done: uiT('app.adminDeleteStageDone') || '\u0413\u043e\u0442\u043e\u0432\u043e'
+    };
+    const label = stageLabels[stage] || stage;
+    let percent = 0;
+    if (stage === 'books' && status.total > 0) {
+      percent = Math.round((status.deleted / status.total) * 100);
+    } else if (stage === 'fts' && status.ftsTotal > 0) {
+      percent = Math.round((status.ftsDone / status.ftsTotal) * 100);
+    } else if (stage === 'done') {
+      percent = 100;
+    }
+    if (textNode) {
+      const detail = stage === 'books' && status.total > 0
+        ? ` <span class="muted">${status.deleted} / ${status.total}</span>`
+        : '';
+      textNode.innerHTML = `${escapeHtml(uiT('app.adminDeleteLabel') || '\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430')} \u2014 ${escapeHtml(label)}${detail}`;
+    }
+    if (archiveNode) archiveNode.textContent = status.sourceName || '';
+    if (barNode) {
+      barNode.style.width = `${percent}%`;
+      barNode.style.background = 'var(--accent)';
+    }
+    if (timeNode) timeNode.textContent = '';
+    return true;
   };
 
   const refresh = async () => {
     try {
-      const res = await fetch('/api/index-status', { credentials: 'same-origin' });
-      if (res.ok) {
-        const status = await res.json();
-        applyStatus(status);
+      // Check deletion status first (higher priority)
+      const delRes = await fetch('/api/admin/sources/delete-progress', { credentials: 'same-origin' });
+      if (delRes.ok) {
+        const delStatus = await delRes.json();
+        if (applyDeleteStatus(delStatus)) {
+          window.setTimeout(scheduleRefresh, 500);
+          return;
+        }
       }
-    } catch {
-      // Ignore transient poll failures.
+    } catch {}
+    // Then check indexing status
+    if (!isSourcesPage) {
+      try {
+        const res = await fetch('/api/index-status', { credentials: 'same-origin' });
+        if (res.ok) {
+          const status = await res.json();
+          applyStatus(status);
+        }
+      } catch {}
     }
     window.setTimeout(scheduleRefresh, 3000);
   };

@@ -386,9 +386,10 @@ export function registerLibraryRoutes(app, deps) {
     const recommendations = getHomeRecommendations({ username, favoriteAuthors, favoriteSeries, history });
     const canUseAnonymousHomeHtmlCache = !user && !indexStatus?.active && !indexStatus?.error;
     const csrfToken = req.csrfToken || '';
+    const homeSubtitle = getSetting('home_subtitle') || '';
     const html = canUseAnonymousHomeHtmlCache
-      ? getCachedPageData('page:home:anon', () => renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, csrfToken: '' }), PAGE_CACHE_TTL_MS)
-      : renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, csrfToken });
+      ? getCachedPageData('page:home:anon', () => renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken: '' }), PAGE_CACHE_TTL_MS)
+      : renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken });
     res.send(html);
   });
 

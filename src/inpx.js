@@ -1561,11 +1561,11 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
       if (row && !row.deleted && !suppressedIds.has(row.id)) {
         row.sourceId = sourceId;
         insert.run(row);
-        if (incremental) {
-          unlinkAuthors.run(row.id);
-          unlinkSeries.run(row.id);
-          unlinkGenres.run(row.id);
-        }
+        // Always unlink before re-linking: duplicate book IDs across .inp files
+        // may change authors/series/genres — stale junction rows must be removed.
+        unlinkAuthors.run(row.id);
+        unlinkSeries.run(row.id);
+        unlinkGenres.run(row.id);
         for (const authorName of splitAuthorValues(row.authors)) {
           const authorId = resolveAuthorId(authorName);
           if (authorId) {
@@ -3484,12 +3484,26 @@ export function getFacetSummary(facet, value) {
 }
 
 export function getLibrarySections() {
-  const newest = db.prepare(`
+  const POOL_SIZE = 200;
+  const DISPLAY_COUNT = 12;
+  const pool = db.prepare(`
     SELECT id, title, authors, genres, series, series_no AS seriesNo, ext, lang, archive_name AS archiveName
     FROM active_books
     ORDER BY COALESCE(NULLIF(date, ''), imported_at) DESC, imported_at DESC, id DESC
-    LIMIT 12
-  `).all().map(mapBookListRow);
+    LIMIT ?
+  `).all(POOL_SIZE).map(mapBookListRow);
+
+  // Shuffle and pick DISPLAY_COUNT random items from the pool
+  let newest;
+  if (pool.length <= DISPLAY_COUNT) {
+    newest = pool;
+  } else {
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    newest = pool.slice(0, DISPLAY_COUNT);
+  }
 
   // Для главной страницы сейчас нужен только блок «Новые поступления».
   // Не считаем тяжёлые агрегаты (authors/series/genres/languages) на первом cold-load.

@@ -430,7 +430,7 @@ export function registerAdminRoutes(app, deps) {
     res.send(renderOperations({
       user: req.user, stats, indexStatus: getIndexStatus(),
       operations: getOperationsSnapshot(), flash: String(req.query.flash || ''),
-      siteName: getSetting('site_name') || '', csrfToken: req.csrfToken || ''
+      siteName: getSetting('site_name') || '', homeSubtitle: getSetting('home_subtitle') || '', csrfToken: req.csrfToken || ''
     }));
   });
 
@@ -502,8 +502,10 @@ export function registerAdminRoutes(app, deps) {
       const name = String(req.body.siteName || '').trim();
       setSetting('site_name', name);
       setSiteName(name);
+      const subtitle = String(req.body.homeSubtitle ?? '').trim();
+      setSetting('home_subtitle', subtitle);
       clearPageDataCache();
-      logSystemEvent('info', 'settings', 'site name updated', { actor: req.user.username, siteName: name || '(default)' });
+      logSystemEvent('info', 'settings', 'site settings updated', { actor: req.user.username, siteName: name || '(default)', homeSubtitle: subtitle || '(default)' });
       res.redirect('/admin?flash=' + encodeURIComponent(t('admin.flash.siteNameUpdated')));
     } catch (error) {
       res.redirect('/admin?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));

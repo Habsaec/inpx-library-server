@@ -8,7 +8,7 @@ import {
   formatLocaleDateShort, formatLocaleDateTimeShort, formatLanguageLabel
 } from './shared.js';
 
-export function renderOperations({ user, stats = {}, indexStatus = {}, operations = {}, siteName = '', csrfToken = '' }) {
+export function renderOperations({ user, stats = {}, indexStatus = {}, operations = {}, siteName = '', homeSubtitle = '', csrfToken = '' }) {
   const monitorBarGradient = (value) => {
     const pct = Math.max(0, Math.min(100, Number(value) || 0));
     const c0 = { r: 63, g: 185, b: 94 };   // green
@@ -102,6 +102,11 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
             <label for="admin-site-name">${escapeHtml(t('admin.siteName'))}</label>
             <input id="admin-site-name" name="siteName" value="${escapeHtml(siteName)}" placeholder="${escapeHtml(t('nav.library'))}" autocomplete="off">
             <span class="admin-field-hint">${escapeHtml(t('admin.siteNameHint'))}</span>
+          </div>
+          <div class="admin-field-group" style="margin-top:12px">
+            <label for="admin-home-subtitle">${escapeHtml(t('admin.homeSubtitle'))}</label>
+            <input id="admin-home-subtitle" name="homeSubtitle" value="${escapeHtml(homeSubtitle)}" placeholder="${escapeHtml(t('home.subtitle'))}" autocomplete="off">
+            <span class="admin-field-hint">${escapeHtml(t('admin.homeSubtitleHint'))}</span>
           </div>
           <div class="admin-actions-row">
             <button type="submit">${escapeHtml(t('admin.save'))}</button>
