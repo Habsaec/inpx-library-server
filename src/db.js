@@ -639,6 +639,15 @@ export function initDb() {
       FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS book_ratings (
+      username TEXT NOT NULL,
+      book_id TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (username, book_id),
+      FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       username TEXT PRIMARY KEY,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -1436,8 +1445,24 @@ export function getDistinctLanguages() {
 }
 
 /**
- * Пересоздание VIEW active_books с учётом исключённых языков.
- * Вызывается при изменении настройки excluded_languages.
+ * Все жанры с количеством книг (из raw books, не active_books),
+ * чтобы админ видел полную картину.
+ */
+export function getDistinctGenres() {
+  return db.prepare(`
+    SELECT g.name AS code, COALESCE(g.display_name, g.name) AS displayName,
+           COUNT(bg.book_id) AS bookCount
+    FROM genres_catalog g
+    JOIN book_genres bg ON bg.genre_id = g.id
+    JOIN books b ON b.id = bg.book_id AND b.deleted = 0
+    GROUP BY g.id
+    ORDER BY bookCount DESC
+  `).all();
+}
+
+/**
+ * Пересоздание VIEW active_books с учётом исключённых языков и жанров.
+ * Вызывается при изменении настроек excluded_languages / excluded_genres.
  */
 export async function rebuildActiveBooksView() {
   const excluded = getSetting('excluded_languages');
@@ -1451,8 +1476,19 @@ export async function rebuildActiveBooksView() {
     langFilter = ` AND COALESCE(NULLIF(lang, ''), 'unknown') NOT IN (${placeholders})`;
   }
 
+  const excludedGenres = getSetting('excluded_genres');
+  const genres = excludedGenres
+    ? excludedGenres.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+
+  let genreFilter = '';
+  if (genres.length > 0) {
+    const gPlaceholders = genres.map(g => `'${g.replace(/'/g, "''")}'`).join(',');
+    genreFilter = ` AND NOT EXISTS (SELECT 1 FROM book_genres bg JOIN genres_catalog gc ON gc.id = bg.genre_id WHERE bg.book_id = books.id AND gc.name IN (${gPlaceholders}))`;
+  }
+
   db.exec('DROP VIEW IF EXISTS active_books');
-  db.exec(`CREATE VIEW active_books AS SELECT * FROM books WHERE deleted = 0 AND (source_id IS NULL OR EXISTS (SELECT 1 FROM sources WHERE sources.id = books.source_id AND sources.enabled = 1))${langFilter}`);
+  db.exec(`CREATE VIEW active_books AS SELECT * FROM books WHERE deleted = 0 AND (source_id IS NULL OR EXISTS (SELECT 1 FROM sources WHERE sources.id = books.source_id AND sources.enabled = 1))${langFilter}${genreFilter}`);
   await refreshCatalogBookCounts();
 }
 
@@ -1470,8 +1506,7 @@ export async function refreshCatalogBookCounts() {
     FROM (
       SELECT ba.author_id AS id, COUNT(*) AS cnt
       FROM book_authors ba
-      JOIN books b ON b.id = ba.book_id AND b.deleted = 0
-      WHERE b.source_id IS NULL OR EXISTS (SELECT 1 FROM sources s WHERE s.id = b.source_id AND s.enabled = 1)
+      JOIN active_books b ON b.id = ba.book_id
       GROUP BY ba.author_id
     ) t
     WHERE authors.id = t.id;
@@ -1484,8 +1519,7 @@ export async function refreshCatalogBookCounts() {
     FROM (
       SELECT bs.series_id AS id, COUNT(*) AS cnt
       FROM book_series bs
-      JOIN books b ON b.id = bs.book_id AND b.deleted = 0
-      WHERE b.source_id IS NULL OR EXISTS (SELECT 1 FROM sources s WHERE s.id = b.source_id AND s.enabled = 1)
+      JOIN active_books b ON b.id = bs.book_id
       GROUP BY bs.series_id
     ) t
     WHERE series_catalog.id = t.id;
@@ -1498,8 +1532,7 @@ export async function refreshCatalogBookCounts() {
     FROM (
       SELECT bg.genre_id AS id, COUNT(*) AS cnt
       FROM book_genres bg
-      JOIN books b ON b.id = bg.book_id AND b.deleted = 0
-      WHERE b.source_id IS NULL OR EXISTS (SELECT 1 FROM sources s WHERE s.id = b.source_id AND s.enabled = 1)
+      JOIN active_books b ON b.id = bg.book_id
       GROUP BY bg.genre_id
     ) t
     WHERE genres_catalog.id = t.id;
@@ -1751,4 +1784,27 @@ export function getSuppressedBooks({ page = 1, pageSize = 50 } = {}) {
 
 export function getSuppressedBookIds() {
   return new Set(db.prepare('SELECT book_id FROM suppressed_books').all().map(r => r.book_id));
+}
+
+// ── Book Ratings ──
+
+export function setBookRating(username, bookId, rating) {
+  if (rating < 1 || rating > 5) throw new Error('Rating must be 1-5');
+  db.prepare(`
+    INSERT INTO book_ratings (username, book_id, rating) VALUES (?, ?, ?)
+    ON CONFLICT(username, book_id) DO UPDATE SET rating = excluded.rating
+  `).run(username, bookId, rating);
+}
+
+export function removeBookRating(username, bookId) {
+  db.prepare('DELETE FROM book_ratings WHERE username = ? AND book_id = ?').run(username, bookId);
+}
+
+export function getBookRating(username, bookId) {
+  return db.prepare('SELECT rating FROM book_ratings WHERE username = ? AND book_id = ?').get(username, bookId)?.rating || 0;
+}
+
+export function getBookAverageRating(bookId) {
+  const row = db.prepare('SELECT AVG(rating) AS avg, COUNT(*) AS cnt FROM book_ratings WHERE book_id = ?').get(bookId);
+  return { average: row?.avg ? Math.round(row.avg * 10) / 10 : 0, count: row?.cnt || 0 };
 }

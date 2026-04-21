@@ -6,6 +6,7 @@ import { t, countLabel } from '../i18n.js';
 import { requireOpdsAuth } from '../middleware/auth.js';
 import { formatGenreLabel } from '../genre-map.js';
 import { safePage } from '../utils/safe-int.js';
+import { getOrExtractBookDetails } from '../fb2.js';
 import {
   listGenres, getBookById,
   opdsQuery,
@@ -30,6 +31,7 @@ function formatAuthorForOpds(author) {
   return parts.slice(0, 3).join(', ') + (parts.length > 3 ? t('opds.authorEtAl') : '');
 }
 
+
 /**
  * @param {import('express').Application} app
  * @param {{ baseUrl: (req: import('express').Request) => string }} deps
@@ -50,7 +52,6 @@ export function registerOpdsV2Routes(app, deps) {
     const base = baseUrl(req);
 
     if (prefix.startsWith('=')) {
-      // Exact author — list their books
       const authorName = prefix.slice(1);
       const books = getAuthorBooksOpds(authorName, genre);
       res.type(OPDS_JSON);
@@ -168,11 +169,15 @@ export function registerOpdsV2Routes(app, deps) {
   });
 
   // Single book detail
-  app.get('/opds/v2/book/:id', requireOpdsAuth, (req, res) => {
+  app.get('/opds/v2/book/:id', requireOpdsAuth, async (req, res) => {
     const book = getBookById(String(req.params.id || ''));
     if (!book) {
       return res.status(404).type(OPDS_JSON).send(renderOpds2BookDetail(baseUrl(req), null));
     }
+    try {
+      const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
+      book.annotation = details?.annotation || '';
+    } catch { /* ignore */ }
     res.type(OPDS_JSON);
     res.send(renderOpds2BookDetail(baseUrl(req), book));
   });

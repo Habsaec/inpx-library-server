@@ -1955,6 +1955,54 @@ button.download-format-link {
 }
 
 
+
+/* ── Genre groups ── */
+.genre-grouped-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.genre-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.genre-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 15px;
+  background: var(--surface);
+  user-select: none;
+}
+.genre-group-header:hover {
+  background: var(--surface-hover);
+}
+.genre-group-count {
+  font-weight: 400;
+  font-size: 13px;
+}
+.genre-group-items {
+  border-top: 1px solid var(--border);
+}
+
+/* Admin content – genre groups */
+.acg[data-open="1"] > .acg-body { display: block; }
+.acg .acg-body { display: none; }
+.acg[data-open="1"] .acg-arrow { transform: rotate(90deg); }
+.acg-table {
+  width: 100%;
+  table-layout: fixed;
+  display: table !important;
+}
+.acg-table tbody { display: table-row-group !important; }
+.acg-table tr { display: table-row !important; }
+.acg-table td { display: table-cell !important; }
+.acg-table tr:last-child td { border-bottom: none; }
+
 .discovery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -2436,6 +2484,58 @@ button.download-format-link {
   color: var(--link-hover);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--link-hover) 42%, transparent);
+}
+
+/* ── Star rating ── */
+.book-detail-rating {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 2px;
+}
+.star-rating {
+  display: inline-flex;
+  gap: 2px;
+}
+.star-btn {
+  background: none;
+  border: none;
+  padding: 0 1px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--border);
+  cursor: pointer;
+  transition: color .15s, transform .15s;
+}
+.star-btn:hover,
+.star-btn.is-hovered {
+  color: #e0a820;
+  transform: scale(1.15);
+}
+.star-btn.is-active {
+  color: #d4a017;
+}
+.star-btn:disabled {
+  cursor: default;
+  opacity: .6;
+}
+.star-btn:disabled:hover {
+  transform: none;
+}
+.rating-info {
+  font-size: 13px;
+  color: var(--muted);
+  user-select: none;
+}
+.rating-avg {
+  font-weight: 600;
+  color: var(--text);
+}
+.rating-count {
+  opacity: .7;
+}
+.rating-empty {
+  font-style: italic;
 }
 
 .detail-meta-list .detail-meta-genres a {

@@ -17,7 +17,7 @@ import {
   HOME_USER_SNAPSHOT_CACHE_TTL_MS,
   PAGE_CACHE_TTL_MS
 } from '../constants.js';
-import { getUserShelves, getShelfById, getShelfBooks, getSetting } from '../db.js';
+import { getUserShelves, getShelfById, getShelfBooks, getSetting, setBookRating, removeBookRating, getBookRating, getBookAverageRating } from '../db.js';
 import {
   getBookById,
   getBookDuplicateCandidates,
@@ -47,7 +47,8 @@ import {
   searchCatalog,
   getSourceRoot,
   effectiveSourceFlibustaForBook,
-  splitAuthorValues
+  splitAuthorValues,
+  listGenresGrouped
 } from '../inpx.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover } from '../fb2.js';
 import {
@@ -58,7 +59,7 @@ import {
   readFlibustaBookReviewHtml,
   readFlibustaAuthorBioHtml
 } from '../flibusta-sidecar.js';
-import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel } from '../genre-map.js';
+import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup, getGenreGroups } from '../genre-map.js';
 
 // --- Cover thumbnail caching ---
 
@@ -483,6 +484,7 @@ export function registerLibraryRoutes(app, deps) {
     }));
   });
 
+
   app.get('/genres', requireBrowseAuth, (req, res) => {
     const query = String(req.query.q || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
@@ -490,6 +492,33 @@ export function registerLibraryRoutes(app, deps) {
     const page = safePage(req.query.page);
     const pageSize = 50;
     const stats = getCachedStats();
+
+    // Grouped view when no search/letter filter and first page
+    if (!query && !letter && page === 1 && sort === 'count') {
+      const allGenres = getCachedPageData('browse:genres:grouped', () => listGenresGrouped());
+      const groups = getGenreGroups();
+      const grouped = [];
+      for (const [groupName, codes] of Object.entries(groups)) {
+        const codesSet = new Set(codes);
+        const items = allGenres.filter(g => codesSet.has(g.name));
+        if (items.length) grouped.push({ groupName, items });
+      }
+      // Uncategorized
+      const allGrouped = new Set(Object.values(groups).flat());
+      const uncategorized = allGenres.filter(g => !allGrouped.has(g.name));
+      if (uncategorized.length) grouped.push({ groupName: t('genre.other'), items: uncategorized });
+
+      res.send(renderBrowsePage({
+        title: t('nav.genres'),
+        items: allGenres, total: allGenres.length, page, pageSize: allGenres.length,
+        user: req.user || null, stats, query, letter,
+        path: '/genres', facetBasePath: '/facet/genres',
+        indexStatus: getIndexStatus(), sort, csrfToken: req.csrfToken || '',
+        genreGroups: grouped
+      }));
+      return;
+    }
+
     const cacheKey = `browse:genres:${page}:${sort}:${letter}:${query}`;
     const result = getCachedPageData(cacheKey, () => listGenres({ query, page, pageSize, sort, letter }));
     res.send(renderBrowsePage({
@@ -674,6 +703,8 @@ export function registerLibraryRoutes(app, deps) {
       const username = user?.username || '';
       const details = await getDetails(book);
       const bookmarked = username ? isBookmarked(username, book.id) : false;
+      const userRating = username ? getBookRating(username, book.id) : 0;
+      const avgRating = getBookAverageRating(book.id);
       const similarBooks = buildSimilarBooks(book);
 
       res.send(
@@ -684,7 +715,9 @@ export function registerLibraryRoutes(app, deps) {
           similarBooks, csrfToken: req.csrfToken || '',
           authorBioHtml: '', authorPortraitUrl: '',
           illustrationUrls: [],
-          flash: String(req.query.flash || '')
+          flash: String(req.query.flash || ''),
+          userRating,
+          avgRating
         })
       );
     } catch (error) {
@@ -789,6 +822,29 @@ export function registerLibraryRoutes(app, deps) {
     } catch (error) {
       next(error);
     }
+  });
+
+  // --- Book rating API ---
+  app.post('/api/books/:id/rating', requireWebAuth, (req, res, next) => {
+    try {
+      const book = getBookById(req.params.id);
+      if (!book) return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      const rating = parseInt(req.body.rating, 10);
+      if (!rating || rating < 1 || rating > 5) return apiFail(res, 400, ApiErrorCode.VALIDATION, t('book.rating.invalid'));
+      setBookRating(req.user.username, book.id, rating);
+      const avg = getBookAverageRating(book.id);
+      res.json({ ok: true, userRating: rating, average: avg.average, count: avg.count });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/api/books/:id/rating', requireWebAuth, (req, res, next) => {
+    try {
+      const book = getBookById(req.params.id);
+      if (!book) return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      removeBookRating(req.user.username, book.id);
+      const avg = getBookAverageRating(book.id);
+      res.json({ ok: true, userRating: 0, average: avg.average, count: avg.count });
+    } catch (error) { next(error); }
   });
 
   // --- Book review ---

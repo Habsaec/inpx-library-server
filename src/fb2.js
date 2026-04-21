@@ -273,6 +273,15 @@ function getCachedBookDetails(bookId) {
   };
 }
 
+/** Аннотация из book_details_cache (для OPDS и пр. — без чтения архива). */
+export function getStoredBookAnnotation(bookId) {
+  if (!bookId) return '';
+  try {
+    const row = db.prepare(`SELECT annotation FROM book_details_cache WHERE book_id = ?`).get(bookId);
+    return row?.annotation || '';
+  } catch { return ''; }
+}
+
 /** Обложка из book_details_cache без чтения архива (для быстрых ответов /cover). */
 export function getStoredBookDetailsCover(book) {
   if (!book?.id) return null;

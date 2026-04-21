@@ -57,7 +57,7 @@ import {
 import {
   renderAdminEvents,
   renderAdminDuplicates,
-  renderAdminLanguages,
+  renderAdminContent,
   renderAdminUsers,
   renderBook,
   renderFavorites,
@@ -703,7 +703,7 @@ registerAdminRoutes(app, {
   setSiteName,
   templates: {
     renderOperations, renderAdminUsers, renderAdminUpdate, renderAdminSmtp,
-    renderAdminEvents, renderAdminSources, renderAdminDuplicates, renderAdminLanguages
+    renderAdminEvents, renderAdminSources, renderAdminDuplicates, renderAdminContent
   }
 });
 

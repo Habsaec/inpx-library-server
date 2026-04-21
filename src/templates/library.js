@@ -202,7 +202,9 @@ export function renderBook({
   authorBioHtml = '',
   authorPortraitUrl = '',
   illustrationUrls = [],
-  flash = ''
+  flash = '',
+  userRating = 0,
+  avgRating = { average: 0, count: 0 }
 }) {
   const similar = similarBooks || { title: t('book.similar'), items: [] };
   const isAuthenticated = Boolean(user);
@@ -243,6 +245,12 @@ export function renderBook({
           <h2 class="book-detail-title">${escapeHtml(book.title)}</h2>
           <div class="author">${book.authors ? `<a href="/facet/authors/${encodeURIComponent(primaryAuthor)}">${escapeHtml(formatAuthorLabel(book.authors))}</a>` : escapeHtml(t('book.authorUnknown'))}</div>
           ${summaryBits.length ? `<div class="book-detail-summary">${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
+          <div class="book-detail-rating" data-rating-widget data-book-id="${escapeHtml(String(book.id))}" data-user-rating="${userRating}" data-avg="${avgRating.average}" data-count="${avgRating.count}"${user ? '' : ' data-readonly="true"'}>
+            <div class="star-rating">
+              ${[1,2,3,4,5].map(i => `<button type="button" class="star-btn${i <= userRating ? ' is-active' : ''}" data-star="${i}" aria-label="${i}"${user ? '' : ' disabled'}>★</button>`).join('')}
+            </div>
+            <span class="rating-info">${avgRating.count ? `<span class="rating-avg">${avgRating.average}</span> <span class="rating-count">(${avgRating.count})</span>` : `<span class="rating-empty">${escapeHtml(t('book.rating.noRatings'))}</span>`}</span>
+          </div>
           ${
             details.annotationIsHtml && String(details.annotation || '').trim()
               ? `<div class="book-detail-annotation book-detail-annotation--html">${details.annotation}</div>`
@@ -395,7 +403,26 @@ export function renderFavorites({ books = [], authors = [], series = [], view = 
 }
 
 
-export function renderBrowsePage({ title, items, total, page, pageSize, user, stats, query, letter = '', path, facetBasePath, indexStatus, sort, csrfToken = '' }) {
+function renderGroupedEntityGrid(groups, facetBasePath) {
+  if (!groups || !groups.length) return '';
+  return `<div class="genre-grouped-list">${groups.map(g => `
+    <details class="genre-group">
+      <summary class="genre-group-header"><span class="genre-group-title">${escapeHtml(g.groupName)}</span><span class="genre-group-count muted">${g.items.length}</span></summary>
+      <div class="table-list entity-list genre-group-items">
+        ${g.items.map(item => `
+          <a class="table-row table-row-link" href="${facetBasePath}/${encodeURIComponent(item.name)}">
+            <div>
+              <strong>${escapeHtml(item.displayName || item.name)}</strong><br>
+              <span class="muted">${countLabel('book', item.bookCount)} ${escapeHtml(t('entity.inLibrary'))}</span>
+            </div>
+          </a>
+        `).join('')}
+      </div>
+    </details>
+  `).join('')}</div>`;
+}
+
+export function renderBrowsePage({ title, items, total, page, pageSize, user, stats, query, letter = '', path, facetBasePath, indexStatus, sort, csrfToken = '', genreGroups = null }) {
   const letterParam = letter ? `&letter=${encodeURIComponent(letter)}` : '';
   const paginationBase = `${path}?sort=${encodeURIComponent(sort || 'count')}${letterParam}`;
   const browseLabels = { '/authors': t('nav.authors'), '/series': t('nav.series'), '/genres': t('nav.genres'), '/languages': t('nav.languages') };
@@ -430,8 +457,8 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
         ${query || letter ? `<a class="button" href="${path}?sort=${encodeURIComponent(sort || 'count')}">${escapeHtml(t('browse.reset'))}</a>` : ''}
       </div>
     </form>
-    ${renderEntityGrid(items, facetBasePath, query || letter ? t('browse.emptyFiltered') : t('browse.empty'))}
-    ${renderPagination(paginationBase, page, pageSize, total, query)}
+    ${genreGroups ? renderGroupedEntityGrid(genreGroups, facetBasePath) : renderEntityGrid(items, facetBasePath, query || letter ? t('browse.emptyFiltered') : t('browse.empty'))}
+    ${genreGroups ? '' : renderPagination(paginationBase, page, pageSize, total, query)}
   `;
   const alphabet = { path, sort: 'name', label: browseLabels[path] || title, activeLetter: letter };
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
@@ -1057,4 +1084,3 @@ export function renderProfile({ user, stats, indexStatus, userStats, ereaderEmai
   `;
   return pageShell({ title: t('profile.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('profile.title') }], currentPath: '/profile', csrfToken });
 }
-

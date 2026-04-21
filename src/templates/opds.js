@@ -64,7 +64,8 @@ function renderOpdsBookEntries(baseUrl, items, { includeContent = false } = {}) 
       ${authors.length ? authors.map((author) => `<author><name>${escapeHtml(author)}</name></author>`).join('') : `<author><name>${escapeHtml(t('book.authorUnknown'))}</name></author>`}
       <dc:language>${escapeHtml(book.lang || 'ru')}</dc:language>
       ${String(book.genres || '').split(':').map((genre) => genre.trim()).filter(Boolean).map((genre) => `<category term="${escapeHtml(genre)}" label="${escapeHtml(formatGenreLabel(genre))}"/>`).join('')}
-      <content type="text">${escapeHtml(book.authors || t('book.authorUnknown'))}${includeContent && book.series ? ` — ${escapeHtml(book.series)}` : ''}</content>
+      ${book.annotation ? `<content type="text">${escapeHtml(String(book.annotation).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500))}</content>` : `<content type="text">${escapeHtml(book.authors || t('book.authorUnknown'))}${includeContent && book.series ? ` — ${escapeHtml(book.series)}` : ''}</content>`}
+      <summary type="text">${escapeHtml(book.authors || t('book.authorUnknown'))}${includeContent && book.series ? ` — ${escapeHtml(book.series)}` : ''}</summary>
       ${links.join('')}
     </entry>`;
   }).join('');

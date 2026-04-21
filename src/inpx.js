@@ -2843,6 +2843,17 @@ export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'count'
   return { total, items };
 }
 
+export function listGenresGrouped() {
+  const all = db.prepare(`
+    SELECT g.name, COALESCE(g.display_name, g.name) AS displayName,
+           g.book_count AS bookCount
+    FROM genres_catalog g
+    WHERE g.book_count > 0
+    ORDER BY g.book_count DESC
+  `).all();
+  return all;
+}
+
 export function listGenres({ page = 1, pageSize = 50, query = '', sort = 'count', letter = '' }) {
   const offset = (page - 1) * pageSize;
   const searchSql = buildCatalogSearchSql('g.search_name', query);
@@ -3779,24 +3790,30 @@ export function getAuthorBooksOpds(authorName, genre = '') {
   if (genre) {
     const genreParams = genre.split(',').map((g) => g.trim());
     sql = `
-      SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang
+      SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+             b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+             dc.annotation
       FROM active_books b
       JOIN book_authors ba ON ba.book_id = b.id
       JOIN authors a ON a.id = ba.author_id AND a.name = ?
       JOIN book_genres bg ON bg.book_id = b.id
       JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genreParams.map(() => '?').join(',')})
       LEFT JOIN sources s ON s.id = b.source_id
+      LEFT JOIN book_details_cache dc ON dc.book_id = b.id
       GROUP BY b.id
       ORDER BY ${rankOrder}
       LIMIT 500`;
     params = [authorName, ...genreParams];
   } else {
     sql = `
-      SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang
+      SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+             b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+             dc.annotation
       FROM active_books b
       JOIN book_authors ba ON ba.book_id = b.id
       JOIN authors a ON a.id = ba.author_id AND a.name = ?
       LEFT JOIN sources s ON s.id = b.source_id
+      LEFT JOIN book_details_cache dc ON dc.book_id = b.id
       ORDER BY ${rankOrder}
       LIMIT 500`;
     params = [authorName];
@@ -3809,11 +3826,14 @@ export function getSeriesBooksOpds(seriesName) {
   return db
     .prepare(
       `
-    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang
+    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+           b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+           dc.annotation
     FROM active_books b
     JOIN book_series bs ON bs.book_id = b.id
     JOIN series_catalog sc ON sc.id = bs.series_id AND sc.name = ?
     LEFT JOIN sources s ON s.id = b.source_id
+    LEFT JOIN book_details_cache dc ON dc.book_id = b.id
     ORDER BY CAST(b.series_no AS INTEGER), b.title
     LIMIT 500
   `

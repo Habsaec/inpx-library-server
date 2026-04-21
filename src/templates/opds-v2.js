@@ -77,6 +77,10 @@ function formatPublication(book) {
     images: book.id ? [{ href: `/api/books/${encodeURIComponent(book.id)}/cover?opds=1`, type: 'image/webp' }] : []
   };
 
+  if (book.annotation) {
+    pub.metadata.description = String(book.annotation).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+  }
+
   if (book.series) {
     pub.metadata.belongsTo = { series: [{ name: book.series, position: book.seriesNo ? Number(book.seriesNo) || undefined : undefined }] };
   }

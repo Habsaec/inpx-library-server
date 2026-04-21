@@ -5,8 +5,10 @@ import {
   escapeHtml, csrfHiddenField, pageShell, renderPagination, renderEmptyState,
   renderEventDetailsHtml, renderAlert,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
-  formatLocaleDateShort, formatLocaleDateTimeShort, formatLanguageLabel
+  formatLocaleDateShort, formatLocaleDateTimeShort, formatLanguageLabel,
+  formatGenreLabel
 } from './shared.js';
+import { getGenreGroups } from '../genre-map.js';
 
 export function renderOperations({ user, stats = {}, indexStatus = {}, operations = {}, siteName = '', homeSubtitle = '', csrfToken = '' }) {
   const monitorBarGradient = (value) => {
@@ -467,72 +469,218 @@ export function renderAdminEvents({ user, stats, indexStatus, events = [], total
 }
 
 
-export function renderAdminLanguages({ user, stats, indexStatus, languages = [], excludedSet = new Set(), flash = '', csrfToken = '' }) {
-  const totalBooks = languages.reduce((sum, l) => sum + l.bookCount, 0);
-  const excludedCount = languages.filter(l => excludedSet.has(l.code)).length;
-  const excludedBooks = languages.filter(l => excludedSet.has(l.code)).reduce((sum, l) => sum + l.bookCount, 0);
+export function renderAdminContent({ user, stats, indexStatus, languages = [], excludedLangSet = new Set(), genres = [], excludedGenreSet = new Set(), flash = '', csrfToken = '' }) {
+  const langExcludedCount = languages.filter(l => excludedLangSet.has(l.code)).length;
+  const genreExcludedCount = genres.filter(g => excludedGenreSet.has(g.code)).length;
 
-  const rows = languages.map(lang => {
-    const checked = !excludedSet.has(lang.code);
+  const langRows = languages.map(lang => {
+    const checked = !excludedLangSet.has(lang.code);
     const label = formatLanguageLabel(lang.code);
     return `
       <tr class="${checked ? '' : 'lang-row-disabled'}">
         <td data-label="" style="text-align:center">
-          <input type="checkbox" name="enabled" value="${escapeHtml(lang.code)}" ${checked ? 'checked' : ''}>
+          <input type="checkbox" name="enabled_lang" value="${escapeHtml(lang.code)}" ${checked ? 'checked' : ''}>
         </td>
-        <td data-label="${escapeHtml(t('admin.languages.thName'))}">${escapeHtml(label)}</td>
-        <td data-label="${escapeHtml(t('admin.languages.thCode'))}" class="muted">${escapeHtml(lang.code)}</td>
-        <td data-label="${escapeHtml(t('admin.languages.thBooks'))}" style="text-align:right">${lang.bookCount.toLocaleString('ru-RU')}</td>
+        <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(label)}</td>
+        <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(lang.code)}</td>
+        <td data-label="${escapeHtml(t('admin.content.thBooks'))}" style="text-align:right">${formatLocaleInt(lang.bookCount)}</td>
       </tr>`;
   }).join('');
+
+  // Group genres like in the user-facing genre page
+  const genreMap = new Map(genres.map(g => [g.code, g]));
+  const groupsDef = getGenreGroups();
+  const genreGroupsHtml = [];
+  const allGroupedCodes = new Set(Object.values(groupsDef).flat());
+  let groupIdx = 0;
+  for (const [groupName, codes] of Object.entries(groupsDef)) {
+    const items = codes.map(c => genreMap.get(c)).filter(Boolean);
+    if (!items.length) continue;
+    const gid = `gg-${groupIdx++}`;
+    const allChecked = items.every(g => !excludedGenreSet.has(g.code));
+    const noneChecked = items.every(g => excludedGenreSet.has(g.code));
+    const excludedInGroup = items.filter(g => excludedGenreSet.has(g.code)).length;
+    const rows = items.map(genre => {
+      const checked = !excludedGenreSet.has(genre.code);
+      const label = formatGenreLabel(genre.code);
+      return `
+        <tr class="${checked ? '' : 'lang-row-disabled'}">
+          <td data-label="" style="text-align:center">
+            <input type="checkbox" name="enabled_genre" value="${escapeHtml(genre.code)}" ${checked ? 'checked' : ''}>
+          </td>
+          <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(label)}</td>
+          <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(genre.code)}</td>
+          <td data-label="${escapeHtml(t('admin.content.thBooks'))}" style="text-align:right">${formatLocaleInt(genre.bookCount)}</td>
+        </tr>`;
+    }).join('');
+    genreGroupsHtml.push(`
+      <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
+          <input type="checkbox" style="flex:none;width:auto" class="genre-group-toggle" data-group="${gid}" ${allChecked ? 'checked' : ''} ${!allChecked && !noneChecked ? 'data-indeterminate="1"' : ''} onclick="event.stopPropagation()">
+          <span style="flex:1 1 auto;font-weight:600;font-size:15px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escapeHtml(groupName)}</span>
+          <span style="flex:none;font-size:13px;color:var(--muted)">${items.length}${excludedInGroup > 0 ? ' / -' + excludedInGroup : ''}</span>
+          <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>
+        </div>
+        <div class="acg-body" style="border-top:1px solid var(--border)">
+          <table class="admin-table acg-table">
+            <colgroup><col style="width:40px"><col><col style="width:30%"><col style="width:80px"></colgroup>
+            <tbody data-group="${gid}">${rows}</tbody>
+          </table>
+        </div>
+      </div>`);
+  }
+  // Uncategorized genres
+  const uncategorized = genres.filter(g => !allGroupedCodes.has(g.code));
+  if (uncategorized.length) {
+    const gid = `gg-${groupIdx++}`;
+    const allChecked = uncategorized.every(g => !excludedGenreSet.has(g.code));
+    const noneChecked = uncategorized.every(g => excludedGenreSet.has(g.code));
+    const excludedInGroup = uncategorized.filter(g => excludedGenreSet.has(g.code)).length;
+    const rows = uncategorized.map(genre => {
+      const checked = !excludedGenreSet.has(genre.code);
+      const label = formatGenreLabel(genre.code);
+      return `
+        <tr class="${checked ? '' : 'lang-row-disabled'}">
+          <td data-label="" style="text-align:center">
+            <input type="checkbox" name="enabled_genre" value="${escapeHtml(genre.code)}" ${checked ? 'checked' : ''}>
+          </td>
+          <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(label)}</td>
+          <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(genre.code)}</td>
+          <td data-label="${escapeHtml(t('admin.content.thBooks'))}" style="text-align:right">${formatLocaleInt(genre.bookCount)}</td>
+        </tr>`;
+    }).join('');
+    genreGroupsHtml.push(`
+      <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
+          <input type="checkbox" style="flex:none;width:auto" class="genre-group-toggle" data-group="${gid}" ${allChecked ? 'checked' : ''} ${!allChecked && !noneChecked ? 'data-indeterminate="1"' : ''} onclick="event.stopPropagation()">
+          <span style="flex:1 1 auto;font-weight:600;font-size:15px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escapeHtml(t('genre.other'))}</span>
+          <span style="flex:none;font-size:13px;color:var(--muted)">${uncategorized.length}${excludedInGroup > 0 ? ' / -' + excludedInGroup : ''}</span>
+          <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>
+        </div>
+        <div class="acg-body" style="border-top:1px solid var(--border)">
+          <table class="admin-table acg-table">
+            <colgroup><col style="width:40px"><col><col style="width:30%"><col style="width:80px"></colgroup>
+            <tbody data-group="${gid}">${rows}</tbody>
+          </table>
+        </div>
+      </div>`);
+  }
 
   const content = `
     ${flash ? renderAlert('success', escapeHtml(flash)) : ''}
     <div class="admin-card" style="margin-bottom:16px;border-left:4px solid var(--accent-color)">
-      <div class="admin-card-title">${escapeHtml(t('admin.languages.statsTitle'))}</div>
-      <p class="muted" style="margin:8px 0">${escapeHtml(tp('admin.languages.statsDesc', { total: languages.length, books: totalBooks, excluded: excludedCount, excludedBooks }))}</p>
+      <div class="admin-card-title">${escapeHtml(t('admin.content.statsTitle'))}</div>
+      <p class="muted" style="margin:8px 0">${escapeHtml(tp('admin.content.statsDesc', { langTotal: languages.length, langExcluded: langExcludedCount, genreTotal: genres.length, genreExcluded: genreExcludedCount }))}</p>
     </div>
-    <div class="admin-card">
-      <div class="admin-card-title">${escapeHtml(t('admin.languages.cardTitle'))}</div>
-      <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.languages.cardHint'))}</p>
-      <form method="POST" action="/admin/languages">
-        ${csrfHiddenField(csrfToken)}
-        <div style="overflow-x:auto">
-          <table class="admin-table admin-lang-table" style="width:100%">
-            <thead>
-              <tr>
-                <th style="width:50px;text-align:center">
-                  <input type="checkbox" id="lang-toggle-all" title="${escapeHtml(t('admin.languages.toggleAll'))}">
-                </th>
-                <th>${escapeHtml(t('admin.languages.thName'))}</th>
-                <th>${escapeHtml(t('admin.languages.thCode'))}</th>
-                <th style="text-align:right">${escapeHtml(t('admin.languages.thBooks'))}</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
+    <form method="POST" action="/admin/content">
+      ${csrfHiddenField(csrfToken)}
+      <div class="admin-card" style="margin-bottom:16px">
+        <div class="admin-card-title" style="display:flex;align-items:center;gap:12px">
+          ${escapeHtml(t('admin.content.langSection'))}
+          <label style="font-size:13px;font-weight:400;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="lang-toggle-all" title="${escapeHtml(t('admin.content.toggleAll'))}">
+            <span class="muted">${escapeHtml(t('admin.content.toggleAll'))}</span>
+          </label>
         </div>
-        <div class="admin-inline-row" style="margin-top:16px;gap:12px;">
-          <button type="submit" class="button button-primary">${escapeHtml(t('admin.languages.save'))}</button>
-          <span class="muted admin-compact-btn">${escapeHtml(t('admin.languages.saveHint'))}</span>
+        <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.langHint'))}</p>
+        <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
+            <span style="flex:1 1 auto;font-weight:600;font-size:15px">${escapeHtml(tp('admin.content.langListTitle', { total: languages.length }))}</span>
+            <span style="flex:none;font-size:13px;color:var(--muted)">${langExcludedCount > 0 ? '−' + langExcludedCount + ' ' + escapeHtml(t('admin.content.hidden')) : ''}</span>
+            <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>
+          </div>
+          <div class="acg-body" style="border-top:1px solid var(--border)">
+            <table class="admin-table acg-table">
+              <thead>
+                <tr>
+                  <th style="width:50px;text-align:center"></th>
+                  <th>${escapeHtml(t('admin.content.thName'))}</th>
+                  <th>${escapeHtml(t('admin.content.thCode'))}</th>
+                  <th style="text-align:right">${escapeHtml(t('admin.content.thBooks'))}</th>
+                </tr>
+              </thead>
+              <tbody>${langRows}</tbody>
+            </table>
+          </div>
         </div>
-      </form>
-    </div>
+      </div>
+      <div class="admin-card" style="margin-bottom:16px">
+        <div class="admin-card-title" style="display:flex;align-items:center;gap:12px">
+          ${escapeHtml(t('admin.content.genreSection'))}
+          <label style="font-size:13px;font-weight:400;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="genre-toggle-all" title="${escapeHtml(t('admin.content.toggleAll'))}">
+            <span class="muted">${escapeHtml(t('admin.content.toggleAll'))}</span>
+          </label>
+        </div>
+        <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.genreHint'))}</p>
+        <div class="acg-list">
+          ${genreGroupsHtml.join('')}
+        </div>
+      </div>
+      <div class="admin-inline-row" style="margin-top:16px;gap:12px;">
+        <button type="submit" class="button button-primary">${escapeHtml(t('admin.content.save'))}</button>
+        <span class="muted admin-compact-btn">${escapeHtml(t('admin.content.saveHint'))}</span>
+      </div>
+    </form>
     <script>
       document.getElementById('lang-toggle-all')?.addEventListener('change', function() {
-        document.querySelectorAll('input[name="enabled"]').forEach(cb => { cb.checked = this.checked; });
+        document.querySelectorAll('input[name="enabled_lang"]').forEach(cb => { cb.checked = this.checked; });
       });
+      // Global genre toggle
+      document.getElementById('genre-toggle-all')?.addEventListener('change', function() {
+        const checked = this.checked;
+        document.querySelectorAll('input[name="enabled_genre"]').forEach(cb => { cb.checked = checked; });
+        document.querySelectorAll('.genre-group-toggle').forEach(cb => { cb.checked = checked; cb.indeterminate = false; });
+      });
+      // Per-group toggles
+      document.querySelectorAll('.genre-group-toggle').forEach(toggle => {
+        toggle.addEventListener('click', function(e) { e.stopPropagation(); });
+        toggle.addEventListener('change', function() {
+          const gid = this.dataset.group;
+          const tbody = document.querySelector('tbody[data-group="' + gid + '"]');
+          if (!tbody) return;
+          tbody.querySelectorAll('input[name="enabled_genre"]').forEach(cb => { cb.checked = this.checked; });
+          updateGlobalGenreToggle();
+        });
+      });
+      // Update group toggle state when individual checkboxes change
+      document.querySelectorAll('input[name="enabled_genre"]').forEach(cb => {
+        cb.addEventListener('change', function() {
+          const tbody = this.closest('tbody[data-group]');
+          if (!tbody) return;
+          const gid = tbody.dataset.group;
+          const groupToggle = document.querySelector('.genre-group-toggle[data-group="' + gid + '"]');
+          if (!groupToggle) return;
+          const boxes = tbody.querySelectorAll('input[name="enabled_genre"]');
+          const checked = [...boxes].filter(c => c.checked).length;
+          groupToggle.checked = checked === boxes.length;
+          groupToggle.indeterminate = checked > 0 && checked < boxes.length;
+          updateGlobalGenreToggle();
+        });
+      });
+      // Set initial indeterminate state
+      document.querySelectorAll('.genre-group-toggle[data-indeterminate]').forEach(cb => { cb.indeterminate = true; });
+      function updateGlobalGenreToggle() {
+        const all = document.querySelectorAll('input[name="enabled_genre"]');
+        const checked = [...all].filter(c => c.checked).length;
+        const globalToggle = document.getElementById('genre-toggle-all');
+        if (globalToggle) {
+          globalToggle.checked = checked === all.length;
+          globalToggle.indeterminate = checked > 0 && checked < all.length;
+        }
+      }
+      updateGlobalGenreToggle();
     </script>`;
 
   return pageShell({
-    title: t('admin.languages.pageTitle'),
+    title: t('admin.content.pageTitle'),
     content,
     user,
     stats,
     indexStatus,
-    breadcrumbs: [{ label: t('admin.badge'), href: '/admin' }, { label: t('admin.languages.pageTitle') }],
+    breadcrumbs: [{ label: t('admin.badge'), href: '/admin' }, { label: t('admin.content.pageTitle') }],
     mode: 'admin',
-    currentPath: '/admin/languages',
+    currentPath: '/admin/content',
     csrfToken
   });
 }

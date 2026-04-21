@@ -252,6 +252,58 @@ async function loadBookPageReview() {
   }
 }
 
+function attachRatingWidgets() {
+  document.querySelectorAll('[data-rating-widget]').forEach(widget => {
+    const readonly = widget.hasAttribute('data-readonly');
+    const bookId = widget.dataset.bookId;
+    const stars = widget.querySelectorAll('.star-btn');
+    const infoEl = widget.querySelector('.rating-info');
+    let currentRating = parseInt(widget.dataset.userRating, 10) || 0;
+
+    if (readonly) return;
+
+    // Hover preview
+    stars.forEach(btn => {
+      btn.addEventListener('mouseenter', () => {
+        const val = parseInt(btn.dataset.star, 10);
+        stars.forEach(s => s.classList.toggle('is-hovered', parseInt(s.dataset.star, 10) <= val));
+      });
+      btn.addEventListener('mouseleave', () => {
+        stars.forEach(s => s.classList.remove('is-hovered'));
+      });
+    });
+
+    // Click to rate
+    stars.forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const val = parseInt(btn.dataset.star, 10);
+        const isRemove = val === currentRating;
+        try {
+          const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+          const headers = { 'Content-Type': 'application/json' };
+          if (csrfMeta) headers['x-csrf-token'] = csrfMeta.content;
+          let res;
+          if (isRemove) {
+            res = await fetch(`/api/books/${encodeURIComponent(bookId)}/rating`, { method: 'DELETE', credentials: 'same-origin', headers });
+          } else {
+            res = await fetch(`/api/books/${encodeURIComponent(bookId)}/rating`, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ rating: val }) });
+          }
+          if (!res.ok) return;
+          const data = await res.json();
+          currentRating = data.userRating || 0;
+          widget.dataset.userRating = String(currentRating);
+          stars.forEach(s => s.classList.toggle('is-active', parseInt(s.dataset.star, 10) <= currentRating));
+          if (data.count) {
+            infoEl.innerHTML = `<span class="rating-avg">${data.average}</span> <span class="rating-count">(${data.count})</span>`;
+          } else {
+            infoEl.innerHTML = `<span class="rating-empty">${uiT('book.rating.noRatings')}</span>`;
+          }
+        } catch (e) { console.error('Rating error', e); }
+      });
+    });
+  });
+}
+
 function setCoverFallbackState(rootNode, showFallback) {
   const root = rootNode instanceof Element ? rootNode : null;
   if (!root) return;
@@ -3964,6 +4016,7 @@ attachThemeToggle();
 attachDownloadMenus();
 attachCoverErrorFallback(document);
 loadBookPageReview();
+attachRatingWidgets();
 attachBookmarkActions();
 attachFavoriteActions();
 attachOperationActions();

@@ -32,7 +32,7 @@ export {
   renderAdminUpdate,
   renderAdminUsers,
   renderAdminEvents,
-  renderAdminLanguages,
+  renderAdminContent,
   renderAdminDuplicates,
   renderAdminSources,
   renderAdminSmtp

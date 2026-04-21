@@ -381,8 +381,8 @@ Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${APP_DIR}
 ExecStart=$(which node) src/server-entry.js
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=3
 Environment=NODE_ENV=production
 
 [Install]

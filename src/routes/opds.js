@@ -6,6 +6,7 @@ import { t, tp, countLabel } from '../i18n.js';
 import { requireOpdsAuth } from '../middleware/auth.js';
 import { formatGenreLabel } from '../genre-map.js';
 import { safePage } from '../utils/safe-int.js';
+import { getOrExtractBookDetails } from '../fb2.js';
 import {
   listGenres, getBookById,
   opdsQuery,
@@ -28,6 +29,7 @@ function formatAuthorForOpds(author) {
   const parts = author.split(',');
   return parts.slice(0, 3).join(', ') + (parts.length > 3 ? t('opds.authorEtAl') : '');
 }
+
 
 /**
  * @param {import('express').Application} app
@@ -310,11 +312,15 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.genres'), selfPath: req.originalUrl, entries }));
   });
 
-  app.get('/opds/book', requireOpdsAuth, (req, res) => {
+  app.get('/opds/book', requireOpdsAuth, async (req, res) => {
     const book = getBookById(String(req.query.uid || ''));
     if (!book) {
       return res.status(404).type('text/plain').send(t('book.notFound'));
     }
+    try {
+      const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
+      book.annotation = details?.annotation || '';
+    } catch { /* ignore */ }
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsBookDetail(baseUrl(req), book));
   });

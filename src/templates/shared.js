@@ -743,7 +743,7 @@ function renderAdminSidebar(currentPath = '/admin') {
           ${link('/admin', t('admin.nav.dashboard'), true)}
           ${link('/admin/sources', t('admin.nav.sources'))}
           ${link('/admin/duplicates', t('admin.nav.duplicates'))}
-          ${link('/admin/languages', t('admin.nav.languages'))}
+          ${link('/admin/content', t('admin.nav.content'))}
           ${link('/admin/users', t('admin.nav.users'))}
           ${link('/admin/smtp', t('admin.nav.smtp'))}
           ${link('/admin/events', t('admin.nav.events'))}

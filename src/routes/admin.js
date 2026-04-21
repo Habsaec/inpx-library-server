@@ -19,7 +19,7 @@ import {
   addSource, updateSource, deleteSourceProgressive, forceDetachSourceRowUnsafe,
   getSmtpSettings, setSmtpSettings, hasAdminUser, listUsers, countAdminUsers,
   getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser,
-  db, getDistinctLanguages, rebuildActiveBooksView,
+  db, getDistinctLanguages, getDistinctGenres, rebuildActiveBooksView,
   getSuppressedBooks, unsuppressBook, unsuppressAll
 } from '../db.js';
 import {
@@ -101,7 +101,7 @@ export function registerAdminRoutes(app, deps) {
     setSiteName,
     templates: {
       renderOperations, renderAdminUsers, renderAdminUpdate, renderAdminSmtp,
-      renderAdminEvents, renderAdminSources, renderAdminDuplicates, renderAdminLanguages
+      renderAdminEvents, renderAdminSources, renderAdminDuplicates, renderAdminContent
     }
   } = deps;
 
@@ -916,11 +916,18 @@ export function registerAdminRoutes(app, deps) {
     logSystemEvent('info', 'operations', 'server restart requested', { user: req.user.username });
     res.json({ ok: true, message: t('admin.operations.restarting') });
     setTimeout(() => {
-      const child = spawn(process.execPath, [path.join(config.rootDir, 'scripts', 'server-control.js'), 'restart'], {
-        cwd: config.rootDir, detached: true, stdio: 'ignore'
-      });
-      child.unref();
-      gracefulExit();
+      // Under systemd the cgroup kills all children on exit, so spawning
+      // server-control.js is pointless — just exit and let systemd restart.
+      // Use exit code 1 so Restart=on-failure also triggers a restart.
+      if (!process.env.INVOCATION_ID) {
+        const child = spawn(process.execPath, [path.join(config.rootDir, 'scripts', 'server-control.js'), 'restart'], {
+          cwd: config.rootDir, detached: true, stdio: 'ignore'
+        });
+        child.unref();
+        gracefulExit();
+      } else {
+        gracefulExit(1);
+      }
     }, 500);
   });
 
@@ -1161,11 +1168,15 @@ export function registerAdminRoutes(app, deps) {
         logSystemEvent('info', 'operations', 'update completed, restarting', { version: newPkg.version, user: req.user.username });
         updateRunning = false;
         setTimeout(() => {
-          const child = spawn(process.execPath, [path.join(config.rootDir, 'scripts', 'server-control.js'), 'restart'], {
-            cwd: config.rootDir, detached: true, stdio: 'ignore'
-          });
-          child.unref();
-          gracefulExit();
+          if (!process.env.INVOCATION_ID) {
+            const child = spawn(process.execPath, [path.join(config.rootDir, 'scripts', 'server-control.js'), 'restart'], {
+              cwd: config.rootDir, detached: true, stdio: 'ignore'
+            });
+            child.unref();
+            gracefulExit();
+          } else {
+            gracefulExit(1);
+          }
         }, 2000);
       } catch (error) {
         logU(() => tp('update.log.errorLine', { message: error.message }));
@@ -1291,35 +1302,57 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  // --- Languages ---
+  // --- Content management (languages + genres) ---
 
-  app.get('/admin/languages', requireAdminWeb, (req, res) => {
+  app.get('/admin/languages', requireAdminWeb, (req, res) => res.redirect('/admin/content'));
+
+  app.get('/admin/content', requireAdminWeb, (req, res) => {
     const allLangs = getDistinctLanguages();
-    const excluded = getSetting('excluded_languages');
-    const excludedSet = new Set(
-      excluded ? excluded.split(',').map(s => s.trim()).filter(Boolean) : []
+    const excludedLangs = getSetting('excluded_languages');
+    const excludedLangSet = new Set(
+      excludedLangs ? excludedLangs.split(',').map(s => s.trim()).filter(Boolean) : []
     );
-    res.send(renderAdminLanguages({
+    const allGenres = getDistinctGenres();
+    const excludedGenres = getSetting('excluded_genres');
+    const excludedGenreSet = new Set(
+      excludedGenres ? excludedGenres.split(',').map(s => s.trim()).filter(Boolean) : []
+    );
+    res.send(renderAdminContent({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
-      languages: allLangs, excludedSet,
+      languages: allLangs, excludedLangSet,
+      genres: allGenres, excludedGenreSet,
       flash: String(req.query.flash || ''), csrfToken: req.csrfToken || ''
     }));
   });
 
-  app.post('/admin/languages', requireAdminWeb, async (req, res) => {
+  app.post('/admin/content', requireAdminWeb, async (req, res) => {
     try {
+      // Languages
       const allLangs = getDistinctLanguages();
-      const allCodes = allLangs.map(l => l.code);
-      const raw = req.body.enabled || [];
-      const enabled = new Set(Array.isArray(raw) ? raw : [raw]);
-      const excluded = allCodes.filter(code => !enabled.has(code));
-      setSetting('excluded_languages', excluded.join(','));
+      const allLangCodes = allLangs.map(l => l.code);
+      const rawLang = req.body.enabled_lang || [];
+      const enabledLang = new Set(Array.isArray(rawLang) ? rawLang : [rawLang]);
+      const excludedLang = allLangCodes.filter(code => !enabledLang.has(code));
+      setSetting('excluded_languages', excludedLang.join(','));
+
+      // Genres
+      const allGenres = getDistinctGenres();
+      const allGenreCodes = allGenres.map(g => g.code);
+      const rawGenre = req.body.enabled_genre || [];
+      const enabledGenre = new Set(Array.isArray(rawGenre) ? rawGenre : [rawGenre]);
+      const excludedGenre = allGenreCodes.filter(code => !enabledGenre.has(code));
+      setSetting('excluded_genres', excludedGenre.join(','));
+
       await rebuildActiveBooksView();
       clearPageDataCache();
-      logSystemEvent('info', 'admin', 'language filter updated', { admin: req.user.username, excluded: excluded.join(',') });
-      res.redirect('/admin/languages?flash=' + encodeURIComponent(t('admin.languages.saved')));
+      logSystemEvent('info', 'admin', 'content filter updated', {
+        admin: req.user.username,
+        excludedLangs: excludedLang.join(','),
+        excludedGenres: excludedGenre.join(',')
+      });
+      res.redirect('/admin/content?flash=' + encodeURIComponent(t('admin.content.saved')));
     } catch (error) {
-      res.redirect('/admin/languages?flash=' + encodeURIComponent(error.message));
+      res.redirect('/admin/content?flash=' + encodeURIComponent(error.message));
     }
   });
 }

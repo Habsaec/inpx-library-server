@@ -228,7 +228,162 @@ const GENRE_LABELS = {
   sci_textbook: 'Учебники и пособия',
   tbg_school: 'Школьные учебники и пособия, рефераты, шпаргалки',
   tbg_secondary: 'Учебники и пособия для среднего и специального образования',
-  tbg_higher: 'Учебники и пособия ВУЗов'
+  tbg_higher: 'Учебники и пособия ВУЗов',
+
+  // ── Алиасы и новые жанры (freeLib genre.tsv) ──
+  // Фантастика
+  sf_writing: 'Научная фантастика',
+  sf_su: 'Научная фантастика',
+  foreign_fantasy: 'Фэнтези',
+  everyday_fantasy: 'Фэнтези',
+  asian_fantasy: 'Фэнтези',
+  dark_fantasy: 'Тёмное фэнтези',
+  sf_space_opera: 'Космическая фантастика',
+  fantasy_det: 'Детективная фантастика',
+  city_fantasy: 'Городское фэнтези',
+  popadanec: 'Попаданцы',
+  sf_all: 'Фантастика',
+  adventure_fantasy: 'Фантастика',
+  foreign_sf: 'Зарубежная фантастика',
+  sf_industrial_magic: 'Фантастика',
+  slavic_fantasy: 'Славянское фэнтези',
+  fantasy_alt_hist: 'Альтернативная история',
+  nsf: 'Ненаучная фантастика',
+  sf_fantasy_irony: 'Ироническое фэнтези',
+  sf_irony: 'Ироническая фантастика',
+  historical_fantasy: 'Историческое фэнтези',
+  humor_fantasy: 'Юмористическое фэнтези',
+  utopia: 'Утопия',
+  dystopian: 'Антиутопия',
+  dorama: 'Дорама',
+  boyar_anime: 'Боярское аниме',
+  magic_school: 'Магическая академия',
+  sf_realrpg: 'РеалРПГ',
+  // Проза
+  short_story: 'Рассказ',
+  roman: 'Роман',
+  essay: 'Эссе, очерк, этюд, набросок',
+  dissident: 'Антисоветская литература',
+  sagas: 'Семейный роман, семейная сага',
+  prose_sentimental: 'Сентиментальная проза',
+  prose_epic: 'Эпопея',
+  extravaganza: 'Феерия',
+  prose_all: 'Проза',
+  // Детективы
+  det_all: 'Детективы',
+  det_artifact: 'Детективы',
+  det_other: 'Детективы',
+  thriller_mystery: 'Триллер',
+  det_cozy: 'Дамский детективный роман',
+  det_lady: 'Дамский детективный роман',
+  thriller_legal: 'Юридический триллер',
+  thriller_medical: 'Медицинский триллер',
+  thriller_techno: 'Техно-триллер',
+  thriller_psychology: 'Психологический триллер',
+  // Наука
+  sci_psychology_popular: 'Психология',
+  tech_all: 'Технические науки',
+  sci_all: 'Научная литература',
+  sci_business: 'Деловая литература',
+  sci_crib: 'Шпаргалки',
+  foreign_language: 'Иностранные языки',
+  sci_biochem: 'Биохимия',
+  psy_childs: 'Детская психология',
+  sci_physchem: 'Физическая химия',
+  psy_sex_and_family: 'Секс и семейная психология',
+  psy_theraphy: 'Психотерапия и консультирование',
+  sci_biophys: 'Биофизика',
+  sci_orgchem: 'Органическая химия',
+  sci_anachem: 'Аналитическая химия',
+  sci_abstract: 'Рефераты',
+  // Документальная
+  nonf_all: 'Документальная литература',
+  nonf_biography_writers: 'Биографии и Мемуары',
+  nonf_biography_celebrities: 'Биографии и Мемуары',
+  nonf_biography_historical: 'Биографии и Мемуары',
+  about_musicians: 'Биографии и Мемуары',
+  nonf_biography_military_figures: 'Военная документалистика',
+  // Любовные романы
+  love_all: 'Любовные романы',
+  love_fantasy: 'Любовная фантастика',
+  // Детское
+  child_all: 'Детская литература',
+  child_dramaturgy: 'Детская литература',
+  child_prose_history: 'Детская литература',
+  child_prose_humor: 'Проза для детей',
+  child_prose_romantic: 'Проза для детей',
+  child_adv_animal: 'Детские приключения',
+  child_det_children_detectives: 'Детские детективы',
+  child_det_other: 'Детские детективы',
+  child_det_animal_detectives: 'Детские детективы',
+  ya: 'Подростковая литература',
+  child_tale_russian_writers: 'Русские сказки',
+  child_tale_foreign_writers: 'Зарубежная литература для детей',
+  child_sf_space: 'Детская фантастика',
+  child_sf_hronoopera: 'Детская фантастика',
+  child_sf_horror: 'Детская фантастика',
+  child_sf_fantasy: 'Детская фантастика',
+  // Домоводство
+  home_all: 'Домоводство',
+  // Религия
+  religion_rel: 'Религия',
+  religion_all: 'Религия',
+  palmistry: 'Хиромантия',
+  // Приключения
+  adv_all: 'Приключения',
+  adv_western: 'Вестерн',
+  // Прочее
+  other_all: 'Неотсортированное',
+  diafilm: 'Диафильмы',
+  computer_translation: 'Машинный перевод',
+  fan_translation: 'Любительский перевод',
+  // Юмор
+  humor_all: 'Юмор',
+  // Поэзия и драматургия
+  poetry_all: 'Поэзия',
+  in_verse: 'В стихах',
+  epic_poetry: 'Эпическая поэзия',
+  fable: 'Басни',
+  experimental_poetry: 'Экспериментальная поэзия',
+  vers_libre: 'Верлибры',
+  visual_poetry: 'Визуальная поэзия',
+  dramaturgy_all: 'Драматургия',
+  scenarios: 'Сценарии',
+  mystery: 'Мистерия',
+  // Справочники
+  ref_all: 'Справочная литература',
+  // Военное дело
+  military_arts: 'Боевые искусства',
+  military_all: 'Военное дело',
+  military: 'Военное дело',
+  // Компьютеры
+  comp_all: 'Околокомпьютерная литература',
+  comp_programming: 'Программирование',
+  comp_osnet: 'ОС и Сети',
+  comp_soft: 'Программы',
+  comp_dsp: 'Цифровая обработка сигналов',
+  // Старинное
+  antique_all: 'Старинная литература',
+  // Деловая литература
+  marketing: 'Маркетинг, PR, реклама',
+  management: 'Управление, подбор персонала',
+  economics_all: 'Экономика',
+  stock: 'Ценные бумаги, инвестиции',
+  accounting: 'Бухучет и аудит',
+  personal_finance: 'Личные финансы',
+  job_hunting: 'Поиск работы, карьера',
+  small_business: 'Малый бизнес',
+  paper_work: 'Делопроизводство',
+  industries: 'Отраслевые издания',
+  real_estate: 'Недвижимость',
+  global_economy: 'Внешняя торговля',
+  trade: 'Торговля',
+  // Фольклор
+  folklore_all: 'Фольклор',
+  riddles: 'Загадки',
+  // Культура и искусство
+  visual_arts: 'Изобразительное искусство, фотография',
+  culture_all: 'Культура и искусство'
 };
 
 export function formatGenreLabel(value = '') {
@@ -275,3 +430,46 @@ export function formatLanguageLabel(value = '') {
 }
 
 export { GENRE_LABELS };
+
+const GENRE_GROUPS = {
+  'Фантастика': ['sf_history','sf_action','sf_epic','sf_heroic','sf_detective','sf_cyberpunk','sf_space','sf_social','sf_horror','sf_humor','sf_fantasy','sf','sf_fantasy_city','sf_postapocalyptic','sf_litrpg','sf_etc','russian_fantasy','sf_technofantasy','fairy_fantasy','hronoopera','sf_mystic','sf_stimpank','modern_tale','popadancy','sf_writing','sf_su','foreign_fantasy','everyday_fantasy','asian_fantasy','dark_fantasy','sf_space_opera','fantasy_det','city_fantasy','popadanec','sf_all','adventure_fantasy','foreign_sf','sf_industrial_magic','slavic_fantasy','fantasy_alt_hist','nsf','sf_fantasy_irony','sf_irony','historical_fantasy','humor_fantasy','utopia','dystopian','dorama','boyar_anime','magic_school','sf_realrpg'],
+  'Детективы': ['det_classic','det_police','det_action','det_irony','det_history','det_espionage','det_crime','det_political','det_maniac','det_hard','thriller','detective','det_su','det_all','det_artifact','det_other','thriller_mystery','det_cozy','det_lady','thriller_legal','thriller_medical','thriller_techno','thriller_psychology'],
+  'Проза': ['prose','prose_classic','prose_history','prose_contemporary','prose_counter','prose_rus_classic','prose_su_classics','prose_military','foreign_prose','foreign_antique','literature_18','literature_19','literature_20','gothic_novel','prose_magic','epistolary_fiction','prose_neformatny','aphorisms','great_story','story','prose_abs','short_story','roman','essay','dissident','sagas','prose_sentimental','prose_epic','extravaganza','prose_all'],
+  'Любовные романы': ['love_contemporary','love_history','love_detective','love_short','love_erotica','love','love_sf','love_hard','love_all','love_fantasy'],
+  'Приключения': ['adv_history','adv_indian','adv_maritime','adv_geo','adv_animal','adventure','child_adv','adv_modern','tale_chivalry','adv_story','adv_all','adv_western','child_adv_animal'],
+  'Детская литература': ['child_tale','child_verse','child_prose','child_sf','child_det','child_education','children','child_classical','child_tale_rus','foreign_children','prose_game','child_all','child_dramaturgy','child_prose_history','child_prose_humor','child_prose_romantic','child_det_children_detectives','child_det_other','child_det_animal_detectives','ya','child_tale_russian_writers','child_tale_foreign_writers','child_sf_space','child_sf_hronoopera','child_sf_horror','child_sf_fantasy'],
+  'Религия и эзотерика': ['religion_budda','sci_religion','religion_esoterics','religion_self','religion','religion_christianity','religion_orthodoxy','religion_protestantism','religion_catholicism','religion_judaism','religion_hinduism','religion_islam','religion_paganism','astrology','religion_rel','religion_all','palmistry'],
+  'Поэзия и драматургия': ['poetry','humor_verse','poetry_classical','poetry_modern','poetry_rus_classical','poetry_rus_modern','poetry_for_classical','poetry_for_modern','poetry_east','lyrics','song_poetry','poem','palindromes','dramaturgy','comedy','tragedy','drama','drama_antique','screenplays','vaudeville','poetry_all','in_verse','epic_poetry','fable','experimental_poetry','vers_libre','visual_poetry','dramaturgy_all','scenarios','mystery'],
+  'Старинная литература': ['antique_ant','antique_european','antique_russian','antique_east','antique','antique_myths','antique_all'],
+  'Фольклор': ['folklore','folk_tale','epic','proverbs','folk_songs','child_folklore','limerick','folklore_all','riddles'],
+  'Наука': ['sci_history','sci_psychology','sci_philosophy','sci_politics','sci_juris','sci_linguistic','sci_medicine','sci_phys','sci_math','sci_chem','sci_biology','science','sci_cosmos','sci_geo','sci_state','sci_economy','sci_medicine_alternative','sci_philology','sci_popular','military_history','sci_social_studies','sci_zoo','sci_botany','sci_ecology','sci_oriental','sci_theories','sci_veterinary','sci_culture','sci_psychology_popular','tech_all','sci_all','sci_business','sci_crib','foreign_language','sci_biochem','psy_childs','sci_physchem','psy_sex_and_family','psy_theraphy','sci_biophys','sci_orgchem','sci_anachem','sci_abstract'],
+  'Искусство': ['notes','nonf_criticism','design','music','painting','architecture_book','art_world_culture','cine','theatre','art_criticism','visual_arts','culture_all'],
+  'Техника': ['sci_tech','sci_build','sci_radio','sci_metal','sci_transport','auto_business','equ_history'],
+  'Военное дело': ['military_weapon','military_special','military_arts','military_all','military'],
+  'Компьютеры': ['comp_www','comp_hard','comp_db','computers','tbg_computers','comp_all','comp_programming','comp_osnet','comp_soft','comp_dsp'],
+  'Справочники': ['ref_encyc','ref_dict','ref_ref','ref_guide','reference','geo_guides','ref_all'],
+  'Документальная': ['nonf_biography','nonf_publicism','nonfiction','nonf_military','travel_notes','nonf_all','nonf_biography_writers','nonf_biography_celebrities','nonf_biography_historical','about_musicians','nonf_biography_military_figures'],
+  'Юмор': ['humor_anecdote','humor_prose','humor','humor_satire','humor_all'],
+  'Дом и быт': ['home_cooking','home_pets','home_crafts','home_entertain','home_health','home_garden','home_diy','home_sport','home_sex','home','sci_pedagogy','auto_regulations','home_collecting','family','home_all'],
+  'Прочее': ['other','periodic','comics','unfinished','fanfiction','network_literature','other_all','diafilm','computer_translation','fan_translation'],
+  'Бизнес': ['banking','org_behavior','popular_business','economics_ref','economics','marketing','management','economics_all','stock','accounting','personal_finance','job_hunting','small_business','paper_work','industries','real_estate','global_economy','trade'],
+  'Учебники': ['sci_textbook','tbg_school','tbg_secondary','tbg_higher']
+};
+
+// Reverse index: genre code → group name
+const GENRE_TO_GROUP = {};
+for (const [group, codes] of Object.entries(GENRE_GROUPS)) {
+  for (const code of codes) {
+    GENRE_TO_GROUP[code] = group;
+  }
+}
+
+export function getGenreGroup(code) {
+  return GENRE_TO_GROUP[code] || null;
+}
+
+export function getGenreGroups() {
+  return GENRE_GROUPS;
+}
+
+export { GENRE_TO_GROUP };
