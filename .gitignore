@@ -5,5 +5,7 @@ data/
 *.db-wal
 .env
 .session-secret
+cookies.txt
+filelist.txt
 release/
 converter/*.exe
