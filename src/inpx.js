@@ -4014,21 +4014,27 @@ export function isFavoriteSeries(username, seriesName) {
   `).get(username, resolved));
 }
 
-export function getBookmarks(username, sort = 'date') {
+export function getBookmarks(username, sort = 'date', limit = 0) {
   const orderMap = {
     title: 'b.title COLLATE NOCASE ASC',
     author: `COALESCE(b.authors, '') COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC`,
     date: 'bm.created_at DESC'
   };
   const orderBy = orderMap[sort] || orderMap.date;
-  return db.prepare(`
+  const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+  const sql = `
     SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo,
            b.ext, b.archive_name AS archiveName
     FROM bookmarks bm
     JOIN active_books b ON b.id = bm.book_id
     WHERE bm.username = ?
     ORDER BY ${orderBy}
-  `).all(username).map(mapBookListRow);
+    ${normalizedLimit ? 'LIMIT ?' : ''}
+  `;
+  const rows = normalizedLimit
+    ? db.prepare(sql).all(username, normalizedLimit)
+    : db.prepare(sql).all(username);
+  return rows.map(mapBookListRow);
 }
 
 export function isBookmarked(username, bookId) {
@@ -4137,21 +4143,27 @@ export function addReadBooksIfMissing(username, bookIds) {
   return { added, already, missing };
 }
 
-export function getReadBooks(username, sort = 'date') {
+export function getReadBooks(username, sort = 'date', limit = 0) {
   const orderMap = {
     title: 'b.title COLLATE NOCASE ASC',
     author: `COALESCE(b.authors, '') COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC`,
     date: 'rb.created_at DESC'
   };
   const orderBy = orderMap[sort] || orderMap.date;
-  return db.prepare(`
+  const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+  const sql = `
     SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo,
            b.ext, b.archive_name AS archiveName
     FROM read_books rb
     JOIN active_books b ON b.id = rb.book_id
     WHERE rb.username = ?
     ORDER BY ${orderBy}
-  `).all(username).map(mapBookListRow);
+    ${normalizedLimit ? 'LIMIT ?' : ''}
+  `;
+  const rows = normalizedLimit
+    ? db.prepare(sql).all(username, normalizedLimit)
+    : db.prepare(sql).all(username);
+  return rows.map(mapBookListRow);
 }
 
 export function getSuggestions(query, limit = 5) {

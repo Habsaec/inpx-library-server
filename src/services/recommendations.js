@@ -10,6 +10,7 @@ import {
   getBookmarks,
   getReadBooks
 } from '../inpx.js';
+import { getReadBookIdSet } from '../db.js';
 import { t } from '../i18n.js';
 
 const RECS_CACHE_TTL_MS = 30_000;
@@ -71,12 +72,10 @@ function createFacetFetchMemo() {
   };
 }
 
-function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, history, bookmarks, readBooks = [], getFacetBooks, limit = 48 }) {
+function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, history, bookmarks, readBooks = [], readBookIds = new Set(), getFacetBooks, limit = 48 }) {
   const scored = new Map();
-  const excludeIds = new Set([
-    ...history.map((h) => h.id),
-    ...readBooks.map((b) => b.id)
-  ]);
+  const excludeIds = new Set(readBookIds);
+  for (const item of history) excludeIds.add(item.id);
 
   const addItems = (items, weight) => {
     for (const item of items) {
@@ -125,13 +124,14 @@ function buildRecommendations(username, limit = 48) {
   const history = getReadingHistory(username, 24);
   const favoriteAuthors = getFavoriteAuthors(username, 12);
   const favoriteSeries = getFavoriteSeries(username, 12);
-  const bookmarkItems = getBookmarks(username);
-  const readBooks = getReadBooks(username);
+  const bookmarkItems = getBookmarks(username, 'date', 24);
+  const readBooks = getReadBooks(username, 'date', 24);
+  const readBookIds = getReadBookIdSet(username);
   const getFacetBooks = createFacetFetchMemo();
   const weighted = collectWeightedRecommendations({
-    favoriteAuthors, favoriteSeries, history, bookmarks: bookmarkItems, readBooks, getFacetBooks, limit
+    favoriteAuthors, favoriteSeries, history, bookmarks: bookmarkItems, readBooks, readBookIds, getFacetBooks, limit
   });
-  const allExcludeIds = [...history.map((h) => h.id), ...readBooks.map((b) => b.id)];
+  const allExcludeIds = [...history.map((h) => h.id), ...readBookIds];
   return dedupeBooks(weighted, allExcludeIds);
 }
 
