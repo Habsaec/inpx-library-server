@@ -15,7 +15,12 @@ process.on('unhandledRejection', (reason) => {
 // that use fs/zlib work queues (archive extraction, conversions).
 if (!process.env.UV_THREADPOOL_SIZE) {
   const cpuCount = Array.isArray(os.cpus()) ? os.cpus().length : 4;
-  const tuned = Math.max(16, Math.min(32, cpuCount * 2));
+  const totalMemMb = Math.round(os.totalmem() / (1024 * 1024));
+  const envProfile = (process.env.PERF_PROFILE || '').trim().toLowerCase();
+  const isEmbedded = envProfile === 'embedded' || (envProfile !== 'default' && totalMemMb <= 2048);
+  const tuned = isEmbedded
+    ? Math.max(4, cpuCount)
+    : Math.max(16, Math.min(32, cpuCount * 2));
   process.env.UV_THREADPOOL_SIZE = String(tuned);
 }
 

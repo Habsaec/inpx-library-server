@@ -10,7 +10,7 @@ import { ApiErrorCode } from '../api-errors.js';
 import { requireDownloadAuth } from '../middleware/auth.js';
 import { BATCH_DOWNLOAD_MAX } from '../constants.js';
 import { getShelfById, getShelfBooks } from '../db.js';
-import { getBookById, getAllBookIdsByFacet } from '../inpx.js';
+import { getBookById, getBooksByIds, getAllBookIdsByFacet } from '../inpx.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolveDownload } from '../conversion.js';
 
@@ -166,6 +166,7 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
     const envWorkers = Math.max(1, Math.min(20, envWorkerRaw || defaultWorkers));
     const workerCount = Math.max(1, Math.min(envWorkers, bookIds.length));
     const sourceExtStats = Object.create(null);
+    const booksMap = getBooksByIds(bookIds);
     let fatalError = null;
     const workers = Array.from({ length: workerCount }, async () => {
       for (;;) {
@@ -174,7 +175,7 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
         if (idx >= bookIds.length) return;
         const bookId = bookIds[idx];
         try {
-          const book = getBookById(bookId);
+          const book = booksMap.get(bookId);
           if (!book) {
             skippedMissing++;
             if (skippedDetails.length < 50) skippedDetails.push(`${bookId}: missing`);

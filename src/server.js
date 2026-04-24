@@ -35,6 +35,7 @@ import {
 import { getOnlineUserCount, pruneOfflineUsers } from './services/online-tracker.js';
 import { getCachedPageData, clearPageDataCache } from './services/cache.js';
 import { logSystemEvent } from './services/system-events.js';
+import { createPerfMetricsMiddleware, getPerfSnapshot } from './services/perf-metrics.js';
 
 import { mirrorIndexingLogsToDataFile, appendIndexDiaryLine } from './services/file-log.js';
 import { installRuntimeLogCapture } from './services/runtime-logs.js';
@@ -86,6 +87,7 @@ installRuntimeLogCapture();
 const app = express();
 app.set('trust proxy', config.trustProxy);
 app.use(securityHeaders);
+app.use(createPerfMetricsMiddleware());
 const serverStartedAt = new Date();
 let lastKnownIndexActive = false;
 let lastIndexProgressLog = 0;
@@ -292,18 +294,23 @@ function buildPublicSettingsExport() {
   };
 }
 
+let _stmtCacheStats;
+let _stmtBookmarkCount;
+let _stmtHistoryCount;
+let _stmtTotalUsers;
+
 function getOperationsSnapshot() {
   const dbStats = fs.existsSync(config.dbPath) ? fs.statSync(config.dbPath) : null;
   const inpxFile = getConfiguredInpxFile();
-  const bookCacheStats = db
-    .prepare(
-      `SELECT COUNT(*) AS count,
-        IFNULL(SUM(LENGTH(COALESCE(annotation, '')) + LENGTH(COALESCE(cover_data, ''))), 0) AS approx_bytes
-       FROM book_details_cache`
-    )
-    .get();
-  const bookmarkCount = db.prepare('SELECT COUNT(*) AS count FROM bookmarks').get().count;
-  const historyCount = db.prepare('SELECT COUNT(*) AS count FROM reading_history').get().count;
+  if (!_stmtCacheStats) {
+    _stmtCacheStats = db.prepare(`SELECT COUNT(*) AS count, IFNULL(SUM(LENGTH(COALESCE(annotation, '')) + LENGTH(COALESCE(cover_data, ''))), 0) AS approx_bytes FROM book_details_cache`);
+    _stmtBookmarkCount = db.prepare('SELECT COUNT(*) AS count FROM bookmarks');
+    _stmtHistoryCount = db.prepare('SELECT COUNT(*) AS count FROM reading_history');
+    _stmtTotalUsers = db.prepare('SELECT COUNT(*) AS count FROM users');
+  }
+  const bookCacheStats = _stmtCacheStats.get();
+  const bookmarkCount = _stmtBookmarkCount.get().count;
+  const historyCount = _stmtHistoryCount.get().count;
   const validation = getServiceValidation();
   const mem = process.memoryUsage();
   const disk = getDiskUsageForPath(config.dbPath);
@@ -326,15 +333,16 @@ function getOperationsSnapshot() {
     loginRateLimitMaxAttempts: config.loginMaxAttempts,
     sessionMaxAgeMs: config.sessionMaxAgeMs,
     serverStartedAt: serverStartedAt.toISOString(),
-    totalUsers: db.prepare('SELECT COUNT(*) AS count FROM users').get().count,
+    totalUsers: _stmtTotalUsers.get().count,
     onlineUsers: getOnlineUserCount(),
-    memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    memoryMB: Math.round(mem.rss / 1024 / 1024),
     systemMemoryMB: Math.round(os.totalmem() / 1024 / 1024),
     heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
     heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
     diskTotalMB: disk?.totalMB ?? null,
     diskFreeMB: disk?.freeMB ?? null,
     cpuPercent: sampleProcessCpuPercent(),
+    perf: getPerfSnapshot(),
     appVersion: readPackageVersion(),
     sources: getSources()
   };
@@ -429,7 +437,7 @@ app.use(browseHtmlNoStore);
 app.use(browseLimiter);
 
 // Публичные диагностические маршруты — до express.static, чтобы не пересекаться с файлами из public/.
-registerHealthRoutes(app, { getCachedStats, getServiceValidation });
+registerHealthRoutes(app, { getCachedStats, getServiceValidation, getPerfSnapshot });
 registerBrowseApiRoutes(app);
 
 app.use(express.static(config.publicDir, {

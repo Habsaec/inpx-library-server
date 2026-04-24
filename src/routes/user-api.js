@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { t, tp, translateKnownErrorMessage, countLabel } from '../i18n.js';
 import { requireApiAuth } from '../middleware/auth.js';
@@ -9,13 +8,15 @@ import {
   getEreaderEmail, setEreaderEmail, getSmtpSettings
 } from '../db.js';
 import {
-  getBookById, getReadingHistory, getBookmarks, getFavoriteAuthors, getFavoriteSeries,
+  getBookById, getBooksByIds, getReadingHistory, getBookmarks, getFavoriteAuthors, getFavoriteSeries,
   isBookmarked, toggleBookmark, addBookmarksIfMissing,
-  toggleFavoriteAuthor, toggleFavoriteSeries, getAllBookIdsByFacet
+  toggleFavoriteAuthor, toggleFavoriteSeries, getAllBookIdsByFacet,
+  toggleReadBook, addReadBooksIfMissing, isSeriesFullyRead, removeReadBooksForSeries
 } from '../inpx.js';
 import { resolveDownload } from '../conversion.js';
 import { createSmtpTransport } from '../services/email.js';
-import { invalidateHomeUserSnapshot } from '../services/cache.js';
+import { invalidateUserPageCaches } from '../services/cache.js';
+import { invalidateRecommendationsCache } from '../services/recommendations.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { BATCH_DOWNLOAD_MAX } from '../constants.js';
@@ -51,7 +52,58 @@ export function registerUserApiRoutes(app, deps) {
       return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
     }
     const bookmarked = toggleBookmark(req.user.username, book.id);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
     res.json({ bookmarked });
+  });
+
+  /* ── Read books ──────────────────────────────────────────────────── */
+
+  app.post('/api/read/batch', requireApiAuth, (req, res) => {
+    const body = req.body || {};
+    const facet = String(body.facet || '').trim();
+    const value = String(body.value ?? '').trim();
+    // Series toggle: if fully read → unmark, otherwise → mark
+    if (facet === 'series' && value) {
+      if (isSeriesFullyRead(req.user.username, value)) {
+        const result = removeReadBooksForSeries(req.user.username, value);
+        invalidateUserPageCaches(req.user.username);
+        invalidateRecommendationsCache(req.user.username);
+        return res.json({ ...result, action: 'removed' });
+      }
+      const ids = getAllBookIdsByFacet('series', value);
+      if (!ids.length) {
+        return apiFail(res, 400, ApiErrorCode.BATCH_NO_BOOKS, t('api.batch.noBooks'));
+      }
+      const result = addReadBooksIfMissing(req.user.username, ids);
+      invalidateUserPageCaches(req.user.username);
+      invalidateRecommendationsCache(req.user.username);
+      return res.json({ ...result, action: 'added' });
+    }
+    const raw = body.ids;
+    const ids = Array.isArray(raw) ? raw.map((x) => String(x).trim()).filter(Boolean) : [];
+    const unique = [...new Set(ids)];
+    if (!unique.length) {
+      return apiFail(res, 400, ApiErrorCode.BATCH_NO_BOOKS, t('api.batch.noBooks'));
+    }
+    if (unique.length > BATCH_DOWNLOAD_MAX) {
+      return apiFail(res, 400, ApiErrorCode.BATCH_MAX_BOOKS, tp('api.batch.maxBooks', { max: BATCH_DOWNLOAD_MAX }));
+    }
+    const result = addReadBooksIfMissing(req.user.username, unique);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
+    res.json({ ...result, action: 'added' });
+  });
+
+  app.post('/api/read/:id', requireApiAuth, (req, res) => {
+    const book = getBookById(req.params.id);
+    if (!book) {
+      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    }
+    const read = toggleReadBook(req.user.username, book.id);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
+    res.json({ read });
   });
 
   app.post('/api/bookmarks/batch', requireApiAuth, (req, res) => {
@@ -65,6 +117,8 @@ export function registerUserApiRoutes(app, deps) {
       return apiFail(res, 400, ApiErrorCode.BATCH_MAX_BOOKS, tp('api.batch.maxBooks', { max: BATCH_DOWNLOAD_MAX }));
     }
     const result = addBookmarksIfMissing(req.user.username, unique);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
     res.json(result);
   });
 
@@ -88,18 +142,23 @@ export function registerUserApiRoutes(app, deps) {
     if (shelfIds.length > BATCH_DOWNLOAD_MAX) {
       return apiFail(res, 400, ApiErrorCode.BATCH_MAX_SHELVES, tp('api.batch.maxShelves', { max: BATCH_DOWNLOAD_MAX }));
     }
+    // Предварительно валидируем bookIds ОДНИМ запросом вместо N×M точечных SELECT-ов.
+    const placeholders = bookIds.map(() => '?').join(',');
+    const validIds = new Set(
+      db.prepare(`SELECT id FROM active_books WHERE id IN (${placeholders})`).all(...bookIds).map((r) => r.id)
+    );
     let added = 0;
+    const addBatch = db.transaction((shelfId, ids) => {
+      for (const bookId of ids) {
+        // INSERT OR IGNORE идемпотентен; .changes отличает «добавили» от «уже было».
+        added += addBookToShelf(shelfId, bookId);
+      }
+    });
     for (const shelfId of shelfIds) {
       const shelf = getShelfById(shelfId, req.user.username);
       if (!shelf) continue;
-      for (const bookId of bookIds) {
-        if (!getBookById(bookId)) continue;
-        const existed = db
-          .prepare('SELECT 1 FROM shelf_books WHERE shelf_id = ? AND book_id = ?')
-          .get(shelf.id, bookId);
-        addBookToShelf(shelf.id, bookId);
-        if (!existed) added++;
-      }
+      const ids = bookIds.filter((id) => validIds.has(id));
+      if (ids.length) addBatch(shelf.id, ids);
     }
     res.json({ ok: true, added });
   });
@@ -110,7 +169,8 @@ export function registerUserApiRoutes(app, deps) {
     if (favorite === null) {
       return apiFail(res, 404, ApiErrorCode.FACET_AUTHOR_NOT_FOUND, t('api.facet.authorNotFound'));
     }
-    invalidateHomeUserSnapshot(req.user.username);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
     res.json({ favorite });
   });
 
@@ -120,7 +180,8 @@ export function registerUserApiRoutes(app, deps) {
     if (favorite === null) {
       return apiFail(res, 404, ApiErrorCode.FACET_SERIES_NOT_FOUND, t('api.facet.seriesNotFound'));
     }
-    invalidateHomeUserSnapshot(req.user.username);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
     res.json({ favorite });
   });
 
@@ -265,17 +326,12 @@ export function registerUserApiRoutes(app, deps) {
         const attachments = [];
         const usedNames = new Map();
         const requested = bookIds.length;
+        const booksMap = getBooksByIds(bookIds);
         for (const bookId of bookIds) {
           try {
-            const book = getBookById(bookId);
+            const book = booksMap.get(bookId);
             if (!book) continue;
             const download = await resolveDownload(book, format || undefined);
-            let content;
-            if (download.filePath) {
-              content = await fs.promises.readFile(download.filePath);
-            } else {
-              content = download.content;
-            }
 
             let fileName = download.fileName;
             const count = usedNames.get(fileName) || 0;
@@ -286,7 +342,11 @@ export function registerUserApiRoutes(app, deps) {
             }
             usedNames.set(download.fileName, count + 1);
 
-            attachments.push({ filename: fileName, content, contentType: download.mimeType });
+            if (download.filePath) {
+              attachments.push({ filename: fileName, path: download.filePath, contentType: download.mimeType });
+            } else {
+              attachments.push({ filename: fileName, content: download.content, contentType: download.mimeType });
+            }
           } catch {
             // skip books that fail to resolve
           }
@@ -356,31 +416,32 @@ export function registerUserApiRoutes(app, deps) {
       if (!book) {
         return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
       }
-      const format = String(req.body.format || 'epub2');
-      const download = await resolveDownload(book, format);
-      let content;
-      if (download.filePath) {
-        content = await fs.promises.readFile(download.filePath);
-      } else {
-        content = download.content;
+      const lockKey = req.user.username;
+      if (batchEmailLocks.has(lockKey)) {
+        return apiFail(res, 429, ApiErrorCode.SEND_IN_PROGRESS, t('api.send.inProgress'));
       }
+      batchEmailLocks.add(lockKey);
+      const format = String(req.body.format || 'epub2');
+      try {
+        const download = await resolveDownload(book, format);
+        const { transporter, senderEmail } = createSmtpTransport();
+        const attachment = download.filePath
+          ? { filename: download.fileName, path: download.filePath, contentType: download.mimeType }
+          : { filename: download.fileName, content: download.content, contentType: download.mimeType };
 
-      const { transporter, senderEmail } = createSmtpTransport();
+        await transporter.sendMail({
+          from: senderEmail,
+          to: ereaderEmail,
+          subject: download.fileName,
+          text: `${book.title} — ${book.authors || t('book.authorUnknown')}`,
+          attachments: [attachment]
+        });
 
-      await transporter.sendMail({
-        from: senderEmail,
-        to: ereaderEmail,
-        subject: download.fileName,
-        text: `${book.title} — ${book.authors || t('book.authorUnknown')}`,
-        attachments: [{
-          filename: download.fileName,
-          content,
-          contentType: download.mimeType
-        }]
-      });
-
-      logSystemEvent('info', 'ereader', 'book sent to ereader', { user: req.user.username, book: book.title, to: ereaderEmail, format });
-      res.json({ ok: true, message: tp('api.email.singleSent', { email: ereaderEmail }) });
+        logSystemEvent('info', 'ereader', 'book sent to ereader', { user: req.user.username, book: book.title, to: ereaderEmail, format });
+        res.json({ ok: true, message: tp('api.email.singleSent', { email: ereaderEmail }) });
+      } finally {
+        batchEmailLocks.delete(lockKey);
+      }
     } catch (error) {
       console.error('Send to ereader error:', error);
       let msg = translateKnownErrorMessage(error.message) || t('api.error.unknown');
@@ -389,6 +450,7 @@ export function registerUserApiRoutes(app, deps) {
       } else if (msg.includes('EENVELOPE') || msg.includes('rejected')) {
         msg = t('api.email.err.smtpRejected');
       }
+      batchEmailLocks.delete(req.user?.username || '');
       res.status(500).json({ ok: false, code: ApiErrorCode.SMTP_ERROR, error: msg });
     }
   });

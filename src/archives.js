@@ -25,6 +25,22 @@ const zipDirectoryInflight = new Map();
 const sevenZipListCache = new Map();
 const sevenZipListInflight = new Map();
 
+export function clearArchiveReadCaches() {
+  zipDirectoryCache.clear();
+  zipDirectoryInflight.clear();
+  sevenZipListCache.clear();
+  sevenZipListInflight.clear();
+}
+
+export function invalidateArchiveReadCache(archivePath) {
+  const key = path.resolve(String(archivePath || ''));
+  if (!key) return;
+  zipDirectoryCache.delete(key);
+  zipDirectoryInflight.delete(key);
+  sevenZipListCache.delete(key);
+  sevenZipListInflight.delete(key);
+}
+
 function normalizeEntryKey(p) {
   return String(p || '').replace(/\\/g, '/');
 }

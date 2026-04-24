@@ -43,3 +43,25 @@ export function invalidateHomeUserSnapshot(username) {
   if (!u) return;
   pageDataCache.delete(`home:userSnap:${u}`);
 }
+
+/**
+ * Сброс кэша страницы /favorites для юзера (все view × sort комбинации).
+ * Использует префикс `favorites:${username}:`.
+ */
+export function invalidateFavoritesPage(username) {
+  const u = String(username || '').trim();
+  if (!u) return;
+  const prefix = `favorites:${u}:`;
+  for (const key of pageDataCache.keys()) {
+    if (key.startsWith(prefix)) pageDataCache.delete(key);
+  }
+}
+
+/**
+ * Комбинированный сброс всех per-user кэшей страниц при действии юзера.
+ * Зовётся из роутов bookmark / read / favorite toggle.
+ */
+export function invalidateUserPageCaches(username) {
+  invalidateHomeUserSnapshot(username);
+  invalidateFavoritesPage(username);
+}

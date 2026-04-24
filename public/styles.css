@@ -1083,6 +1083,54 @@ html[data-theme="light"] .cover-fallback-overlay {
   white-space: nowrap;
 }
 
+/* ── Read badge (large checkmark stamp on covers) ── */
+.read-badge {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.52);
+  pointer-events: none;
+}
+.read-badge svg {
+  width: 48%;
+  aspect-ratio: 1;
+  padding: 12%;
+  border-radius: 999px;
+  background: rgba(34, 160, 100, 0.88);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Read indicator in entity lists (series, etc.) */
+.read-series-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(34, 160, 100, 0.88);
+  vertical-align: middle;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.read-series-badge svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .card-actions {
   display: flex;
   align-items: center;
@@ -2600,6 +2648,16 @@ button.download-format-link {
 .book-detail-bookmark-action[data-active-favorite="true"] {
   background: color-mix(in srgb, var(--accent) 18%, var(--surface));
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+}
+
+.book-detail-read-action {
+  padding: 6px 12px;
+}
+
+.book-detail-read-action.is-active {
+  background: color-mix(in srgb, #4ac694 20%, var(--surface));
+  border-color: color-mix(in srgb, #4ac694 50%, var(--border));
+  color: #4ac694;
 }
 
 

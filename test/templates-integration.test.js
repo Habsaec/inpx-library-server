@@ -22,7 +22,7 @@ test('templates.js barrel exports all expected symbols', async () => {
     'renderShelves', 'renderShelfDetail', 'renderReader', 'renderProfile',
     // admin
     'renderOperations', 'renderAdminUpdate', 'renderAdminUsers',
-    'renderAdminEvents', 'renderAdminLanguages', 'renderAdminDuplicates',
+    'renderAdminEvents', 'renderAdminContent', 'renderAdminDuplicates',
     'renderAdminSources', 'renderAdminSmtp',
     // opds
     'renderOpdsRoot', 'renderOpdsOpenSearch', 'renderOpdsSearchHelp',

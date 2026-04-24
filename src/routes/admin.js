@@ -15,6 +15,10 @@ import {
 import { getRecentRuntimeLogs, subscribeRuntimeLogs, getRuntimeLogFilePath } from '../services/runtime-logs.js';
 import { restartScanScheduler, getSchedulerIntervalHours } from '../services/scheduler.js';
 import {
+  getUpdateState, isUpdateTimedOut, readUpdateLog, appendUpdateLog,
+  beginUpdate, endUpdate, runUpdateFromZip
+} from '../services/self-update.js';
+import {
   setSetting, getSetting, encryptValue, decryptValue, getSources, getSourceById,
   addSource, updateSource, deleteSourceProgressive, forceDetachSourceRowUnsafe,
   getSmtpSettings, setSmtpSettings, hasAdminUser, listUsers, countAdminUsers,
@@ -27,7 +31,7 @@ import {
   getSourceRoot, getAuthorFlibustaSourceId, startBackgroundIndexing, startSourceIndexing,
   requestIndexPause, requestIndexResume, requestIndexStop,
   splitAuthorValues, getDuplicateGroups, softDeleteBook, autoCleanDuplicates,
-  previewAutoClean, markLibraryDedupProjectionStale
+  previewAutoClean, markLibraryDedupProjectionStale, invalidateDuplicatesCache
 } from '../inpx.js';
 import {
   detectFlibustaSidecarLayout, resolveLibraryArchiveRelPath, resolveSidecarArchivePath,
@@ -36,37 +40,13 @@ import {
   readFlibustaAuthorPortraitForAuthorName, readFlibustaAuthorBioHtml,
   listFlibustaIllustrationsForBook, refreshFlibustaSidecarForSource
 } from '../flibusta-sidecar.js';
+import { clearArchiveReadCaches } from '../archives.js';
 import {
-  SYSTEM_EVENTS_MAX_COUNT, SYSTEM_EVENTS_RETAIN_COUNT,
-  UPDATE_TIMEOUT_MS, UPDATE_PROTECTED_DIRS, UPDATE_PROTECTED_FILES,
-  MAX_UNCOMPRESSED_TOTAL, MAX_SINGLE_FILE, SAFE_ADMIN_REDIRECTS
+  SYSTEM_EVENTS_MAX_COUNT, SYSTEM_EVENTS_RETAIN_COUNT, SAFE_ADMIN_REDIRECTS
 } from '../constants.js';
 
-// --- Update from ZIP: local state ---
-const UPDATE_LOG_PATH = path.join(config.dataDir, 'update.log');
-let updateRunning = false;
-let updateStartedAt = 0;
-
-function appendUpdateLog(line) {
-  fs.appendFileSync(UPDATE_LOG_PATH, line + '\n', 'utf8');
-}
-function resetUpdateLog() {
-  fs.mkdirSync(config.dataDir, { recursive: true });
-  fs.writeFileSync(UPDATE_LOG_PATH, '', 'utf8');
-}
-function isProtectedPath(relativePath) {
-  const top = relativePath.split(/[/\\]/)[0];
-  if (UPDATE_PROTECTED_DIRS.has(top) || UPDATE_PROTECTED_DIRS.has(relativePath)) return true;
-  const normalized = relativePath.replace(/\\/g, '/');
-  return UPDATE_PROTECTED_FILES.has(normalized);
-}
-function isSafePath(relativePath) {
-  if (/\0/.test(relativePath)) return false;
-  const normalized = path.normalize(relativePath);
-  if (normalized.startsWith('..') || path.isAbsolute(normalized)) return false;
-  if (/\.\.[/\\]/.test(relativePath)) return false;
-  return true;
-}
+// Self-update состояние и логика вынесены в services/self-update.js.
+// i18n-ключи ниже используются при форматировании пользовательского лога апдейта.
 
 /**
  * @param {import('express').Express} app
@@ -583,6 +563,9 @@ export function registerAdminRoutes(app, deps) {
       if (status.active) {
         return res.status(409).json({ ok: false, error: t('admin.sources.deleteBlockedDuringIndexing') });
       }
+      if (operationsState.sidecarRunning) {
+        return res.status(409).json({ ok: false, error: 'Sidecar rebuild is in progress' });
+      }
       const source = getSourceById(id);
       if (!source) {
         return res.status(404).json({ ok: false, error: t('admin.sources.notFound') });
@@ -622,6 +605,8 @@ export function registerAdminRoutes(app, deps) {
         }
       } finally {
         operationsState.sourceDeleteRunning = false;
+        clearArchiveReadCaches();
+        invalidateDuplicatesCache();
         clearPageDataCache();
         markLibraryDedupProjectionStale();
       }
@@ -659,6 +644,9 @@ export function registerAdminRoutes(app, deps) {
       }
       if (operationsState.sourceDeleteRunning) {
         return res.redirect('/admin/sources?flash=' + encodeURIComponent(t('admin.sources.deleteInProgress')));
+      }
+      if (operationsState.sidecarRunning) {
+        return res.redirect('/admin/sources?flash=' + encodeURIComponent('Sidecar rebuild is in progress'));
       }
       const force = req.body.mode === 'full';
       const started = startSourceIndexing(id, force);
@@ -798,6 +786,9 @@ export function registerAdminRoutes(app, deps) {
     if (operationsState.sourceDeleteRunning) {
       return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.sources.deleteInProgress'));
     }
+    if (operationsState.sidecarRunning) {
+      return apiFail(res, 409, ApiErrorCode.CONFLICT, 'Sidecar rebuild is in progress');
+    }
     operationsState.lastReindexRequestedAt = new Date().toISOString();
     clearPageDataCache();
     const started = startBackgroundIndexing(force, !force);
@@ -853,6 +844,12 @@ export function registerAdminRoutes(app, deps) {
   app.post('/api/operations/sidecar-rebuild', requireAdminApi, (req, res) => {
     if (operationsState.sidecarRunning) {
       return apiFail(res, 409, ApiErrorCode.CONFLICT, 'Sidecar rebuild already running');
+    }
+    if (operationsState.sourceDeleteRunning) {
+      return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.sources.deleteInProgress'));
+    }
+    if (getIndexStatus().active) {
+      return apiFail(res, 409, ApiErrorCode.CONFLICT, 'Operation is blocked during indexing');
     }
     const sourceIdRaw = req.body?.sourceId;
     const sourceId = sourceIdRaw == null || String(sourceIdRaw).trim() === '' ? null : Number(sourceIdRaw);
@@ -931,283 +928,68 @@ export function registerAdminRoutes(app, deps) {
     }, 500);
   });
 
-  // --- Update from ZIP ---
+  // --- Update from ZIP --- (реализация — services/self-update.js)
 
   app.get('/api/operations/update-log', requireAdminApi, (req, res) => {
     try {
-      const text = fs.existsSync(UPDATE_LOG_PATH) ? fs.readFileSync(UPDATE_LOG_PATH, 'utf8') : '';
-      res.json({ ok: true, log: text, running: updateRunning });
+      res.json({ ok: true, log: readUpdateLog(), running: getUpdateState().running });
     } catch (error) {
       res.json({
         ok: false, code: ApiErrorCode.UPDATE_LOG_READ_ERROR,
-        log: '', running: updateRunning, error: error.message
+        log: '', running: getUpdateState().running, error: error.message
       });
     }
   });
 
   app.post('/api/operations/update', requireAdminApi, express.raw({ type: '*/*', limit: '200mb' }), (req, res) => {
     const updateLogLocale = resolveLocale(req);
-    const logU = (fn) => runWithLocaleLang(updateLogLocale, () => appendUpdateLog(fn()));
-    if (updateRunning) {
-      if (Date.now() - updateStartedAt > UPDATE_TIMEOUT_MS) {
-        updateRunning = false;
-        logU(() => t('update.log.timeoutReset'));
-      } else {
-        return apiFail(res, 409, ApiErrorCode.UPDATE_RUNNING, t('admin.update.running'));
-      }
+    /**
+     * Форматируем ключи из self-update.js в локализованные сообщения.
+     * Логика i18n остаётся в этом слое, сервис оперирует абстрактным «key + params».
+     */
+    const logLine = (key, params = {}) => {
+      runWithLocaleLang(updateLogLocale, () => {
+        const fullKey = `update.log.${key}`;
+        const line = Object.keys(params).length
+          ? tp(fullKey, { ...params, unit: t('common.unitMB') })
+          : t(fullKey);
+        appendUpdateLog(line);
+      });
+    };
+
+    const prev = getUpdateState();
+    const wasTimedOut = prev.running && isUpdateTimedOut();
+    if (!beginUpdate()) {
+      // Идёт активный апдейт, не истёкший по таймауту
+      return apiFail(res, 409, ApiErrorCode.UPDATE_RUNNING, t('admin.update.running'));
     }
+    if (wasTimedOut) logLine('timeoutReset');
     const zipBuffer = req.body;
     if (!Buffer.isBuffer(zipBuffer) || zipBuffer.length < 100) {
+      // Откатываем флаг, т. к. beginUpdate() его уже выставил
+      endUpdate();
       return apiFail(res, 400, ApiErrorCode.UPDATE_BAD_ARCHIVE, t('admin.update.badArchive'));
     }
-    updateRunning = true;
-    updateStartedAt = Date.now();
-    resetUpdateLog();
     logSystemEvent('info', 'operations', 'update started', { user: req.user.username, size: zipBuffer.length });
     res.json({ ok: true, message: t('admin.update.started') });
-    (async () => {
-      const backupDir = path.join(config.dataDir, 'update-backup');
-      const tmpDir = path.join(config.dataDir, 'update-tmp-' + Date.now());
-      try {
-        logU(() => tp('update.log.archiveReceived', { size: (zipBuffer.length / 1024 / 1024).toFixed(1), unit: t('common.unitMB') }));
-        const unzipper = await import('unzipper');
-        fs.mkdirSync(tmpDir, { recursive: true });
-        logU(() => t('update.log.unzipStart'));
-        const directory = await unzipper.Open.buffer(zipBuffer);
-        let rootPrefix = '';
-        const firstEntry = directory.files.find((f) => f.type === 'File');
-        if (firstEntry) {
-          const parts = firstEntry.path.split(/[/\\]/);
-          if (parts.length > 1) {
-            const candidate = parts[0] + '/';
-            const allUnderCandidate = directory.files.every((f) => f.path.startsWith(candidate) || f.path === parts[0]);
-            if (allUnderCandidate) {
-              rootPrefix = candidate;
-              logU(() => tp('update.log.archiveRoot', { root: parts[0] }));
-            }
-          }
-        }
-        let totalUncompressed = 0;
-        let extracted = 0;
-        let skipped = 0;
-        let blocked = 0;
-        for (const entry of directory.files) {
-          if (entry.type === 'Directory') continue;
-          let relativePath = entry.path;
-          if (rootPrefix && relativePath.startsWith(rootPrefix)) {
-            relativePath = relativePath.slice(rootPrefix.length);
-          }
-          if (!relativePath) continue;
-          if (!isSafePath(relativePath)) {
-            logU(() => tp('update.log.unsafePath', { path: relativePath }));
-            blocked++;
-            continue;
-          }
-          if (isProtectedPath(relativePath)) {
-            skipped++;
-            continue;
-          }
-          const targetPath = path.join(tmpDir, relativePath);
-          const resolvedTarget = path.resolve(targetPath);
-          const resolvedTmp = path.resolve(tmpDir);
-          const relToTmp = path.relative(resolvedTmp, resolvedTarget);
-          if (relToTmp.startsWith('..') || path.isAbsolute(relToTmp)) {
-            logU(() => tp('update.log.pathEscape', { path: relativePath }));
-            blocked++;
-            continue;
-          }
-          fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-          const content = await entry.buffer();
-          if (content.length > MAX_SINGLE_FILE) {
-            logU(() => tp('update.log.fileTooBig', { size: (content.length / 1024 / 1024).toFixed(1), unit: t('common.unitMB'), path: relativePath }));
-            blocked++;
-            continue;
-          }
-          totalUncompressed += content.length;
-          if (totalUncompressed > MAX_UNCOMPRESSED_TOTAL) {
-            logU(() => tp('update.log.zipBomb', { max: (MAX_UNCOMPRESSED_TOTAL / 1024 / 1024).toFixed(0), unit: t('common.unitMB') }));
-            appendUpdateLog('[update:done] error');
-            logSystemEvent('error', 'operations', 'update rejected: zip bomb detected', { totalUncompressed, user: req.user.username });
-            fs.rmSync(tmpDir, { recursive: true, force: true });
-            updateRunning = false;
-            return;
-          }
-          fs.writeFileSync(targetPath, content);
-          extracted++;
-        }
-        if (blocked > 0) logU(() => tp('update.log.blockedSummary', { n: blocked }));
-        logU(() => tp('update.log.extractedSummary', { extracted, skipped }));
-        const newPkgPath = path.join(tmpDir, 'package.json');
-        if (!fs.existsSync(newPkgPath)) {
-          logU(() => t('update.log.noPackageJson'));
-          appendUpdateLog('[update:done] error');
-          logSystemEvent('error', 'operations', 'update rejected: no package.json', { user: req.user.username });
-          fs.rmSync(tmpDir, { recursive: true, force: true });
-          updateRunning = false;
-          return;
-        }
-        let newPkg;
-        try { newPkg = JSON.parse(fs.readFileSync(newPkgPath, 'utf8')); } catch { newPkg = {}; }
-        if (newPkg.name !== 'inpx-library-server') {
-          logU(() => tp('update.log.wrongPackage', { name: newPkg.name || '?' }));
-          appendUpdateLog('[update:done] error');
-          logSystemEvent('error', 'operations', 'update rejected: wrong package name', { name: newPkg.name, user: req.user.username });
-          fs.rmSync(tmpDir, { recursive: true, force: true });
-          updateRunning = false;
-          return;
-        }
-        if (!fs.existsSync(path.join(tmpDir, 'src', 'server.js'))) {
-          logU(() => t('update.log.noServerJs'));
-          appendUpdateLog('[update:done] error');
-          logSystemEvent('error', 'operations', 'update rejected: missing src/server.js', { user: req.user.username });
-          fs.rmSync(tmpDir, { recursive: true, force: true });
-          updateRunning = false;
-          return;
-        }
-        logU(() => tp('update.log.archiveValid', { name: newPkg.name, version: newPkg.version || '?' }));
-        logU(() => t('update.log.backupStart'));
-        fs.rmSync(backupDir, { recursive: true, force: true });
-        fs.mkdirSync(backupDir, { recursive: true });
-        const UPDATABLE_DIRS = ['src', 'public', 'scripts'];
-        const backupItems = [...UPDATABLE_DIRS, 'package.json'];
-        for (const item of backupItems) {
-          const srcPath = path.join(config.rootDir, item);
-          const destPath = path.join(backupDir, item);
-          if (!fs.existsSync(srcPath)) continue;
-          const stat = fs.statSync(srcPath);
-          if (stat.isDirectory()) { fs.cpSync(srcPath, destPath, { recursive: true }); }
-          else { fs.copyFileSync(srcPath, destPath); }
-        }
-        logU(() => t('update.log.backupDone'));
-        logU(() => t('update.log.cleanOld'));
-        for (const dir of UPDATABLE_DIRS) {
-          const dirInTmp = path.join(tmpDir, dir);
-          const dirInRoot = path.join(config.rootDir, dir);
-          if (fs.existsSync(dirInTmp) && fs.existsSync(dirInRoot)) {
-            fs.rmSync(dirInRoot, { recursive: true, force: true });
-          }
-        }
-        logU(() => t('update.log.copyFiles'));
-        let copied = 0;
-        const copyRecursive = (srcDir, destDir) => {
-          const items = fs.readdirSync(srcDir, { withFileTypes: true });
-          for (const item of items) {
-            const srcPath = path.join(srcDir, item.name);
-            const destPath = path.join(destDir, item.name);
-            if (item.isDirectory()) {
-              fs.mkdirSync(destPath, { recursive: true });
-              copyRecursive(srcPath, destPath);
-            } else {
-              fs.copyFileSync(srcPath, destPath);
-              copied++;
-            }
-          }
-        };
-        copyRecursive(tmpDir, config.rootDir);
-        logU(() => tp('update.log.copiedCount', { n: copied }));
-        logU(() => t('update.log.cleanTmp'));
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-        let oldDeps = {};
-        try { oldDeps = JSON.parse(fs.readFileSync(path.join(backupDir, 'package.json'), 'utf8')).dependencies || {}; } catch {}
-        const newDeps = newPkg.dependencies || {};
-        const normalizeDeps = (deps) => {
-          if (!deps || typeof deps !== 'object') return {};
-          const sorted = {};
-          for (const k of Object.keys(deps).sort()) sorted[k] = deps[k];
-          return sorted;
-        };
-        const depsChanged = JSON.stringify(normalizeDeps(oldDeps)) !== JSON.stringify(normalizeDeps(newDeps));
-        if (!depsChanged) {
-          logU(() => t('update.log.depsUnchanged'));
-        } else {
-          logU(() => t('update.log.depsChanged'));
-          const npmResult = await new Promise((resolve) => {
-            const npmCliCandidates = [
-              path.join(config.rootDir, 'runtime', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-              path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-              path.join(config.rootDir, 'node_modules', 'npm', 'bin', 'npm-cli.js')
-            ];
-            const npmCli = npmCliCandidates.find((c) => fs.existsSync(c));
-            let spawnCmd, spawnArgs, spawnOpts;
-            if (npmCli) {
-              spawnCmd = process.execPath;
-              spawnArgs = [npmCli, 'install', '--omit=dev'];
-              spawnOpts = {};
-            } else {
-              spawnCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-              spawnArgs = ['install', '--omit=dev'];
-              spawnOpts = { shell: true };
-            }
-            try {
-              const child = spawn(spawnCmd, spawnArgs, {
-                cwd: config.rootDir, stdio: ['ignore', 'pipe', 'pipe'],
-                windowsHide: true, ...spawnOpts,
-                env: { ...process.env, PATH: path.dirname(process.execPath) + path.delimiter + (process.env.PATH || '') }
-              });
-              let stdout = '';
-              let stderr = '';
-              child.stdout.on('data', (data) => { stdout += data; });
-              child.stderr.on('data', (data) => { stderr += data; });
-              child.on('close', (code) => resolve({ code, stdout, stderr }));
-              child.on('error', (err) => resolve({ code: -1, stdout: '', stderr: err.message }));
-            } catch (spawnErr) {
-              resolve({ code: -1, stdout: '', stderr: spawnErr.message });
-            }
+
+    void runUpdateFromZip(zipBuffer, {
+      log: logLine,
+      sysLog: (msg, meta = {}) => logSystemEvent('info', 'operations', msg, { ...meta, user: req.user.username }),
+      sysLogError: (msg, meta = {}) => logSystemEvent('error', 'operations', msg, { ...meta, user: req.user.username }),
+      username: req.user.username,
+      scheduleRestart: () => {
+        if (!process.env.INVOCATION_ID) {
+          const child = spawn(process.execPath, [path.join(config.rootDir, 'scripts', 'server-control.js'), 'restart'], {
+            cwd: config.rootDir, detached: true, stdio: 'ignore'
           });
-          if (npmResult.code === 0) {
-            logU(() => t('update.log.depsOk'));
-          } else {
-            const hint = process.platform === 'win32' ? 'install.cmd' : 'sudo ./install.sh';
-            logU(() => tp('update.log.npmFail', { code: npmResult.code, hint }));
-            if (npmResult.stderr) appendUpdateLog(npmResult.stderr.trim().slice(0, 500));
-          }
+          child.unref();
+          gracefulExit();
+        } else {
+          gracefulExit(1);
         }
-        logU(() => tp('update.log.doneVersion', { version: newPkg.version || '?' }));
-        logU(() => t('update.log.restartingSoon'));
-        appendUpdateLog('[update:done] restart');
-        logSystemEvent('info', 'operations', 'update completed, restarting', { version: newPkg.version, user: req.user.username });
-        updateRunning = false;
-        setTimeout(() => {
-          if (!process.env.INVOCATION_ID) {
-            const child = spawn(process.execPath, [path.join(config.rootDir, 'scripts', 'server-control.js'), 'restart'], {
-              cwd: config.rootDir, detached: true, stdio: 'ignore'
-            });
-            child.unref();
-            gracefulExit();
-          } else {
-            gracefulExit(1);
-          }
-        }, 2000);
-      } catch (error) {
-        logU(() => tp('update.log.errorLine', { message: error.message }));
-        appendUpdateLog('[update:done] error');
-        if (fs.existsSync(backupDir) && fs.readdirSync(backupDir).length > 0) {
-          logU(() => t('update.log.restoreStart'));
-          try {
-            const restoreRecursive = (srcDir, destDir) => {
-              const items = fs.readdirSync(srcDir, { withFileTypes: true });
-              for (const item of items) {
-                const srcPath = path.join(srcDir, item.name);
-                const destPath = path.join(destDir, item.name);
-                if (item.isDirectory()) {
-                  fs.mkdirSync(destPath, { recursive: true });
-                  restoreRecursive(srcPath, destPath);
-                } else {
-                  fs.copyFileSync(srcPath, destPath);
-                }
-              }
-            };
-            restoreRecursive(backupDir, config.rootDir);
-            logU(() => t('update.log.restoreOk'));
-          } catch (restoreErr) {
-            logU(() => tp('update.log.restoreErr', { message: restoreErr.message }));
-          }
-        }
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-        logSystemEvent('error', 'operations', 'update failed', { error: error.message, user: req.user.username });
-        updateRunning = false;
       }
-    })();
+    });
   });
 
   app.post('/api/operations/events-retain', requireAdminApi, (req, res) => {
@@ -1244,6 +1026,11 @@ export function registerAdminRoutes(app, deps) {
   });
 
   app.post('/api/admin/duplicates/delete', requireAdminApi, (req, res) => {
+    // Запрещаем тяжёлые мутации по книгам, пока идёт индексация:
+    // они конкурируют с индексатором за SQLite WAL и могут блокировать event-loop.
+    if (getIndexStatus().active) {
+      return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
+    }
     const bookId = String(req.body.bookId || '').trim();
     if (!bookId) return res.status(400).json({ ok: false, error: 'Missing book ID' });
     try {
@@ -1259,6 +1046,9 @@ export function registerAdminRoutes(app, deps) {
   });
 
   app.post('/api/admin/duplicates/auto-clean', requireAdminApi, (req, res) => {
+    if (getIndexStatus().active) {
+      return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
+    }
     try {
       const result = autoCleanDuplicates();
       clearPageDataCache();
@@ -1279,10 +1069,16 @@ export function registerAdminRoutes(app, deps) {
   });
 
   app.post('/api/admin/duplicates/unsuppress', requireAdminApi, (req, res) => {
+    if (getIndexStatus().active) {
+      return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
+    }
     const bookId = String(req.body.bookId || '').trim();
     if (!bookId) return res.status(400).json({ ok: false, error: 'Missing book ID' });
     try {
-      unsuppressBook(bookId);
+      const restored = unsuppressBook(bookId);
+      if (restored) {
+        invalidateDuplicatesCache();
+      }
       clearPageDataCache();
       logSystemEvent('info', 'operations', 'book unsuppressed', { actor: req.user.username, bookId });
       res.json({ ok: true, message: t('admin.duplicates.flashUnsuppressed') });
@@ -1292,8 +1088,14 @@ export function registerAdminRoutes(app, deps) {
   });
 
   app.post('/api/admin/duplicates/unsuppress-all', requireAdminApi, (req, res) => {
+    if (getIndexStatus().active) {
+      return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
+    }
     try {
       const count = unsuppressAll();
+      if (count > 0) {
+        invalidateDuplicatesCache();
+      }
       clearPageDataCache();
       logSystemEvent('info', 'operations', 'all books unsuppressed', { actor: req.user.username, count });
       res.json({ ok: true, message: tp('admin.duplicates.flashUnsuppressedAll', { n: count }), count });
@@ -1326,6 +1128,17 @@ export function registerAdminRoutes(app, deps) {
   });
 
   app.post('/admin/content', requireAdminWeb, async (req, res) => {
+    // Пока идёт индексация, не трогаем excluded_* и не делаем DROP/CREATE VIEW:
+    // SQLite может заблокировать или оставить active_books в полусогласованном состоянии.
+    if (getIndexStatus().active) {
+      return res.redirect('/admin/content?flash=' + encodeURIComponent(
+        t('admin.content.blockedDuringIndexing') || 'Change the filter after indexing finishes'
+      ));
+    }
+    // Сохраняем предыдущие значения, чтобы откатить, если rebuildActiveBooksView() упадёт.
+    const prevExcludedLangs = getSetting('excluded_languages') || '';
+    const prevExcludedGenres = getSetting('excluded_genres') || '';
+    let committed = false;
     try {
       // Languages
       const allLangs = getDistinctLanguages();
@@ -1344,6 +1157,8 @@ export function registerAdminRoutes(app, deps) {
       setSetting('excluded_genres', excludedGenre.join(','));
 
       await rebuildActiveBooksView();
+      invalidateDuplicatesCache();
+      committed = true;
       clearPageDataCache();
       logSystemEvent('info', 'admin', 'content filter updated', {
         admin: req.user.username,
@@ -1352,6 +1167,23 @@ export function registerAdminRoutes(app, deps) {
       });
       res.redirect('/admin/content?flash=' + encodeURIComponent(t('admin.content.saved')));
     } catch (error) {
+      if (!committed) {
+        // Откатываем настройки, чтобы UI и active_books снова совпали.
+        try {
+          setSetting('excluded_languages', prevExcludedLangs);
+          setSetting('excluded_genres', prevExcludedGenres);
+          // Попытка восстановить view из старых значений (best-effort).
+          await rebuildActiveBooksView();
+          invalidateDuplicatesCache();
+        } catch (rollbackErr) {
+          logSystemEvent('error', 'admin', 'content filter rollback failed', {
+            admin: req.user.username, error: rollbackErr.message
+          });
+        }
+      }
+      logSystemEvent('error', 'admin', 'content filter update failed', {
+        admin: req.user.username, error: error.message
+      });
       res.redirect('/admin/content?flash=' + encodeURIComponent(error.message));
     }
   });

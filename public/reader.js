@@ -640,11 +640,24 @@ import {
 
   /* ===== Position sync ===== */
   let syncTimer = null;
+  let autoReadToastShown = false;
   function savePosition(cfi, pct) {
     clearTimeout(syncTimer);
-    syncTimer = setTimeout(() => api('POST', '/position', { position: String(cfi), progress: pct }).catch(() => {}), 1500);
+    syncTimer = setTimeout(() => {
+      api('POST', '/position', { position: String(cfi), progress: pct })
+        .then(r => {
+          if (r && r.markedRead && !autoReadToastShown) {
+            autoReadToastShown = true;
+            toast(rt('readerJs.autoMarkedRead'));
+          }
+        })
+        .catch(() => {});
+    }, 1500);
   }
   async function loadSavedPosition() { try { const d = await api('GET', '/position'); return d?.position ? d : null; } catch { return null; } }
+
+  /* ===== Auto-mark as read when finished ===== */
+  // Handled server-side in position save endpoint when progress >= 95%
 
   /* ===== Bookmarks ===== */
   async function loadBookmarks() {

@@ -43,8 +43,10 @@ db.pragma('busy_timeout = 30000');
 db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = ON');
 db.pragma('wal_autocheckpoint = 1000');
-db.pragma('cache_size = -65536');      // 64 MB page cache (default is 2 MB)
-db.pragma('mmap_size = 268435456');     // 256 MB memory-mapped I/O
+const _cacheSizeKb = config.sqliteCacheSizeMb * 1024;
+const _mmapSize = config.sqliteMmapSizeMb * 1024 * 1024;
+db.pragma(`cache_size = -${_cacheSizeKb}`);        // configurable page cache
+db.pragma(`mmap_size = ${_mmapSize}`);              // configurable memory-mapped I/O
 db.pragma('temp_store = MEMORY');       // temp tables in RAM
 
 // Enable incremental auto-vacuum so deleted pages can be reclaimed
@@ -57,7 +59,7 @@ db.pragma('temp_store = MEMORY');       // temp tables in RAM
     db.pragma('mmap_size = 0');
     db.pragma('auto_vacuum = INCREMENTAL');
     db.exec('VACUUM');
-    db.pragma('mmap_size = 268435456');
+    db.pragma(`mmap_size = ${_mmapSize}`);
     console.log('[db] auto_vacuum switched to INCREMENTAL (one-time VACUUM)');
   }
 }
@@ -639,6 +641,21 @@ export function initDb() {
       FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS read_books (
+      username TEXT NOT NULL,
+      book_id TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (username, book_id),
+      FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    );
+
+/* Retroactively mark books with 95%+ reading progress as read */
+INSERT OR IGNORE INTO read_books(username, book_id, created_at)
+SELECT rp.username, rp.book_id, rp.updated_at
+FROM reading_positions rp
+WHERE rp.progress >= 99
+  AND NOT EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = rp.username AND rb.book_id = rp.book_id);
+
     CREATE TABLE IF NOT EXISTS book_ratings (
       username TEXT NOT NULL,
       book_id TEXT NOT NULL,
@@ -871,6 +888,10 @@ export function initDb() {
       CREATE INDEX IF NOT EXISTS idx_reader_bookmarks_username ON reader_bookmarks(username);
       CREATE INDEX IF NOT EXISTS idx_shelf_books_book_id ON shelf_books(book_id);
       CREATE INDEX IF NOT EXISTS idx_shelf_books_shelf_id ON shelf_books(shelf_id);
+      CREATE INDEX IF NOT EXISTS idx_read_books_username ON read_books(username, book_id);
+      CREATE INDEX IF NOT EXISTS idx_favorite_authors_username ON favorite_authors(username);
+      CREATE INDEX IF NOT EXISTS idx_favorite_series_username ON favorite_series(username);
+      CREATE INDEX IF NOT EXISTS idx_shelves_username ON shelves(username);
       CREATE INDEX IF NOT EXISTS idx_sources_enabled ON sources(enabled);
       CREATE INDEX IF NOT EXISTS idx_dedup_projection_sort_date ON library_dedup_projection(sort_date DESC, book_id DESC);
       CREATE INDEX IF NOT EXISTS idx_dedup_projection_title ON library_dedup_projection(title_sort ASC, book_id DESC);
@@ -899,6 +920,14 @@ export function initDb() {
   }
 
   ensureBooksFtsTriggers();
+
+  // Ensure indexes exist for user activity tables (idempotent, covers upgrades from older DBs)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_read_books_username ON read_books(username, book_id);
+    CREATE INDEX IF NOT EXISTS idx_favorite_authors_username ON favorite_authors(username);
+    CREATE INDEX IF NOT EXISTS idx_favorite_series_username ON favorite_series(username);
+    CREATE INDEX IF NOT EXISTS idx_shelves_username ON shelves(username);
+  `);
 
   // Recovery: if a previous indexing crashed after dropping FTS triggers,
   // the books_fts index is stale. Detect and schedule a synchronous rebuild.
@@ -1640,21 +1669,137 @@ export function setEreaderEmail(username, email) {
   db.prepare('UPDATE users SET ereader_email = ? WHERE username = ?').run(String(email || '').trim(), username);
 }
 
-export function getUserStats(username) {
-  const row = db.prepare(`
+export function isBookRead(username, bookId) {
+  return Boolean(db.prepare('SELECT 1 FROM read_books WHERE username = ? AND book_id = ?').get(username, bookId));
+}
+
+export function toggleReadBook(username, bookId) {
+  const exists = isBookRead(username, bookId);
+  if (exists) {
+    db.prepare('DELETE FROM read_books WHERE username = ? AND book_id = ?').run(username, bookId);
+    return false;
+  }
+  db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
+  db.prepare('INSERT OR IGNORE INTO read_books(username, book_id) VALUES(?, ?)').run(username, bookId);
+  return true;
+}
+
+export function getReadBooks(username, sort = 'date') {
+  const orderMap = {
+    title: 'b.title COLLATE NOCASE ASC',
+    author: `COALESCE(b.authors, '') COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC`,
+    date: 'rb.created_at DESC'
+  };
+  const orderBy = orderMap[sort] || orderMap.date;
+  return db.prepare(`
+    SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo,
+           b.ext, b.archive_name AS archiveName
+    FROM read_books rb
+    JOIN active_books b ON b.id = rb.book_id
+    WHERE rb.username = ?
+    ORDER BY ${orderBy}
+  `).all(username);
+}
+
+export function getReadBooksCount(username) {
+  const row = db.prepare('SELECT COUNT(*) AS cnt FROM read_books rb JOIN active_books b ON b.id = rb.book_id WHERE rb.username = ?').get(username);
+  return row?.cnt || 0;
+}
+
+/* ── Per-user read status cache (short TTL, invalidated on toggle) ── */
+const _readCache = new Map();  // username → { ids: Set, series: Set, expiresAt }
+const READ_CACHE_TTL_MS = 60_000; // 60 seconds
+let _stmtReadIds = null;
+let _stmtReadSeries = null;
+
+function ensureReadCacheStatements() {
+  if (!_stmtReadIds) {
+    _stmtReadIds = db.prepare('SELECT rb.book_id FROM read_books rb JOIN active_books b ON b.id = rb.book_id WHERE rb.username = ?');
+  }
+  if (!_stmtReadSeries) {
+    _stmtReadSeries = db.prepare(`
+      WITH user_series AS (
+        SELECT DISTINCT ab.series
+        FROM read_books rb
+        JOIN active_books ab ON ab.id = rb.book_id
+        WHERE rb.username = ? AND ab.series IS NOT NULL AND ab.series != ''
+      )
+      SELECT us.series
+      FROM user_series us
+      WHERE NOT EXISTS (
+        SELECT 1 FROM active_books ab2
+        WHERE ab2.series = us.series
+          AND NOT EXISTS (SELECT 1 FROM read_books rb2 WHERE rb2.username = ? AND rb2.book_id = ab2.id)
+      )
+    `);
+  }
+}
+
+function _getCachedRead(username) {
+  const c = _readCache.get(username);
+  if (c && Date.now() < c.expiresAt) return c;
+  _readCache.delete(username);
+  return null;
+}
+
+function _buildReadCache(username) {
+  ensureReadCacheStatements();
+  const rows = _stmtReadIds.all(username);
+  const ids = new Set(rows.map((r) => r.book_id));
+  const sRows = _stmtReadSeries.all(username, username);
+  const series = new Set(sRows.map((r) => r.series));
+  const entry = { ids, series, expiresAt: Date.now() + READ_CACHE_TTL_MS };
+  _readCache.set(username, entry);
+  // Evict oldest if too many users cached
+  if (_readCache.size > 200) {
+    const oldest = _readCache.keys().next().value;
+    if (oldest !== undefined) _readCache.delete(oldest);
+  }
+  return entry;
+}
+
+export function invalidateReadCache(username) {
+  if (username) _readCache.delete(username);
+}
+
+export function getReadBookIdSet(username) {
+  if (!username) return new Set();
+  const c = _getCachedRead(username);
+  return c ? c.ids : _buildReadCache(username).ids;
+}
+
+export function getFullyReadSeriesNames(username) {
+  if (!username) return new Set();
+  const c = _getCachedRead(username);
+  return c ? c.series : _buildReadCache(username).series;
+}
+
+let _stmtUserStats = null;
+
+function ensureUserStatsStatement() {
+  if (_stmtUserStats) return _stmtUserStats;
+  _stmtUserStats = db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM reading_history rh JOIN active_books b ON b.id = rh.book_id WHERE rh.username = ?) AS readingCount,
       (SELECT COUNT(*) FROM bookmarks WHERE username = ?) AS bookmarkCount,
+      (SELECT COUNT(*) FROM read_books rb2 JOIN active_books ab2 ON ab2.id = rb2.book_id WHERE rb2.username = ?) AS readBooksCount,
+      (SELECT COUNT(*) FROM (SELECT ab.series FROM active_books ab LEFT JOIN read_books rb3 ON rb3.username = ? AND rb3.book_id = ab.id WHERE ab.series IS NOT NULL AND ab.series != '' GROUP BY ab.series HAVING COUNT(*) = COUNT(rb3.book_id))) AS readSeriesCount,
       (SELECT COUNT(*) FROM favorite_authors WHERE username = ?) AS favoriteAuthorsCount,
       (SELECT COUNT(*) FROM favorite_series WHERE username = ?) AS favoriteSeriesCount,
       (SELECT COUNT(*) FROM shelves WHERE username = ?) AS shelvesCount,
       (SELECT COUNT(*) FROM shelf_books sb JOIN shelves s ON s.id = sb.shelf_id WHERE s.username = ?) AS shelfBooksCount,
       (SELECT COUNT(*) FROM reader_bookmarks WHERE username = ?) AS readerBookmarksCount,
       (SELECT created_at FROM users WHERE username = ?) AS createdAt
-  `).get(username, username, username, username, username, username, username, username);
+  `);
+  return _stmtUserStats;
+}
+export function getUserStats(username) {
+  const row = ensureUserStatsStatement().get(username, username, username, username, username, username, username, username, username, username);
   return {
     readingCount: row?.readingCount || 0,
     bookmarkCount: row?.bookmarkCount || 0,
+    readBooksCount: row?.readBooksCount || 0,
+    readSeriesCount: row?.readSeriesCount || 0,
     favoriteAuthorsCount: row?.favoriteAuthorsCount || 0,
     favoriteSeriesCount: row?.favoriteSeriesCount || 0,
     shelvesCount: row?.shelvesCount || 0,

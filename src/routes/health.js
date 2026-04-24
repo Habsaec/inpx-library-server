@@ -7,10 +7,10 @@ import { getIndexStatus } from '../inpx.js';
 
 /**
  * @param {import('express').Application} app
- * @param {{ getCachedStats: () => unknown, getServiceValidation: () => { ok: boolean, checks: Record<string, boolean> } }} deps
+ * @param {{ getCachedStats: () => unknown, getServiceValidation: () => { ok: boolean, checks: Record<string, boolean> }, getPerfSnapshot?: () => unknown }} deps
  */
 export function registerHealthRoutes(app, deps) {
-  const { getCachedStats, getServiceValidation } = deps;
+  const { getCachedStats, getServiceValidation, getPerfSnapshot } = deps;
 
   app.get('/health', (req, res) => {
     if (config.healthMinimal) {
@@ -43,5 +43,12 @@ export function registerHealthRoutes(app, deps) {
     };
     if (!ok) body.code = ApiErrorCode.SERVICE_NOT_READY;
     res.status(ok ? 200 : 503).json(body);
+  });
+
+  app.get('/health/perf', (req, res) => {
+    if (typeof getPerfSnapshot !== 'function') {
+      return res.json({ ok: true, perf: null });
+    }
+    res.json({ ok: true, perf: getPerfSnapshot() });
   });
 }

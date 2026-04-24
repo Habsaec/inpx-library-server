@@ -1,6 +1,7 @@
 import './load-env.js';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
@@ -128,5 +129,35 @@ export const config = {
   coverQuality: parseEnvInt('COVER_QUALITY', process.env.COVER_QUALITY, 86, { min: 1, max: 100 }),
 
   // ── Scan scheduler ───────────────────────────────
-  scanIntervalHours: parseEnvInt('SCAN_INTERVAL_HOURS', process.env.SCAN_INTERVAL_HOURS, 0, { min: 0, max: 8760 })
+  scanIntervalHours: parseEnvInt('SCAN_INTERVAL_HOURS', process.env.SCAN_INTERVAL_HOURS, 0, { min: 0, max: 8760 }),
+
+  // ── Performance profile ────────────────────────────
+  ...resolvePerfProfile()
 };
+
+function resolvePerfProfile() {
+  const totalMemMb = Math.round(os.totalmem() / (1024 * 1024));
+  const envProfile = (process.env.PERF_PROFILE || '').trim().toLowerCase();
+  let isEmbedded;
+  let profileLabel;
+  if (envProfile === 'embedded') {
+    isEmbedded = true;
+    profileLabel = 'embedded';
+  } else if (envProfile === 'default') {
+    isEmbedded = false;
+    profileLabel = 'default';
+  } else {
+    isEmbedded = totalMemMb <= 2048;
+    profileLabel = isEmbedded ? 'auto-embedded' : 'auto-default';
+  }
+
+  const defaultCache = isEmbedded ? 64 : 256;
+  const defaultMmap = isEmbedded ? 0 : 256;
+
+  const sqliteCacheSizeMb = parseEnvInt('SQLITE_CACHE_SIZE_MB', process.env.SQLITE_CACHE_SIZE_MB, defaultCache, { min: 8, max: 2048 });
+  const sqliteMmapSizeMb = parseEnvInt('SQLITE_MMAP_SIZE_MB', process.env.SQLITE_MMAP_SIZE_MB, defaultMmap, { min: 0, max: 2048 });
+
+  console.log(`[perf] profile: ${profileLabel} (RAM: ${totalMemMb} MB, cache: ${sqliteCacheSizeMb} MB, mmap: ${sqliteMmapSizeMb} MB)`);
+
+  return { perfProfile: profileLabel, sqliteCacheSizeMb, sqliteMmapSizeMb, totalMemMb };
+}

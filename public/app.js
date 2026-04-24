@@ -708,6 +708,258 @@ function syncAuthorSeriesFavoriteButtonUi(button, favorite) {
   }
 }
 
+function attachReadBookActions() {
+  document.querySelectorAll('[data-read-button]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const bookId = btn.dataset.readButton;
+      try {
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        const headers = {};
+        if (csrfMeta) headers['x-csrf-token'] = csrfMeta.content;
+        const response = await fetch(`/api/read/${encodeURIComponent(bookId)}`, {
+          method: 'POST', credentials: 'same-origin', headers
+        });
+        if (await handleAuthRequired(response)) return;
+        if (!response.ok) return;
+        const { read } = await response.json();
+        btn.classList.toggle('is-active', read);
+        btn.textContent = read ? uiT('book.markedRead') : uiT('book.markRead');
+        // sync grid badges on same page
+        toggleReadBadgesForBook(bookId, read);
+      } catch (err) { console.error('Read toggle error', err); }
+    });
+  });
+}
+
+function toggleReadBadgesForBook(bookId, isRead) {
+  const set = getReadBookIdSet();
+  if (isRead) set.add(bookId); else set.delete(bookId);
+  document.querySelectorAll(`.card[data-book-id="${CSS.escape(bookId)}"]`).forEach((card) => {
+    const cover = card.querySelector('.cover');
+    if (!cover) return;
+    const existing = cover.querySelector('.read-badge');
+    if (isRead && !existing) {
+      const span = document.createElement('span');
+      span.className = 'read-badge';
+      span.innerHTML = READ_BADGE_SVG;
+      cover.appendChild(span);
+    } else if (!isRead && existing) {
+      existing.remove();
+    }
+  });
+}
+
+function attachCoverLongPress() {
+  const LONG_PRESS_MS = 500;
+  let timer = null;
+  let fired = false;
+  let startX = 0, startY = 0;
+
+  function getCardBookId(el) {
+    const card = el.closest('.card[data-book-id]');
+    return card ? card.dataset.bookId : null;
+  }
+
+  function cancel() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  async function toggleRead(bookId, cover) {
+    fired = true;
+    try {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = {};
+      if (csrfMeta) headers['x-csrf-token'] = csrfMeta.content;
+      const response = await fetch(`/api/read/${encodeURIComponent(bookId)}`, {
+        method: 'POST', credentials: 'same-origin', headers
+      });
+      if (await handleAuthRequired(response)) return;
+      if (!response.ok) return;
+      const { read } = await response.json();
+      toggleReadBadgesForBook(bookId, read);
+      showToast(read ? uiT('book.markedRead') : uiT('book.markRead'), 'success');
+    } catch (err) { console.error('Long-press read toggle error', err); }
+  }
+
+  function onStart(e) {
+    const cover = e.target.closest('.cover[data-role="cover"]');
+    if (!cover) return;
+    const bookId = getCardBookId(cover);
+    if (!bookId) return;
+    fired = false;
+    const point = e.touches ? e.touches[0] : e;
+    startX = point.clientX;
+    startY = point.clientY;
+    timer = setTimeout(() => {
+      timer = null;
+      // haptic feedback if available
+      if (navigator.vibrate) navigator.vibrate(30);
+      toggleRead(bookId, cover);
+    }, LONG_PRESS_MS);
+  }
+
+  function onMove(e) {
+    if (!timer) return;
+    const point = e.touches ? e.touches[0] : e;
+    if (Math.abs(point.clientX - startX) > 10 || Math.abs(point.clientY - startY) > 10) cancel();
+  }
+
+  function onEnd(e) {
+    cancel();
+    if (fired) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+
+  document.addEventListener('mousedown', onStart);
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchstart', onStart, { passive: true });
+  document.addEventListener('touchmove', onMove, { passive: true });
+  document.addEventListener('touchend', onEnd);
+  document.addEventListener('touchcancel', cancel);
+  // prevent navigation after long-press
+  document.addEventListener('click', (e) => {
+    if (fired) {
+      e.preventDefault();
+      e.stopPropagation();
+      fired = false;
+    }
+  }, true);
+}
+
+function attachSeriesLongPress() {
+  const LONG_PRESS_MS = 500;
+  let timer = null;
+  let fired = false;
+  let startX = 0, startY = 0;
+
+  function cancel() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  async function toggleSeriesRead(seriesName, row) {
+    fired = true;
+    try {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = { 'Content-Type': 'application/json' };
+      if (csrfMeta) headers['x-csrf-token'] = csrfMeta.content;
+      const response = await fetch('/api/read/batch', {
+        method: 'POST', credentials: 'same-origin', headers,
+        body: JSON.stringify({ facet: 'series', value: seriesName })
+      });
+      if (await handleAuthRequired(response)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      const badge = row.querySelector('.read-series-badge');
+      if (data.action === 'removed') {
+        if (badge) badge.remove();
+        showToast(uiTp('facet.seriesReadRemoved', { n: data.removed }), 'success');
+      } else {
+        if (!badge) {
+          const span = document.createElement('span');
+          span.className = 'read-series-badge';
+          span.innerHTML = READ_BADGE_SVG;
+          const div = row.querySelector('div[style*="flex"]') || row.querySelector('div');
+          if (div) div.appendChild(span);
+        }
+        if (data.added > 0) showToast(uiTp('facet.seriesReadAdded', { n: data.added }), 'success');
+        else showToast(uiT('facet.seriesAlreadyRead'), 'info');
+      }
+    } catch (err) { console.error('Series long-press error', err); }
+  }
+
+  function onStart(e) {
+    const row = e.target.closest('.table-row-link[href*="/facet/series/"]');
+    if (!row) return;
+    fired = false;
+    const point = e.touches ? e.touches[0] : e;
+    startX = point.clientX;
+    startY = point.clientY;
+    const href = row.getAttribute('href') || '';
+    const m = href.match(/\/facet\/series\/(.+)$/);
+    if (!m) return;
+    const seriesName = decodeURIComponent(m[1]);
+    timer = setTimeout(() => {
+      timer = null;
+      if (navigator.vibrate) navigator.vibrate(30);
+      toggleSeriesRead(seriesName, row);
+    }, LONG_PRESS_MS);
+  }
+
+  function onMove(e) {
+    if (!timer) return;
+    const point = e.touches ? e.touches[0] : e;
+    if (Math.abs(point.clientX - startX) > 10 || Math.abs(point.clientY - startY) > 10) cancel();
+  }
+
+  function onEnd(e) {
+    cancel();
+    if (fired) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+
+  document.addEventListener('mousedown', onStart);
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchstart', onStart, { passive: true });
+  document.addEventListener('touchmove', onMove, { passive: true });
+  document.addEventListener('touchend', onEnd);
+  document.addEventListener('touchcancel', cancel);
+  document.addEventListener('click', (e) => {
+    if (fired && e.target.closest('.table-row-link[href*="/facet/series/"]')) {
+      e.preventDefault();
+      e.stopPropagation();
+      fired = false;
+    }
+  }, true);
+}
+
+function attachMarkSeriesReadActions() {
+  document.querySelectorAll('[data-mark-series-read]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const seriesName = btn.dataset.markSeriesRead;
+      try {
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        const headers = { 'Content-Type': 'application/json' };
+        if (csrfMeta) headers['x-csrf-token'] = csrfMeta.content;
+        btn.disabled = true;
+        const response = await fetch('/api/read/batch', {
+          method: 'POST', credentials: 'same-origin', headers,
+          body: JSON.stringify({ facet: 'series', value: seriesName })
+        });
+        if (await handleAuthRequired(response)) return;
+        if (!response.ok) { btn.disabled = false; return; }
+        const data = await response.json();
+        btn.disabled = false;
+        if (data.action === 'removed') {
+          btn.classList.remove('is-active');
+          btn.textContent = uiT('facet.markSeriesRead');
+          showToast(uiTp('facet.seriesReadRemoved', { n: data.removed }), 'success');
+        } else {
+          btn.classList.add('is-active');
+          btn.textContent = uiT('facet.seriesMarkedRead');
+          if (data.added > 0) {
+            showToast(uiTp('facet.seriesReadAdded', { n: data.added }), 'success');
+          } else {
+            showToast(uiT('facet.seriesAlreadyRead'), 'info');
+          }
+        }
+      } catch (err) {
+        console.error('Mark series read error', err);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 async function attachBookmarkActions() {
   const buttons = [...document.querySelectorAll('[data-bookmark-button]')];
   for (const button of buttons) {
@@ -2039,6 +2291,18 @@ function isPageDownloadAllowed() {
   return document.body?.dataset?.downloadAllowed === '1';
 }
 
+const READ_BADGE_SVG = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+let _readBookIdSet = null;
+function getReadBookIdSet() {
+  if (_readBookIdSet) return _readBookIdSet;
+  try {
+    const el = document.getElementById('ui-read-ids');
+    if (el) _readBookIdSet = new Set(JSON.parse(el.textContent));
+  } catch (_) { /* ignore */ }
+  if (!_readBookIdSet) _readBookIdSet = new Set();
+  return _readBookIdSet;
+}
+
 function renderCardHtml(book, { batchSelect = false } = {}) {
   const id = escapeHtml(book.id);
   const title = escapeHtml(book.title || '');
@@ -2072,6 +2336,7 @@ function renderCardHtml(book, { batchSelect = false } = {}) {
         <span class="cover-fallback-overlay"></span>
         <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${authors || escapeHtml(uiT('book.authorUnknown'))}</span></span>
       </span>
+      ${getReadBookIdSet().has(book.id) ? `<span class="read-badge">${READ_BADGE_SVG}</span>` : ''}
     </a>
     <div class="meta">
       <h3><a href="/book/${encodeURIComponent(book.id)}">${title}</a></h3>
@@ -4018,6 +4283,10 @@ attachCoverErrorFallback(document);
 loadBookPageReview();
 attachRatingWidgets();
 attachBookmarkActions();
+attachReadBookActions();
+attachCoverLongPress();
+attachSeriesLongPress();
+attachMarkSeriesReadActions();
 attachFavoriteActions();
 attachOperationActions();
 attachSidecarDiagnostics();

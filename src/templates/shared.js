@@ -27,6 +27,8 @@ export { getAvailableDownloadFormats, FORMAT_LABELS };
 
 export const STATIC_ASSET_VERSION = String(Date.now());
 
+export const READ_CHECK_SVG = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+
 export function browseEntityPluralType(path) {
   if (path === '/authors') return 'author';
   if (path === '/series') return 'series';
@@ -437,13 +439,14 @@ function renderTopbarSearch(query = '', field = 'all') {
     </form>`;
 }
 
-export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false } = {}) {
+export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false, readBookIds = null } = {}) {
   const uniqueItems = uniqueBooksById(items);
   const effectiveBatch = batchSelect && !hideDownloads;
   const batchCb = (book) =>
     effectiveBatch
       ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} data-batch-book-id="${escapeHtml(book.id)}" aria-label="${escapeHtml(t('batch.selectAria'))}"></label>`
       : '';
+  const readBadge = (book) => readBookIds && readBookIds.has(book.id) ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : '';
   return `
     <div class="grid">
       ${uniqueItems.map((book) => {
@@ -461,6 +464,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
                 <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
               </span>
             </span>
+            ${readBadge(book)}
           </a>
           <div class="meta">
             <h3><a href="/book/${encodeURIComponent(book.id)}">${escapeHtml(book.title)}</a></h3>
@@ -474,12 +478,13 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
     </div>`;
 }
 
-export function renderFavoriteBookGrid(items = [], { batchSelect = false, user = null } = {}) {
+export function renderFavoriteBookGrid(items = [], { batchSelect = false, user = null, readBookIds = null } = {}) {
   const uniqueItems = uniqueBooksById(items);
   const batchCb = (book) =>
     batchSelect
       ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} data-batch-book-id="${escapeHtml(book.id)}" aria-label="${escapeHtml(t('batch.selectAria'))}"></label>`
       : '';
+  const readBadge = (book) => readBookIds && readBookIds.has(book.id) ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : '';
   return `
     <div class="grid">
       ${uniqueItems.map((book) => `
@@ -495,6 +500,7 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
                 <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
               </span>
             </span>
+            ${readBadge(book)}
           </a>
           <div class="meta">
             <h3><a href="/book/${encodeURIComponent(book.id)}">${escapeHtml(book.title)}</a></h3>
@@ -510,7 +516,7 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
     </div>`;
 }
 
-export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', emptyText = null) {
+export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', emptyText = null, readSeriesNames = null) {
   const empty = emptyText ?? t('browse.empty');
   if (!items.length) {
     return renderEmptyState({
@@ -518,13 +524,16 @@ export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', e
       text: t('facet.emptyText')
     });
   }
+  const isSeries = facetBasePath.includes('series');
+  const seriesBadge = (name) => isSeries && readSeriesNames && readSeriesNames.has(name) ? `<span class="read-series-badge">${READ_CHECK_SVG}</span>` : '';
   return `
     <div class="table-list entity-list">
       ${items.map((item) => `
         <a class="table-row table-row-link" href="${facetBasePath}/${encodeURIComponent(item.name)}">
-          <div>
-            <strong>${escapeHtml(item.displayName || item.name)}</strong><br>
-            <span class="muted">${countLabel('book', item.bookCount)} ${escapeHtml(t('entity.inLibrary'))}</span>
+          <div style="display:flex;align-items:center">
+            <span><strong>${escapeHtml(item.displayName || item.name)}</strong><br>
+            <span class="muted">${countLabel('book', item.bookCount)} ${escapeHtml(t('entity.inLibrary'))}</span></span>
+            ${seriesBadge(item.name)}
           </div>
         </a>
       `).join('')}
@@ -532,10 +541,11 @@ export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', e
 }
 
 /** Список серий на странице автора (как в разделе «Серии», счётчик — книги этого автора в серии). */
-export function renderAuthorFacetSeriesList(series = [], outsideSeries = null) {
+export function renderAuthorFacetSeriesList(series = [], outsideSeries = null, readSeriesNames = null) {
   if (!series.length && !outsideSeries) {
     return '';
   }
+  const seriesBadge = (name) => readSeriesNames && readSeriesNames.has(name) ? `<span class="read-series-badge">${READ_CHECK_SVG}</span>` : '';
   const outsideRow = outsideSeries && outsideSeries.href
     ? `
         <a class="table-row table-row-link" href="${escapeHtml(outsideSeries.href)}">
@@ -550,9 +560,10 @@ export function renderAuthorFacetSeriesList(series = [], outsideSeries = null) {
       ${series.map(
         (s) => `
         <a class="table-row table-row-link" href="/facet/series/${encodeURIComponent(s.name)}">
-          <div>
-            <strong>${escapeHtml(s.displayName || s.name)}</strong><br>
-            <span class="muted">${countLabel('book', s.bookCount)}</span>
+          <div style="display:flex;align-items:center">
+            <span><strong>${escapeHtml(s.displayName || s.name)}</strong><br>
+            <span class="muted">${countLabel('book', s.bookCount)}</span></span>
+            ${seriesBadge(s.name)}
           </div>
         </a>`
       ).join('')}
@@ -690,11 +701,11 @@ export function renderMiniBookList(title, items = [], emptyText = null) {
     </section>`;
 }
 
-export function renderHomeShelf({ title, href, items, type = 'books', facetBasePath = '', isAuthenticated = false, showBatch = false, user = null } = {}) {
+export function renderHomeShelf({ title, href, items, type = 'books', facetBasePath = '', isAuthenticated = false, showBatch = false, user = null, readBookIds = null } = {}) {
   const batchToolbar = '';
   const body = type === 'books'
     ? (items.length
-        ? renderBookGrid(items, { isAuthenticated, batchSelect: Boolean(batchToolbar), user })
+        ? renderBookGrid(items, { isAuthenticated, batchSelect: Boolean(batchToolbar), user, readBookIds })
         : renderEmptyState({ title: t('home.shelfEmptyTitle'), text: t('home.shelfEmptyText') }))
     : renderEntityGrid(items, facetBasePath, t('home.entityEmpty'));
   const wrapped = batchToolbar ? `<div class="batch-select-scope">${batchToolbar}${body}</div>` : body;
@@ -751,13 +762,13 @@ function renderAdminSidebar(currentPath = '/admin') {
         </div>
       </div>
       <div class="admin-sidebar-footer">
-        <span class="admin-sidebar-version" data-operations-field="appVersion">v${escapeHtml(ver)}</span>
+        <a href="https://github.com/Habsaec/inpx-library-server/releases" target="_blank" rel="noopener" class="admin-sidebar-version" data-operations-field="appVersion" style="text-decoration:none;color:inherit">v${escapeHtml(ver)}</a>
       </div>
     </aside>
     <div class="sidebar-overlay" data-sidebar-overlay></div>`;
 }
 
-export function pageShell({ title, content, user, query = '', field = 'all', stats, flash = '', indexStatus, breadcrumbs = [], mode = 'user', currentPath = '', csrfToken = '' }) {
+export function pageShell({ title, content, user, query = '', field = 'all', stats, flash = '', indexStatus, breadcrumbs = [], mode = 'user', currentPath = '', csrfToken = '', readBookIds = null }) {
   const isAdmin = mode === 'admin';
   const isAuthenticated = Boolean(user);
   const canAccessAdmin = user?.role === 'admin';
@@ -805,6 +816,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
   <div class="nav-progress" id="nav-progress"></div>
   <script>!function(){var b=document.getElementById('nav-progress');document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.charAt(0)==='#'||a.target==='_blank'||e.ctrlKey||e.metaKey||e.shiftKey)return;b.classList.add('active')});document.addEventListener('submit',function(){b.classList.add('active')})}()</script>
   <script type="application/json" id="ui-i18n-json">${serializeClientI18n()}</script>
+  ${readBookIds && readBookIds.size ? `<script type="application/json" id="ui-read-ids">${JSON.stringify([...readBookIds])}</script>` : ''}
   <a class="skip-to-content" href="#main-content">${escapeHtml(t('skipToContent'))}</a>
   <div class="shell">
     ${isAdmin ? renderAdminSidebar(currentPath) : renderUserSidebar({ query, field, stats, user, currentPath })}

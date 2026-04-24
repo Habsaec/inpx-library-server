@@ -18,8 +18,12 @@ export const PAGE_CACHE_MAX = 600;
 export const PAGE_CACHE_TTL_MS = 1000 * 60 * 15;       // 5 min → 15 min: увеличить время кэширования
 export const STATS_CACHE_TTL_MS = 1000 * 60 * 10;      // 10 min
 export const HOME_SECTIONS_CACHE_TTL_MS = 1000 * 60 * 30; // 30 min
-/** Главная для залогиненных: «продолжить», история и избранные авторы/серии — без повторных тяжёлых запросов на каждый F5. */
-export const HOME_USER_SNAPSHOT_CACHE_TTL_MS = 1000 * 45;
+/**
+ * Главная для залогиненных: «продолжить», история и избранные авторы/серии — без повторных
+ * тяжёлых запросов на каждый F5. Инвалидируется адресно при действиях пользователя через
+ * clearPageDataCache(`home:userSnap:${username}`), поэтому TTL может быть большим.
+ */
+export const HOME_USER_SNAPSHOT_CACHE_TTL_MS = 1000 * 60 * 5;
 
 // --- Rate limiting ---
 export const SYSTEM_EVENTS_MAX_COUNT = 1000;

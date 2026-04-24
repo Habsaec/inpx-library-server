@@ -21,6 +21,7 @@ import {
   suppressBook,
   getSuppressedBookIds
 } from './db.js';
+import { invalidateReadCache } from './db.js';
 import { config } from './config.js';
 import { formatGenreLabel, formatGenreList } from './genre-map.js';
 import { getAvailableDownloadFormats, FORMAT_LABELS } from './download-formats.js';
@@ -110,6 +111,10 @@ export function rebuildLibraryDedupProjection() {
 }
 
 export function markLibraryDedupProjectionStale() {
+  clearRuntimeQueryCaches();
+}
+
+export function invalidateDuplicatesCache() {
   clearRuntimeQueryCaches();
 }
 
@@ -297,18 +302,31 @@ export function seriesSearchName(value = '') {
  * Учитывает ё/е, пробелы и поля search_name/sort_name (как при импорте), чтобы
  * `/facet/series/Линия%20Грез` открывала ту же серию, что «Линия грёз» в каталоге.
  */
+let _seriesByName;
+let _seriesBySearch;
+let _seriesBySort;
+
+function ensureSeriesStmts() {
+  if (!_seriesByName) {
+    _seriesByName = db.prepare('SELECT name FROM series_catalog WHERE name = ?');
+    _seriesBySearch = db.prepare('SELECT name FROM series_catalog WHERE search_name = ?');
+    _seriesBySort = db.prepare('SELECT name FROM series_catalog WHERE sort_name = ?');
+  }
+}
+
 export function resolveSeriesCatalogName(requested) {
   const raw = normalizeText(requested);
   if (!raw) return '';
-  const direct = db.prepare('SELECT name FROM series_catalog WHERE name = ?').get(raw);
+  ensureSeriesStmts();
+  const direct = _seriesByName.get(raw);
   if (direct?.name) return direct.name;
 
   const sn = seriesSearchName(raw);
-  const bySearch = db.prepare('SELECT name FROM series_catalog WHERE search_name = ?').all(sn);
+  const bySearch = _seriesBySearch.all(sn);
   if (bySearch.length === 1) return bySearch[0].name;
 
   const sk = seriesSortName(raw);
-  const bySort = db.prepare('SELECT name FROM series_catalog WHERE sort_name = ?').all(sk);
+  const bySort = _seriesBySort.all(sk);
   if (bySort.length === 1) return bySort[0].name;
 
   if (bySearch.length > 1) {
@@ -737,6 +755,21 @@ export function splitFacetValues(value) {
     .filter((item, index, items) => items.indexOf(item) === index);
 }
 
+let _authorByName;
+let _authorByDisplaySearch;
+
+function ensureAuthorStmts() {
+  if (!_authorByName) {
+    _authorByName = db.prepare('SELECT name FROM authors WHERE name = ?');
+    _authorByDisplaySearch = db.prepare(`
+      SELECT name
+      FROM authors
+      WHERE display_name = ? OR search_name = ? OR sort_name = ?
+      LIMIT 1
+    `);
+  }
+}
+
 export function resolveAuthorName(value) {
   const normalized = normalizeText(value);
   const candidates = new Set([
@@ -746,20 +779,16 @@ export function resolveAuthorName(value) {
     ...splitAuthorValues(value).map((item) => formatSingleAuthorName(item))
   ].filter(Boolean));
 
+  ensureAuthorStmts();
   for (const candidate of candidates) {
-    const author = db.prepare('SELECT name FROM authors WHERE name = ?').get(candidate);
+    const author = _authorByName.get(candidate);
     if (author?.name) {
       return author.name;
     }
   }
 
   for (const candidate of candidates) {
-    const displayMatch = db.prepare(`
-      SELECT name
-      FROM authors
-      WHERE display_name = ? OR search_name = ? OR sort_name = ?
-      LIMIT 1
-    `).get(
+    const displayMatch = _authorByDisplaySearch.get(
       authorDisplayName(candidate),
       authorSearchName(candidate),
       createSortKey(authorSortKey(candidate))
@@ -2362,6 +2391,30 @@ export function getBookById(id) {
 }
 
 /**
+ * Batch lookup: returns a Map<id, book> for the given list of IDs.
+ * Uses a single WHERE id IN (...) query instead of N separate queries.
+ */
+export function getBooksByIds(ids) {
+  if (!ids || ids.length === 0) return new Map();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.file_name AS fileName,
+           b.archive_name AS archiveName, b.size, b.lib_id AS libId, b.ext, b.date, b.lang, b.keywords,
+           b.source_id AS sourceId, b.imported_at AS importedAt,
+           COALESCE(s.flibusta_sidecar, 0) AS sourceFlibusta
+    FROM active_books b
+    LEFT JOIN sources s ON s.id = b.source_id
+    WHERE b.id IN (${placeholders})
+  `).all(...ids);
+  const result = new Map();
+  for (const row of rows) {
+    const sourceFlibusta = effectiveSourceFlibustaForBook(row);
+    result.set(row.id, mapBookListRow({ ...row, sourceFlibusta }));
+  }
+  return result;
+}
+
+/**
  * Обновление метаданных книги: title, authors, series, series_no.
  * Пересчитывает sort/search поля, обновляет junction-таблицы и кеши.
  */
@@ -2403,21 +2456,24 @@ export function updateBookMetadata(bookId, { title, authors, series, seriesNo })
     // 2. Rebuild book_authors junction
     db.prepare('DELETE FROM book_authors WHERE book_id = ?').run(String(bookId));
     const authorTokens = splitAuthorValues(authorsNorm);
+    const upsertAuthor = db.prepare(`
+      INSERT INTO authors(name, display_name, sort_name, search_name)
+      VALUES(?, ?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        display_name = excluded.display_name,
+        sort_name = excluded.sort_name,
+        search_name = excluded.search_name
+    `);
+    const selectAuthorId = db.prepare('SELECT id FROM authors WHERE name = ?');
+    const linkBookAuthor = db.prepare('INSERT OR IGNORE INTO book_authors(book_id, author_id) VALUES(?, ?)');
     for (const token of authorTokens) {
       const displayName = formatSingleAuthorName(token) || token;
       const sortName = createSortKey(authorSortKey(token));
       const searchName = createSortKey(displayName);
-      db.prepare(`
-        INSERT INTO authors(name, display_name, sort_name, search_name)
-        VALUES(?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-          display_name = excluded.display_name,
-          sort_name = excluded.sort_name,
-          search_name = excluded.search_name
-      `).run(token, displayName, sortName, searchName);
-      const authorRow = db.prepare('SELECT id FROM authors WHERE name = ?').get(token);
+      upsertAuthor.run(token, displayName, sortName, searchName);
+      const authorRow = selectAuthorId.get(token);
       if (authorRow) {
-        db.prepare('INSERT OR IGNORE INTO book_authors(book_id, author_id) VALUES(?, ?)').run(String(bookId), authorRow.id);
+        linkBookAuthor.run(String(bookId), authorRow.id);
       }
     }
 
@@ -2608,16 +2664,20 @@ export function previewAutoClean() {
   return { totalGroups, totalBooks, willDelete: totalBooks - totalGroups };
 }
 
+let _stmtGetStats;
+
 export function getStats() {
-  const row = db.prepare(`
-    SELECT
-      (SELECT COUNT(*) FROM active_books) AS totalBooks,
-      (SELECT COUNT(*) FROM authors) AS totalAuthors,
-      (SELECT COUNT(*) FROM series_catalog) AS totalSeries,
-      (SELECT COUNT(*) FROM genres_catalog) AS totalGenres,
-      (SELECT COUNT(DISTINCT NULLIF(lang, '')) FROM active_books) AS totalLanguages
-  `).get();
-  return row;
+  if (!_stmtGetStats) {
+    _stmtGetStats = db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM active_books) AS totalBooks,
+        (SELECT COUNT(*) FROM authors) AS totalAuthors,
+        (SELECT COUNT(*) FROM series_catalog) AS totalSeries,
+        (SELECT COUNT(*) FROM genres_catalog) AS totalGenres,
+        (SELECT COUNT(DISTINCT NULLIF(lang, '')) FROM active_books) AS totalLanguages
+    `);
+  }
+  return _stmtGetStats.get();
 }
 
 export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'count', startsWith = false, letter = '' }) {
@@ -2921,6 +2981,35 @@ export function listLanguages({ page = 1, pageSize = 50, query = '', sort = 'cou
   return { total, items };
 }
 
+/* ── Pre-cached prepared statements for getBooksByFacet (finite set: 4 facets × 4 sorts) ── */
+const _facetStmtCache = new Map();
+
+function _getFacetStmts(facet, sort) {
+  const key = `${facet}|${sort}`;
+  let entry = _facetStmtCache.get(key);
+  if (entry) return entry;
+
+  const rankOrder = "COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, ''), b.imported_at) DESC, b.imported_at DESC, b.id DESC";
+  const totalSql = {
+    authors: `SELECT COUNT(DISTINCT b.id) AS count FROM book_authors ba JOIN authors a ON a.id = ba.author_id JOIN active_books b ON b.id = ba.book_id WHERE a.name = ?`,
+    series: `SELECT COUNT(DISTINCT b.id) AS count FROM book_series bs JOIN series_catalog s ON s.id = bs.series_id JOIN active_books b ON b.id = bs.book_id WHERE s.name = ?`,
+    genres: `SELECT COUNT(DISTINCT b.id) AS count FROM book_genres bg JOIN genres_catalog g ON g.id = bg.genre_id JOIN active_books b ON b.id = bg.book_id WHERE g.name = ?`,
+    languages: `SELECT COUNT(*) AS count FROM active_books b WHERE COALESCE(NULLIF(b.lang, ''), 'unknown') = ?`
+  };
+  const itemsSql = {
+    authors: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName FROM book_authors ba JOIN authors a ON a.id = ba.author_id JOIN active_books b ON b.id = ba.book_id LEFT JOIN sources s ON s.id = b.source_id WHERE a.name = ? ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b')} LIMIT ? OFFSET ?`,
+    series: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName FROM book_series bs JOIN series_catalog sc ON sc.id = bs.series_id JOIN active_books b ON b.id = bs.book_id LEFT JOIN sources s ON s.id = b.source_id WHERE sc.name = ? ORDER BY ${sort === 'recent' ? 'b.series_index ASC, b.title_sort ASC, b.id DESC' : resolveBookAliasSort(sort, 'b')} LIMIT ? OFFSET ?`,
+    genres: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName FROM book_genres bg JOIN genres_catalog g ON g.id = bg.genre_id JOIN active_books b ON b.id = bg.book_id LEFT JOIN sources s ON s.id = b.source_id WHERE g.name = ? ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b')} LIMIT ? OFFSET ?`,
+    languages: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName FROM active_books b LEFT JOIN sources s ON s.id = b.source_id WHERE COALESCE(NULLIF(b.lang, ''), 'unknown') = ? ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b')} LIMIT ? OFFSET ?`
+  };
+  entry = {
+    total: db.prepare(totalSql[facet]),
+    items: db.prepare(itemsSql[facet])
+  };
+  _facetStmtCache.set(key, entry);
+  return entry;
+}
+
 export function getBooksByFacet({ facet, value, page = 1, pageSize = 24, sort = 'recent' }) {
   if (facet === 'series') {
     value = resolveSeriesCatalogName(String(value || ''));
@@ -2929,98 +3018,18 @@ export function getBooksByFacet({ facet, value, page = 1, pageSize = 24, sort = 
   const cached = readTimedCache(facetBooksCache, cacheKey);
   if (cached) return cached;
   const offset = (page - 1) * pageSize;
-  const rankOrder = "COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, ''), b.imported_at) DESC, b.imported_at DESC, b.id DESC";
-  const facetQueries = {
-    authors: {
-      total: `
-        SELECT COUNT(DISTINCT b.id) AS count
-        FROM book_authors ba
-        JOIN authors a ON a.id = ba.author_id
-        JOIN active_books b ON b.id = ba.book_id
-        WHERE a.name = ?
-      `,
-      items: `
-        SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName
-        FROM book_authors ba
-        JOIN authors a ON a.id = ba.author_id
-        JOIN active_books b ON b.id = ba.book_id
-        LEFT JOIN sources s ON s.id = b.source_id
-        WHERE a.name = ?
-        ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b')}
-        LIMIT ? OFFSET ?
-      `
-    },
-    series: {
-      total: `
-        SELECT COUNT(DISTINCT b.id) AS count
-        FROM book_series bs
-        JOIN series_catalog s ON s.id = bs.series_id
-        JOIN active_books b ON b.id = bs.book_id
-        WHERE s.name = ?
-      `,
-      items: `
-        SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName
-        FROM book_series bs
-        JOIN series_catalog sc ON sc.id = bs.series_id
-        JOIN active_books b ON b.id = bs.book_id
-        LEFT JOIN sources s ON s.id = b.source_id
-        WHERE sc.name = ?
-        ORDER BY ${
-          sort === 'recent'
-            ? 'b.series_index ASC, b.title_sort ASC, b.id DESC'
-            : resolveBookAliasSort(sort, 'b')
-        }
-        LIMIT ? OFFSET ?
-      `
-    },
-    genres: {
-      total: `
-        SELECT COUNT(DISTINCT b.id) AS count
-        FROM book_genres bg
-        JOIN genres_catalog g ON g.id = bg.genre_id
-        JOIN active_books b ON b.id = bg.book_id
-        WHERE g.name = ?
-      `,
-      items: `
-        SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName
-        FROM book_genres bg
-        JOIN genres_catalog g ON g.id = bg.genre_id
-        JOIN active_books b ON b.id = bg.book_id
-        LEFT JOIN sources s ON s.id = b.source_id
-        WHERE g.name = ?
-        ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b')}
-        LIMIT ? OFFSET ?
-      `
-    },
-    languages: {
-      total: `
-        SELECT COUNT(*) AS count
-        FROM active_books b
-        WHERE COALESCE(NULLIF(b.lang, ''), 'unknown') = ?
-      `,
-      items: `
-        SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName
-        FROM active_books b
-        LEFT JOIN sources s ON s.id = b.source_id
-        WHERE COALESCE(NULLIF(b.lang, ''), 'unknown') = ?
-        ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b')}
-        LIMIT ? OFFSET ?
-      `
-    }
-  };
-  const facetQuery = facetQueries[facet];
-  if (!facetQuery) {
-    return { total: 0, items: [] };
-  }
+
+  const stmts = _getFacetStmts(facet, sort);
+  if (!stmts.total) return { total: 0, items: [] };
 
   const totalKey = `${facet}|${value}`;
   let total = readTimedCache(facetDedupTotalCache, totalKey);
   if (total == null || !Number.isFinite(Number(total))) {
-    total = db.prepare(facetQuery.total).get(value).count;
+    total = stmts.total.get(value).count;
     writeTimedCache(facetDedupTotalCache, totalKey, total, FACET_DEDUP_TOTAL_TTL_MS, 400);
   }
 
-  const items = db.prepare(facetQuery.items).all(value, pageSize, offset).map(mapBookListRow);
+  const items = stmts.items.all(value, pageSize, offset).map(mapBookListRow);
   const result = { total, items };
   writeTimedCache(facetBooksCache, cacheKey, result, FACET_CACHE_TTL_MS, 120);
   return result;
@@ -3562,6 +3571,31 @@ export function getLibraryView(view = 'recent', { page = 1, pageSize = 24, usern
     return { total, items };
   }
 
+  if (view === 'read') {
+    const normalizedUsername = String(username || '').trim();
+    if (!normalizedUsername) {
+      return { total: 0, items: [] };
+    }
+
+    const total = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM read_books rb
+      JOIN active_books b ON b.id = rb.book_id
+      WHERE rb.username = ?
+    `).get(normalizedUsername).count;
+
+    const items = db.prepare(`
+      SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName
+      FROM read_books rb
+      JOIN active_books b ON b.id = rb.book_id
+      WHERE rb.username = ?
+      ORDER BY rb.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(normalizedUsername, pageSize, offset).map(mapBookListRow);
+
+    return { total, items };
+  }
+
   const sort = 'recent';
   return searchBooks({ query: '', page, pageSize, field: 'all', sort });
 }
@@ -4001,6 +4035,40 @@ export function isBookmarked(username, bookId) {
   return Boolean(db.prepare('SELECT 1 FROM bookmarks WHERE username = ? AND book_id = ?').get(username, bookId));
 }
 
+let _stmtIsBookRead = null;
+export function isBookRead(username, bookId) {
+  if (!_stmtIsBookRead) {
+    _stmtIsBookRead = db.prepare('SELECT 1 FROM read_books WHERE username = ? AND book_id = ?');
+  }
+  return Boolean(_stmtIsBookRead.get(username, bookId));
+}
+
+let _stmtIsSeriesFullyRead = null;
+export function isSeriesFullyRead(username, seriesName) {
+  if (!username || !seriesName) return false;
+  if (!_stmtIsSeriesFullyRead) {
+    _stmtIsSeriesFullyRead = db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM active_books WHERE series = ?) AS total,
+        (SELECT COUNT(*) FROM read_books rb JOIN active_books b ON b.id = rb.book_id WHERE rb.username = ? AND b.series = ?) AS readCount
+    `);
+  }
+  const row = _stmtIsSeriesFullyRead.get(seriesName, username, seriesName);
+  return row && row.total > 0 && row.readCount >= row.total;
+}
+
+export function removeReadBooksForSeries(username, seriesName) {
+  if (!username || !seriesName) return { removed: 0 };
+  const ids = getAllBookIdsByFacet('series', seriesName);
+  let removed = 0;
+  for (const bookId of ids) {
+    const existed = db.prepare('DELETE FROM read_books WHERE username = ? AND book_id = ?').run(username, bookId);
+    if (existed.changes > 0) removed++;
+  }
+  invalidateReadCache(username);
+  return { removed };
+}
+
 export function toggleBookmark(username, bookId) {
   const exists = isBookmarked(username, bookId);
   if (exists) {
@@ -4034,20 +4102,94 @@ export function addBookmarksIfMissing(username, bookIds) {
   return { added, already, missing };
 }
 
+export function toggleReadBook(username, bookId) {
+  const exists = isBookRead(username, bookId);
+  if (exists) {
+    db.prepare('DELETE FROM read_books WHERE username = ? AND book_id = ?').run(username, bookId);
+    invalidateReadCache(username);
+    return false;
+  }
+  db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
+  db.prepare('INSERT OR IGNORE INTO read_books(username, book_id) VALUES(?, ?)').run(username, bookId);
+  invalidateReadCache(username);
+  return true;
+}
+
+export function addReadBooksIfMissing(username, bookIds) {
+  const unique = [...new Set(bookIds.map((x) => String(x || '').trim()).filter(Boolean))];
+  let added = 0;
+  let already = 0;
+  let missing = 0;
+  for (const bookId of unique) {
+    if (!getBookById(bookId)) {
+      missing++;
+      continue;
+    }
+    if (isBookRead(username, bookId)) {
+      already++;
+      continue;
+    }
+    db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
+    db.prepare('INSERT OR IGNORE INTO read_books(username, book_id) VALUES(?, ?)').run(username, bookId);
+    added++;
+  }
+  if (added > 0) invalidateReadCache(username);
+  return { added, already, missing };
+}
+
+export function getReadBooks(username, sort = 'date') {
+  const orderMap = {
+    title: 'b.title COLLATE NOCASE ASC',
+    author: `COALESCE(b.authors, '') COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC`,
+    date: 'rb.created_at DESC'
+  };
+  const orderBy = orderMap[sort] || orderMap.date;
+  return db.prepare(`
+    SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo,
+           b.ext, b.archive_name AS archiveName
+    FROM read_books rb
+    JOIN active_books b ON b.id = rb.book_id
+    WHERE rb.username = ?
+    ORDER BY ${orderBy}
+  `).all(username).map(mapBookListRow);
+}
+
 export function getSuggestions(query, limit = 5) {
   const raw = String(query || '').trim();
   if (!raw || raw.length < 2) return { books: [], authors: [], series: [] };
   const key = createSortKey(raw);
   if (!key) return { books: [], authors: [], series: [] };
 
-  const books = db.prepare(`
-    SELECT id, title, authors, series FROM active_books
+  const booksPrefix = db.prepare(`
+    SELECT id, title, authors, series
+    FROM active_books
     WHERE title_sort LIKE ? OR author_sort LIKE ?
     ORDER BY CASE WHEN title_sort LIKE ? THEN 0 ELSE 1 END, title_sort ASC
     LIMIT ?
-  `).all(`%${key}%`, `%${key}%`, `${key}%`, limit).map(mapBookListRow);
+  `).all(`${key}%`, `${key}%`, `${key}%`, limit);
+  const books = booksPrefix;
+  if (books.length < limit) {
+    const need = limit - books.length;
+    const seen = new Set(books.map((b) => String(b.id)));
+    const booksContains = db.prepare(`
+      SELECT id, title, authors, series
+      FROM active_books
+      WHERE (title_sort LIKE ? OR author_sort LIKE ?)
+        AND title_sort NOT LIKE ?
+        AND author_sort NOT LIKE ?
+      ORDER BY CASE WHEN title_sort LIKE ? THEN 0 ELSE 1 END, title_sort ASC
+      LIMIT ?
+    `).all(`%${key}%`, `%${key}%`, `${key}%`, `${key}%`, `${key}%`, need * 2);
+    for (const row of booksContains) {
+      const id = String(row.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      books.push(row);
+      if (books.length >= limit) break;
+    }
+  }
 
-  const authors = db.prepare(`
+  const authorsPrefix = db.prepare(`
     SELECT a.name AS name, COALESCE(a.display_name, a.name) AS displayName,
            COUNT(ab.id) AS bookCount
     FROM authors a
@@ -4055,9 +4197,31 @@ export function getSuggestions(query, limit = 5) {
     JOIN active_books ab ON ab.id = ba.book_id
     WHERE COALESCE(a.search_name, '') LIKE ?
     GROUP BY a.id ORDER BY bookCount DESC LIMIT ?
-  `).all(`%${key}%`, limit);
+  `).all(`${key}%`, limit);
+  const authors = authorsPrefix;
+  if (authors.length < limit) {
+    const need = limit - authors.length;
+    const seen = new Set(authors.map((a) => String(a.name)));
+    const authorsContains = db.prepare(`
+      SELECT a.name AS name, COALESCE(a.display_name, a.name) AS displayName,
+             COUNT(ab.id) AS bookCount
+      FROM authors a
+      JOIN book_authors ba ON ba.author_id = a.id
+      JOIN active_books ab ON ab.id = ba.book_id
+      WHERE COALESCE(a.search_name, '') LIKE ?
+        AND COALESCE(a.search_name, '') NOT LIKE ?
+      GROUP BY a.id ORDER BY bookCount DESC LIMIT ?
+    `).all(`%${key}%`, `${key}%`, need * 2);
+    for (const row of authorsContains) {
+      const name = String(row.name);
+      if (seen.has(name)) continue;
+      seen.add(name);
+      authors.push(row);
+      if (authors.length >= limit) break;
+    }
+  }
 
-  const seriesItems = db.prepare(`
+  const seriesPrefix = db.prepare(`
     SELECT sc.name AS name, COALESCE(sc.display_name, sc.name) AS displayName,
            COUNT(ab.id) AS bookCount
     FROM series_catalog sc
@@ -4065,7 +4229,29 @@ export function getSuggestions(query, limit = 5) {
     JOIN active_books ab ON ab.id = bs.book_id
     WHERE COALESCE(sc.search_name, '') LIKE ?
     GROUP BY sc.id ORDER BY bookCount DESC LIMIT ?
-  `).all(`%${key}%`, limit);
+  `).all(`${key}%`, limit);
+  const seriesItems = seriesPrefix;
+  if (seriesItems.length < limit) {
+    const need = limit - seriesItems.length;
+    const seen = new Set(seriesItems.map((s) => String(s.name)));
+    const seriesContains = db.prepare(`
+      SELECT sc.name AS name, COALESCE(sc.display_name, sc.name) AS displayName,
+             COUNT(ab.id) AS bookCount
+      FROM series_catalog sc
+      JOIN book_series bs ON bs.series_id = sc.id
+      JOIN active_books ab ON ab.id = bs.book_id
+      WHERE COALESCE(sc.search_name, '') LIKE ?
+        AND COALESCE(sc.search_name, '') NOT LIKE ?
+      GROUP BY sc.id ORDER BY bookCount DESC LIMIT ?
+    `).all(`%${key}%`, `${key}%`, need * 2);
+    for (const row of seriesContains) {
+      const name = String(row.name);
+      if (seen.has(name)) continue;
+      seen.add(name);
+      seriesItems.push(row);
+      if (seriesItems.length >= limit) break;
+    }
+  }
 
-  return { books, authors, series: seriesItems };
+  return { books: books.map(mapBookListRow), authors, series: seriesItems };
 }

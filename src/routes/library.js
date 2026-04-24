@@ -17,9 +17,10 @@ import {
   HOME_USER_SNAPSHOT_CACHE_TTL_MS,
   PAGE_CACHE_TTL_MS
 } from '../constants.js';
-import { getUserShelves, getShelfById, getShelfBooks, getSetting, setBookRating, removeBookRating, getBookRating, getBookAverageRating } from '../db.js';
+import { getUserShelves, getShelfById, getShelfBooks, getSetting, setBookRating, removeBookRating, getBookRating, getBookAverageRating, getReadBookIdSet, getFullyReadSeriesNames } from '../db.js';
 import {
   getBookById,
+  getBooksByIds,
   getBookDuplicateCandidates,
   getAuthorBooksGroupedCoalesced,
   getAuthorFlibustaSourceId,
@@ -34,7 +35,10 @@ import {
   getLibraryView,
   updateBookMetadata,
   getReadingHistory,
+  getReadBooks,
   isBookmarked,
+  isBookRead,
+  isSeriesFullyRead,
   isFavoriteAuthor,
   isFavoriteSeries,
   listAuthors,
@@ -137,6 +141,9 @@ function getCachedCoverThumb(bookId) {
     coverThumbCache.delete(key);
     return null;
   }
+  // LRU promotion: move to end of insertion order
+  coverThumbCache.delete(key);
+  coverThumbCache.set(key, item);
   return item;
 }
 
@@ -384,13 +391,14 @@ export function registerLibraryRoutes(app, deps) {
       : { history: [], favoriteAuthors: [], favoriteSeries: [], continueBooks: [] };
     const { history, favoriteAuthors, favoriteSeries, continueBooks } = userSnap;
     const sections = getCachedPageData('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS);
-    const recommendations = getHomeRecommendations({ username, favoriteAuthors, favoriteSeries, history });
+    const readBookIds = username ? getReadBookIdSet(username) : null;
+    const recommendations = getHomeRecommendations({ username });
     const canUseAnonymousHomeHtmlCache = !user && !indexStatus?.active && !indexStatus?.error;
     const csrfToken = req.csrfToken || '';
     const homeSubtitle = getSetting('home_subtitle') || '';
     const html = canUseAnonymousHomeHtmlCache
       ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken: '' }), PAGE_CACHE_TTL_MS)
-      : renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken });
+      : renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken, readBookIds });
     res.send(html);
   });
 
@@ -408,11 +416,12 @@ export function registerLibraryRoutes(app, deps) {
     const cacheKey = `catalog:${field}:${sort}:${genre}:${letter}:${query}:p${page}`;
     const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, genre, letter }));
     const user = req.user || null;
-    res.send(renderCatalog({ ...result, page, pageSize, query, field, sort, genre, letter, user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+    const readBookIds = user ? getReadBookIdSet(user.username) : null;
+    res.send(renderCatalog({ ...result, page, pageSize, query, field, sort, genre, letter, user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds }));
   });
 
   // --- Library views ---
-  app.get('/library/:view(recent|continue|recommended)', requireBrowseAuth, (req, res) => {
+  app.get('/library/:view(recent|continue|read|recommended)', requireBrowseAuth, (req, res) => {
     const view = String(req.params.view || 'recent');
     const page = safePage(req.query.page);
     const pageSize = 24;
@@ -421,11 +430,13 @@ export function registerLibraryRoutes(app, deps) {
     const titles = {
       recent: t('library.title.recent'),
       continue: t('library.title.continue'),
+      read: t('library.title.read'),
       recommended: t('library.title.recommended')
     };
     const subtitles = {
       recent: t('library.sub.recent'),
       continue: t('library.sub.continue'),
+      read: t('library.sub.read'),
       recommended: t('library.sub.recommended')
     };
     const canUseSharedCache = view === 'recent';
@@ -434,6 +445,7 @@ export function registerLibraryRoutes(app, deps) {
       : view === 'recommended'
         ? getRecommendedLibraryView({ page, pageSize, username: user?.username || '' })
         : getLibraryView(view, { page, pageSize, username: user?.username || '' });
+    const readBookIds = user ? getReadBookIdSet(user.username) : null;
     res.send(renderLibraryView({
       view,
       title: titles[view] || t('library.titleFallback'),
@@ -444,7 +456,8 @@ export function registerLibraryRoutes(app, deps) {
       user,
       stats,
       indexStatus: getIndexStatus(),
-      csrfToken: req.csrfToken || ''
+      csrfToken: req.csrfToken || '',
+      readBookIds
     }));
   });
 
@@ -476,11 +489,13 @@ export function registerLibraryRoutes(app, deps) {
     const stats = getCachedStats();
     const cacheKey = `browse:series:${page}:${sort}:${letter}:${query}`;
     const result = getCachedPageData(cacheKey, () => listSeries({ query, page, pageSize, sort, letter }));
+    const username = req.user?.username || '';
     res.send(renderBrowsePage({
       title: t('nav.series'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
       path: '/series', facetBasePath: '/facet/series',
-      indexStatus: getIndexStatus(), sort, csrfToken: req.csrfToken || ''
+      indexStatus: getIndexStatus(), sort, csrfToken: req.csrfToken || '',
+      readSeriesNames: username ? getFullyReadSeriesNames(username) : null
     }));
   });
 
@@ -576,7 +591,8 @@ export function registerLibraryRoutes(app, deps) {
         user: req.user || null, stats,
         indexStatus: getIndexStatus(), sort, facetPath, breadcrumbs,
         favorite, facetValue: value, csrfToken: req.csrfToken || '',
-        page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize
+        page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
+        readBookIds: username ? getReadBookIdSet(username) : null
       })
     );
     } catch (error) {
@@ -672,7 +688,8 @@ export function registerLibraryRoutes(app, deps) {
             indexStatus: getIndexStatus(), sort, breadcrumbs, summary,
             facetValue: value, favorite, authorPortraitUrl, authorBioHtml,
             csrfToken: req.csrfToken || '',
-            page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize
+            page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
+            readSeriesNames: username ? getFullyReadSeriesNames(username) : null
           })
         );
         return;
@@ -680,12 +697,14 @@ export function registerLibraryRoutes(app, deps) {
 
       const result = await getBooksByFacetCoalesced({ facet, value, page, pageSize, sort });
       const summary = getFacetSummary(facet, value);
+      const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
       res.send(renderFacetBooks({
         title: tp('facet.titleWithValue', { label: facetLabels[facet] || t('facet.sectionFallback'), value: displayValue }),
         ...result, summary, page, pageSize,
         user: req.user || null, stats, facetPath,
         indexStatus: getIndexStatus(), sort, facet, facetValue: value,
-        favorite, breadcrumbs, csrfToken: req.csrfToken || ''
+        favorite, seriesRead, breadcrumbs, csrfToken: req.csrfToken || '',
+        readBookIds: username ? getReadBookIdSet(username) : null
       }));
     } catch (error) {
       next(error);
@@ -703,13 +722,14 @@ export function registerLibraryRoutes(app, deps) {
       const username = user?.username || '';
       const details = await getDetails(book);
       const bookmarked = username ? isBookmarked(username, book.id) : false;
+      const isRead = username ? isBookRead(username, book.id) : false;
       const userRating = username ? getBookRating(username, book.id) : 0;
       const avgRating = getBookAverageRating(book.id);
       const similarBooks = buildSimilarBooks(book);
 
       res.send(
         renderBook({
-          book, details, bookmarked, user,
+          book, details, bookmarked, isRead, user,
           stats: getCachedStats(),
           indexStatus: getIndexStatus(),
           similarBooks, csrfToken: req.csrfToken || '',
@@ -717,7 +737,8 @@ export function registerLibraryRoutes(app, deps) {
           illustrationUrls: [],
           flash: String(req.query.flash || ''),
           userRating,
-          avgRating
+          avgRating,
+          readBookIds: username ? getReadBookIdSet(username) : null
         })
       );
     } catch (error) {
@@ -752,12 +773,15 @@ export function registerLibraryRoutes(app, deps) {
   // --- Favorites & shelves ---
   app.get('/favorites', requireWebAuth, (req, res) => {
     const stats = getCachedStats();
-    const view = ['books', 'authors', 'series'].includes(String(req.query.view || '')) ? String(req.query.view) : 'books';
+    const view = ['books', 'read', 'authors', 'series'].includes(String(req.query.view || '')) ? String(req.query.view) : 'books';
     const sort = ['title', 'author', 'date', 'name', 'count'].includes(String(req.query.sort || '')) ? String(req.query.sort) : 'date';
     const books = getBookmarks(req.user.username, sort);
+    const readBooks = getReadBooks(req.user.username, sort);
     const authors = getFavoriteAuthors(req.user.username, 50, sort);
     const series = getFavoriteSeries(req.user.username, 50, sort);
-    res.send(renderFavorites({ books, authors, series, view, sort, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+    const readBookIds = getReadBookIdSet(req.user.username);
+    const readSeriesNames = getFullyReadSeriesNames(req.user.username);
+    res.send(renderFavorites({ books, readBooks, authors, series, view, sort, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds, readSeriesNames }));
   });
 
   app.get('/shelves', requireWebAuth, (req, res) => {
@@ -771,7 +795,7 @@ export function registerLibraryRoutes(app, deps) {
     if (!shelf) return res.status(404).send(t('shelf.notFound'));
     const stats = getCachedStats();
     const books = getShelfBooks(shelf.id, req.user.username);
-    res.send(renderShelfDetail({ shelf, books, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+    res.send(renderShelfDetail({ shelf, books, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds: getReadBookIdSet(req.user.username) }));
   });
 
   // --- Book details API ---
@@ -803,10 +827,11 @@ export function registerLibraryRoutes(app, deps) {
         return apiFail(res, 400, ApiErrorCode.VALIDATION, 'too many ids (max 200)');
       }
 
+      const booksMap = getBooksByIds(ids);
       const items = {};
       await asyncMapLimit(ids, 6, async (id) => {
         try {
-          const book = getBookById(id);
+          const book = booksMap.get(id);
           if (!book) return;
           const details = await getDetails(book);
           items[id] = {
@@ -889,7 +914,27 @@ export function registerLibraryRoutes(app, deps) {
 
   app.get('/api/books/:id/cover-thumb', requireBrowseOrOpds, async (req, res, next) => {
     try {
-      const book = getBookById(req.params.id);
+      const bookId = req.params.id;
+
+      // 1. Check in-memory cache FIRST (cheapest)
+      const cached = getCachedCoverThumb(bookId);
+      if (cached?.data?.length) {
+        res.set('Cache-Control', 'private, max-age=86400');
+        res.type(cached.contentType || 'image/webp');
+        return res.send(cached.data);
+      }
+
+      // 2. Check disk cache BEFORE expensive cover resolution
+      const diskCached = await getDiskCachedCoverThumb(bookId);
+      if (diskCached?.data?.length) {
+        setCachedCoverThumb(bookId, diskCached.contentType, diskCached.data);
+        res.set('Cache-Control', 'private, max-age=86400');
+        res.type(diskCached.contentType || 'image/webp');
+        return res.send(diskCached.data);
+      }
+
+      // 3. Cache miss — resolve cover from archives (expensive)
+      const book = getBookById(bookId);
       if (!book) {
         return res.status(404).end();
       }
@@ -898,20 +943,6 @@ export function registerLibraryRoutes(app, deps) {
       if (!coverMimeHead || !ALLOWED_BOOK_IMAGE_TYPES.has(coverMimeHead)) {
         invalidateCoverThumbCaches(book.id);
         return res.status(404).end();
-      }
-
-      const cached = getCachedCoverThumb(book.id);
-      if (cached?.data?.length) {
-        res.set('Cache-Control', 'private, max-age=86400');
-        res.type(cached.contentType || 'image/webp');
-        return res.send(cached.data);
-      }
-      const diskCached = await getDiskCachedCoverThumb(book.id);
-      if (diskCached?.data?.length) {
-        setCachedCoverThumb(book.id, diskCached.contentType, diskCached.data);
-        res.set('Cache-Control', 'private, max-age=86400');
-        res.type(diskCached.contentType || 'image/webp');
-        return res.send(diskCached.data);
       }
 
       let coverBuffer = details.cover.data;
@@ -927,7 +958,7 @@ export function registerLibraryRoutes(app, deps) {
             fit: 'inside',
             withoutEnlargement: true
           })
-          .webp({ quality: 62, effort: 4 })
+          .webp({ quality: 62, effort: 2 })
           .toBuffer();
       } catch {
         outType = coverMime;

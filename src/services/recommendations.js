@@ -8,13 +8,21 @@ import {
   getFavoriteAuthors,
   getFavoriteSeries,
   getBookmarks,
-  searchBooks
+  getReadBooks
 } from '../inpx.js';
 import { t } from '../i18n.js';
 
 const RECS_CACHE_TTL_MS = 30_000;
 const recommendedViewCache = new Map();
-const homeRecommendationsCache = new Map();
+
+export function invalidateRecommendationsCache(username = '') {
+  const normalizedUsername = String(username || '').trim();
+  if (!normalizedUsername) {
+    recommendedViewCache.clear();
+    return;
+  }
+  recommendedViewCache.delete(normalizedUsername);
+}
 
 function pickFirstAuthor(authors = '') {
   return String(authors).split(':').map((s) => s.trim()).filter(Boolean)[0] || '';
@@ -63,25 +71,16 @@ function createFacetFetchMemo() {
   };
 }
 
-function buildHomeRecommendations({ favoriteAuthors, favoriteSeries, history, getFacetBooks }) {
-  if (favoriteSeries.length > 0) {
-    const items = favoriteSeries.flatMap((s) => getFacetBooks('series', s.name, 4, 'recent'));
-    return dedupeBooks(items, history.map((h) => h.id)).slice(0, 12);
-  }
-  if (favoriteAuthors.length > 0) {
-    const items = favoriteAuthors.flatMap((a) => getFacetBooks('authors', a.name, 4, 'recent'));
-    return dedupeBooks(items, history.map((h) => h.id)).slice(0, 12);
-  }
-  return searchBooks({ query: '', field: 'all', page: 1, pageSize: 12, sort: 'recent' }).items;
-}
-
-function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, history, bookmarks, getFacetBooks, limit = 48 }) {
+function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, history, bookmarks, readBooks = [], getFacetBooks, limit = 48 }) {
   const scored = new Map();
-  const historyIds = new Set(history.map((h) => h.id));
+  const excludeIds = new Set([
+    ...history.map((h) => h.id),
+    ...readBooks.map((b) => b.id)
+  ]);
 
   const addItems = (items, weight) => {
     for (const item of items) {
-      if (!item?.id || historyIds.has(item.id)) continue;
+      if (!item?.id || excludeIds.has(item.id)) continue;
       const existing = scored.get(item.id);
       if (existing) { existing.score += weight; continue; }
       scored.set(item.id, { item, score: weight });
@@ -106,6 +105,13 @@ function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, histo
     if (item.series) addItems(getFacetBooks('series', item.series, 8, 'recent'), 6);
     if (author) addItems(getFacetBooks('authors', author, 8, 'recent'), 4);
   }
+  for (const item of readBooks.slice(0, 12)) {
+    const author = pickFirstAuthor(item.authors);
+    const genre = firstGenreValue(item.genres);
+    if (item.series) addItems(getFacetBooks('series', item.series, 8, 'recent'), 10);
+    if (author) addItems(getFacetBooks('authors', author, 8, 'recent'), 9);
+    if (genre) addItems(getFacetBooks('genres', genre, 8, 'recent'), 4);
+  }
 
   return [...scored.values()]
     .sort((a, b) => b.score !== a.score ? b.score - a.score : String(b.item.id).localeCompare(String(a.item.id)))
@@ -113,42 +119,42 @@ function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, histo
     .slice(0, limit);
 }
 
+/* ── Core recommendation builder (shared by home shelf and /library/recommended) ── */
+
+function buildRecommendations(username, limit = 48) {
+  const history = getReadingHistory(username, 24);
+  const favoriteAuthors = getFavoriteAuthors(username, 12);
+  const favoriteSeries = getFavoriteSeries(username, 12);
+  const bookmarkItems = getBookmarks(username);
+  const readBooks = getReadBooks(username);
+  const getFacetBooks = createFacetFetchMemo();
+  const weighted = collectWeightedRecommendations({
+    favoriteAuthors, favoriteSeries, history, bookmarks: bookmarkItems, readBooks, getFacetBooks, limit
+  });
+  const allExcludeIds = [...history.map((h) => h.id), ...readBooks.map((b) => b.id)];
+  return dedupeBooks(weighted, allExcludeIds);
+}
+
 export function getRecommendedLibraryView({ username = '', page = 1, pageSize = 24 }) {
   const normalizedUsername = String(username || '').trim();
   if (!normalizedUsername) return { total: 0, items: [] };
-  const cacheKey = `${normalizedUsername}|${page}|${pageSize}`;
-  const cached = readTimedCache(recommendedViewCache, cacheKey);
-  if (cached) return cached;
-
-  const history = getReadingHistory(normalizedUsername, 24);
-  const favoriteAuthors = getFavoriteAuthors(normalizedUsername, 12);
-  const favoriteSeries = getFavoriteSeries(normalizedUsername, 12);
-  const bookmarkItems = getBookmarks(normalizedUsername);
-  const getFacetBooks = createFacetFetchMemo();
-  const baseRecs = buildHomeRecommendations({ favoriteAuthors, favoriteSeries, history, getFacetBooks });
-  const weightedRecs = collectWeightedRecommendations({
-    favoriteAuthors, favoriteSeries, history, bookmarks: bookmarkItems, getFacetBooks, limit: 72
-  });
-  const recommended = dedupeBooks([...weightedRecs, ...baseRecs], history.map((h) => h.id));
+  // Cache by username only — page slicing is O(1) from the cached full list
+  const cacheKey = normalizedUsername;
+  let recommended = readTimedCache(recommendedViewCache, cacheKey);
+  if (!recommended) {
+    recommended = buildRecommendations(normalizedUsername, 72);
+    writeTimedCache(recommendedViewCache, cacheKey, recommended);
+  }
   const offset = (page - 1) * pageSize;
-  const result = { total: recommended.length, items: recommended.slice(offset, offset + pageSize) };
-  writeTimedCache(recommendedViewCache, cacheKey, result);
-  return result;
+  return { total: recommended.length, items: recommended.slice(offset, offset + pageSize) };
 }
 
-export function getHomeRecommendations({ username = '', favoriteAuthors = [], favoriteSeries = [], history = [] }) {
+export function getHomeRecommendations({ username = '' }) {
   const normalizedUsername = String(username || '').trim();
   if (!normalizedUsername) return [];
-  const cacheKey = `${normalizedUsername}|${favoriteAuthors.length}|${favoriteSeries.length}|${history.length}`;
-  const cached = readTimedCache(homeRecommendationsCache, cacheKey);
-  if (cached) return cached;
-  if (favoriteSeries.length > 0 || favoriteAuthors.length > 0 || history.length > 0) {
-    const getFacetBooks = createFacetFetchMemo();
-    const items = buildHomeRecommendations({ favoriteAuthors, favoriteSeries, history, getFacetBooks }).slice(0, 8);
-    writeTimedCache(homeRecommendationsCache, cacheKey, items);
-    return items;
-  }
-  return [];
+  // Reuse the same full view — take top 8 from page 1
+  const view = getRecommendedLibraryView({ username: normalizedUsername, page: 1, pageSize: 8 });
+  return view.items;
 }
 
 export function buildSimilarBooks(book) {

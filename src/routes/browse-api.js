@@ -6,7 +6,7 @@ import { PAGE_CACHE_TTL_MS } from '../constants.js';
 import { getCachedPageData } from '../services/cache.js';
 import { safePage } from '../utils/safe-int.js';
 import {
-  getBooksByFacet,
+  getBooksByFacetCoalesced,
   getLibraryView,
   getSuggestions,
   searchCatalog
@@ -25,7 +25,7 @@ export function registerBrowseApiRoutes(app) {
     res.json(getSuggestions(q, 5));
   });
 
-  app.get('/api/library/:view(recent|continue|recommended)', requireBrowseAuth, (req, res) => {
+  app.get('/api/library/:view(recent|continue|read|recommended)', requireBrowseAuth, (req, res) => {
     const view = String(req.params.view);
     const page = safePage(req.query.page);
     const pageSize = 24;
@@ -56,22 +56,21 @@ export function registerBrowseApiRoutes(app) {
     res.json({ items: result.items, total: result.total, page, pageSize, field: result.field });
   });
 
-  app.get('/api/facet-books', requireBrowseAuth, (req, res) => {
-    const facet = String(req.query.facet || '').trim();
-    const value = String(req.query.value ?? '').trim();
-    const sort = String(req.query.sort || 'recent').trim();
-    const page = safePage(req.query.page);
-    const pageSize = 24;
-    const allowed = new Set(['authors', 'series', 'genres', 'languages']);
-    if (!allowed.has(facet) || !value) {
-      return apiFail(res, 400, ApiErrorCode.FACET_INVALID, t('api.facet.invalid'), { items: [], total: 0, page, pageSize });
+  app.get('/api/facet-books', requireBrowseAuth, async (req, res, next) => {
+    try {
+      const facet = String(req.query.facet || '').trim();
+      const value = String(req.query.value ?? '').trim();
+      const sort = String(req.query.sort || 'recent').trim();
+      const page = safePage(req.query.page);
+      const pageSize = 24;
+      const allowed = new Set(['authors', 'series', 'genres', 'languages']);
+      if (!allowed.has(facet) || !value) {
+        return apiFail(res, 400, ApiErrorCode.FACET_INVALID, t('api.facet.invalid'), { items: [], total: 0, page, pageSize });
+      }
+      const result = await getBooksByFacetCoalesced({ facet, value, page, pageSize, sort });
+      res.json({ items: result.items, total: result.total, page, pageSize });
+    } catch (error) {
+      next(error);
     }
-    const cacheKey = `api:facet-books:${facet}:${value}:${sort}:p${page}:s${pageSize}`;
-    const result = getCachedPageData(
-      cacheKey,
-      () => getBooksByFacet({ facet, value, page, pageSize, sort }),
-      PAGE_CACHE_TTL_MS
-    );
-    res.json({ items: result.items, total: result.total, page, pageSize });
   });
 }

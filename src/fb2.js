@@ -253,13 +253,20 @@ async function augmentFlibustaCoverIfMissing(cached, book) {
   return cached;
 }
 
+let _stmtGetCachedDetails;
+let _stmtGetStoredAnnotation;
+let _stmtSaveCachedDetails;
+
 function getCachedBookDetails(bookId) {
-  const row = db.prepare(`
-    SELECT title, annotation, annotation_is_html AS annotationIsHtml,
-           cover_content_type AS contentType, cover_data AS data
-    FROM book_details_cache
-    WHERE book_id = ?
-  `).get(bookId);
+  if (!_stmtGetCachedDetails) {
+    _stmtGetCachedDetails = db.prepare(`
+      SELECT title, annotation, annotation_is_html AS annotationIsHtml,
+             cover_content_type AS contentType, cover_data AS data
+      FROM book_details_cache
+      WHERE book_id = ?
+    `);
+  }
+  const row = _stmtGetCachedDetails.get(bookId);
 
   if (!row) {
     return null;
@@ -277,7 +284,10 @@ function getCachedBookDetails(bookId) {
 export function getStoredBookAnnotation(bookId) {
   if (!bookId) return '';
   try {
-    const row = db.prepare(`SELECT annotation FROM book_details_cache WHERE book_id = ?`).get(bookId);
+    if (!_stmtGetStoredAnnotation) {
+      _stmtGetStoredAnnotation = db.prepare(`SELECT annotation FROM book_details_cache WHERE book_id = ?`);
+    }
+    const row = _stmtGetStoredAnnotation.get(bookId);
     return row?.annotation || '';
   } catch { return ''; }
 }
@@ -299,18 +309,21 @@ export function getStoredBookDetailsCover(book) {
 
 function saveCachedBookDetails(bookId, details) {
   const annHtml = details.annotationIsHtml ? 1 : 0;
-  db.prepare(`
-    INSERT INTO book_details_cache (
-      book_id, title, annotation, annotation_is_html, cover_content_type, cover_data, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(book_id) DO UPDATE SET
-      title = excluded.title,
-      annotation = excluded.annotation,
-      annotation_is_html = excluded.annotation_is_html,
-      cover_content_type = excluded.cover_content_type,
-      cover_data = excluded.cover_data,
-      updated_at = CURRENT_TIMESTAMP
-  `).run(
+  if (!_stmtSaveCachedDetails) {
+    _stmtSaveCachedDetails = db.prepare(`
+      INSERT INTO book_details_cache (
+        book_id, title, annotation, annotation_is_html, cover_content_type, cover_data, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(book_id) DO UPDATE SET
+        title = excluded.title,
+        annotation = excluded.annotation,
+        annotation_is_html = excluded.annotation_is_html,
+        cover_content_type = excluded.cover_content_type,
+        cover_data = excluded.cover_data,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+  }
+  _stmtSaveCachedDetails.run(
     bookId,
     details.title || '',
     details.annotation || '',

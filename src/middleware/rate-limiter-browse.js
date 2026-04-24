@@ -1,21 +1,30 @@
 /**
- * Sliding-window per-IP rate limiter для просмотра каталога / API.
+ * Token-bucket per-IP rate limiter для просмотра каталога / API.
  * Защищает от спам-запросов поиском и каталогом, которые блокируют event loop.
  */
 import { getClientKey } from '../services/rate-limiter.js';
 
 const BROWSE_WINDOW_MS = 60_000; // 1 минута
-const BROWSE_MAX_HITS = Number(process.env.BROWSE_RATE_LIMIT) || 120; // запросов / мин
+const envLimit = Number(process.env.BROWSE_RATE_LIMIT);
+const BROWSE_MAX_HITS = Number.isFinite(envLimit) && envLimit > 0 ? Math.floor(envLimit) : 120; // запросов / мин
 const MAX_TRACKED = 20_000;
+const STALE_RECORD_MS = BROWSE_WINDOW_MS * 2;
+const TOKENS_PER_MS = BROWSE_MAX_HITS / BROWSE_WINDOW_MS;
 
-const hits = new Map(); // ip -> { timestamps: number[] }
+const hits = new Map(); // ip -> { tokens: number, lastRefillAt: number, lastSeenAt: number }
 
 function pruneOldHits() {
   const now = Date.now();
   for (const [key, record] of hits) {
-    record.timestamps = record.timestamps.filter(ts => now - ts < BROWSE_WINDOW_MS);
-    if (record.timestamps.length === 0) hits.delete(key);
+    if (now - record.lastSeenAt > STALE_RECORD_MS) hits.delete(key);
   }
+}
+
+function refillTokens(record, now) {
+  const elapsedMs = Math.max(0, now - record.lastRefillAt);
+  if (elapsedMs <= 0) return;
+  record.tokens = Math.min(BROWSE_MAX_HITS, record.tokens + elapsedMs * TOKENS_PER_MS);
+  record.lastRefillAt = now;
 }
 
 // Чистка каждые 2 минуты
@@ -28,17 +37,22 @@ export function browseLimiter(req, res, next) {
   let record = hits.get(key);
   if (!record) {
     if (hits.size >= MAX_TRACKED) pruneOldHits();
-    record = { timestamps: [] };
+    if (hits.size >= MAX_TRACKED) {
+      const oldest = hits.keys().next().value;
+      if (oldest !== undefined) hits.delete(oldest);
+    }
+    record = { tokens: BROWSE_MAX_HITS, lastRefillAt: now, lastSeenAt: now };
     hits.set(key, record);
   }
 
-  // Отсекаем старые записи за пределами окна
-  record.timestamps = record.timestamps.filter(ts => now - ts < BROWSE_WINDOW_MS);
-  record.timestamps.push(now);
+  refillTokens(record, now);
+  record.lastSeenAt = now;
 
-  if (record.timestamps.length > BROWSE_MAX_HITS) {
-    res.set('Retry-After', '60');
+  if (record.tokens < 1) {
+    const retryAfterSec = Math.max(1, Math.ceil((1 - record.tokens) / TOKENS_PER_MS / 1000));
+    res.set('Retry-After', String(retryAfterSec));
     return res.status(429).json({ error: 'Слишком много запросов. Попробуйте через минуту.' });
   }
+  record.tokens -= 1;
   next();
 }
