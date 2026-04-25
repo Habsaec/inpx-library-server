@@ -908,6 +908,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .card:hover .cover {
   box-shadow:
+    inset 4px 0 10px rgba(0,0,0,0.15),
+    inset -1px 0 2px rgba(255,255,255,0.2),
+    inset 1px 0 0 rgba(0,0,0,0.2),
     8px 14px 24px rgba(0,0,0,0.55),
     3px 3px 6px rgba(0,0,0,0.40);
 }
@@ -925,14 +928,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   width: 100%;
   aspect-ratio: 2 / 3;
   background: var(--card-cover-bg);
+  box-shadow: 
+    inset 4px 0 10px rgba(0,0,0,0.15),
+    inset -1px 0 2px rgba(255,255,255,0.2),
+    inset 1px 0 0 rgba(0,0,0,0.2),
+    var(--card-cover-shadow);
   position: relative;
-  display: block;
-  color: var(--muted); font-size: 11px;
+  border-radius: 2px 6px 6px 2px;
   overflow: hidden;
-  border-radius: 4px;
-  border: none;
-  box-shadow: var(--card-cover-shadow);
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  display: block;
+}
+
+.cover::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0; width: 4%;
+  background: linear-gradient(to right, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 100%);
+  z-index: 10;
+  pointer-events: none;
 }
 
 /* Картинка заполняет блок: без absolute flex иногда даёт нулевую высоту у img до отрисовки. */
@@ -952,9 +965,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   opacity: 0;
   visibility: visible;
   transition: opacity 0.25s ease, transform 0.25s ease;
-}
-.cover:hover .cover-image {
-  transform: scale(1.05);
 }
 .cover:active .cover-image {
   transform: scale(1.02);
