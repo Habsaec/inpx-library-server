@@ -3509,7 +3509,7 @@ export function getLibrarySections() {
   const pool = db.prepare(`
     SELECT id, title, authors, genres, series, series_no AS seriesNo, ext, lang, archive_name AS archiveName
     FROM active_books
-    ORDER BY COALESCE(NULLIF(date, ''), imported_at) DESC, imported_at DESC, id DESC
+    ORDER BY imported_at DESC, id DESC
     LIMIT ?
   `).all(POOL_SIZE).map(mapBookListRow);
 

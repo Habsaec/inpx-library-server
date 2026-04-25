@@ -135,6 +135,23 @@ function buildRecommendations(username, limit = 48) {
   return dedupeBooks(weighted, allExcludeIds);
 }
 
+const recommendationsBuilding = new Set();
+
+function scheduleRecommendationsBuild(username) {
+  if (recommendationsBuilding.has(username)) return;
+  recommendationsBuilding.add(username);
+  setImmediate(() => {
+    try {
+      const recommended = buildRecommendations(username, 72);
+      writeTimedCache(recommendedViewCache, username, recommended);
+    } catch (error) {
+      console.error('Failed to build recommendations', error);
+    } finally {
+      recommendationsBuilding.delete(username);
+    }
+  });
+}
+
 export function getRecommendedLibraryView({ username = '', page = 1, pageSize = 24 }) {
   const normalizedUsername = String(username || '').trim();
   if (!normalizedUsername) return { total: 0, items: [] };
@@ -152,9 +169,11 @@ export function getRecommendedLibraryView({ username = '', page = 1, pageSize = 
 export function getHomeRecommendations({ username = '' }) {
   const normalizedUsername = String(username || '').trim();
   if (!normalizedUsername) return [];
-  // Reuse the same full view — take top 8 from page 1
-  const view = getRecommendedLibraryView({ username: normalizedUsername, page: 1, pageSize: 8 });
-  return view.items;
+  // Home shelf: stale-while-revalidate — never block page render on first miss.
+  const cached = readTimedCache(recommendedViewCache, normalizedUsername);
+  if (cached) return cached.slice(0, 8);
+  scheduleRecommendationsBuild(normalizedUsername);
+  return [];
 }
 
 export function buildSimilarBooks(book) {
