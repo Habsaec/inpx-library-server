@@ -36,6 +36,7 @@ import { getOnlineUserCount, pruneOfflineUsers } from './services/online-tracker
 import { getCachedPageData, clearPageDataCache } from './services/cache.js';
 import { logSystemEvent } from './services/system-events.js';
 import { createPerfMetricsMiddleware, getPerfSnapshot } from './services/perf-metrics.js';
+import { PERF_LOG_ENABLED, perfLog, readMemoryUsageMb } from './services/perf-log.js';
 
 import { mirrorIndexingLogsToDataFile, appendIndexDiaryLine } from './services/file-log.js';
 import { installRuntimeLogCapture } from './services/runtime-logs.js';
@@ -43,7 +44,7 @@ import { startScanScheduler } from './services/scheduler.js';
 import {
   STATS_CACHE_TTL_MS, HOME_SECTIONS_CACHE_TTL_MS
 } from './constants.js';
-import { db, getUserByUsername, hasAdminUser, initDb, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView } from './db.js';
+import { db, getUserByUsername, hasAdminUser, initDb, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, getDatabasePerfStats } from './db.js';
 import {
   backfillCatalogSearchFields,
   getConfiguredInpxFile,
@@ -815,6 +816,12 @@ app.use((err, req, res, next) => {
 async function bootstrap() {
   initDb();
   await rebuildActiveBooksView(); // Пересоздаём VIEW с учётом исключённых языков
+  if (PERF_LOG_ENABLED) {
+    perfLog('db', 'startup snapshot', {
+      ...getDatabasePerfStats(),
+      ...readMemoryUsageMb()
+    });
+  }
   // Run DB optimize manually/offline; in-process optimize can block HTTP loop on large datasets.
   setSiteName(getSetting('site_name'));
   setAllowAnonymousDownload(getSetting('allow_anonymous_download') === '1');
@@ -916,6 +923,16 @@ async function bootstrap() {
     pruneLoginAttempts();
     pruneOfflineUsers();
   }, 15 * 60 * 1000).unref();
+
+  if (PERF_LOG_ENABLED) {
+    const perfIntervalMs = Math.max(15_000, Number.parseInt(String(process.env.PERF_LOG_INTERVAL_MS || '60000'), 10) || 60_000);
+    setInterval(() => {
+      perfLog('runtime', 'snapshot', {
+        ...readMemoryUsageMb(),
+        ...getDatabasePerfStats()
+      });
+    }, perfIntervalMs).unref();
+  }
 }
 
 bootstrap().catch((error) => {

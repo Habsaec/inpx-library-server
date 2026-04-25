@@ -27,6 +27,15 @@ export { getAvailableDownloadFormats, FORMAT_LABELS };
 
 export const STATIC_ASSET_VERSION = String(Date.now());
 
+const APP_MIN_PATH = path.join(config.publicDir, 'app.min.js');
+const CSS_MIN_PATH = path.join(config.publicDir, 'styles.min.css');
+const USE_MINIFIED_ASSETS =
+  String(process.env.NODE_ENV || '').toLowerCase() === 'production' &&
+  fs.existsSync(APP_MIN_PATH) &&
+  fs.existsSync(CSS_MIN_PATH);
+const APP_ASSET_FILE = USE_MINIFIED_ASSETS ? 'app.min.js' : 'app.js';
+const CSS_ASSET_FILE = USE_MINIFIED_ASSETS ? 'styles.min.css' : 'styles.css';
+
 export const READ_CHECK_SVG = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
 
 export function browseEntityPluralType(path) {
@@ -802,7 +811,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=${STATIC_ASSET_VERSION}">
+  <link rel="stylesheet" href="/${CSS_ASSET_FILE}?v=${STATIC_ASSET_VERSION}">
   <style>
     .spinner{display:block;width:36px;height:36px;border:4px solid rgba(255,255,255,.15);border-top-color:var(--accent-hover,#a1671b);border-radius:50%;animation:spin .7s linear infinite;}
     html[data-theme="light"] .spinner{border-color:rgba(0,0,0,.12);border-top-color:var(--accent-hover,#a1671b);}
@@ -845,7 +854,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
     </div>
   </div>
   <button class="scroll-to-top" type="button" data-scroll-top aria-label="${escapeHtml(t('scrollTop'))}">↑</button>
-  <script src="/app.js?v=${STATIC_ASSET_VERSION}" defer></script>
+  <script src="/${APP_ASSET_FILE}?v=${STATIC_ASSET_VERSION}" defer></script>
 </body>
 </html>`;
 }

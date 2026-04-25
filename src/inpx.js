@@ -29,8 +29,10 @@ import { BATCH_DOWNLOAD_MAX } from './constants.js';
 import { t } from './i18n.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { logSystemEvent } from './services/system-events.js';
+import { PERF_LOG_ENABLED, perfLog, readMemoryUsageMb } from './services/perf-log.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from './utils/async-timeout.js';
 import { resolveLibraryArchiveFile } from './flibusta-sidecar.js';
+import { clearArchiveReadCaches } from './archives.js';
 
 /** Уступка циклу событий между тяжёлыми синхронными участками (чтобы HTTP не «замирал»).
  *  Используем setImmediate без фиксированной задержки: на больших библиотеках setTimeout(2) давал
@@ -39,6 +41,10 @@ const yieldEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 
 /** Одна «логическая» строка INPX длиннее этого — пропуск: иначе split/нормализация могут блокировать поток надолго. */
 const MAX_INPX_LINE_CHARS = 256 * 1024;
+
+/** Периодичность PERF_LOG для INPX чанков и memory snapshot (только если PERF_LOG=1). */
+const PERF_INPX_CHUNK_EVERY = Math.max(1, Number.parseInt(String(process.env.PERF_INPX_CHUNK_EVERY || '20'), 10) || 20);
+const PERF_INPX_MEM_EVERY = Math.max(1, Number.parseInt(String(process.env.PERF_INPX_MEM_EVERY || '50'), 10) || 50);
 /** Защита от патологически больших .inp внутри INPX (память + бесконечное чтение). */
 const MAX_INP_ENTRY_BYTES = 80 * 1024 * 1024;
 const FACET_CACHE_TTL_MS = 120_000; // 20s → 120s:减少分面/系列/作者页面查询
@@ -943,6 +949,8 @@ export function startBackgroundIndexing(force = false, incremental = true) {
     return false;
   }
 
+  clearArchiveReadCaches();
+
   indexState.active = true;
   indexState.error = '';
   indexState.startedAt = new Date().toISOString();
@@ -995,6 +1003,8 @@ export function startSourceIndexing(sourceId, force = false) {
     logSystemEvent('warn', 'index', 'source reindex skipped: global indexer already running', { sourceId });
     return false;
   }
+
+  clearArchiveReadCaches();
 
   indexState.active = true;
   indexState.error = '';
@@ -1712,6 +1722,25 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
           `[index] INPX: медленный чанк ${nextChunk} (${archiveName}): ${ms} ms — при большой библиотеке это нормально, не обрывайте процесс`
         );
       }
+      if (PERF_LOG_ENABLED && (nextChunk === 1 || nextChunk % PERF_INPX_CHUNK_EVERY === 0 || ms > 30_000)) {
+        perfLog('inpx-chunk', 'INPX flush', {
+          sourceId,
+          archive: path.basename(String(archiveName || '')),
+          chunk: nextChunk,
+          rows: batch.length,
+          ms,
+          target: adaptiveChunkTarget,
+          importedBooks: indexState.importedBooks,
+          ftsBulkMode: ftsBulkMode ? 1 : 0
+        });
+      }
+      if (PERF_LOG_ENABLED && (nextChunk === 1 || nextChunk % PERF_INPX_MEM_EVERY === 0)) {
+        perfLog('memory', 'INPX snapshot', {
+          sourceId,
+          chunk: nextChunk,
+          ...readMemoryUsageMb()
+        });
+      }
       if (adaptiveImportEnabled) {
         if (ms > 3500) {
           slowChunkStreak += 1;
@@ -2317,6 +2346,7 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
         WHERE bg.book_id = b.id AND g.name = ?
       )`
     : 'books_fts MATCH ?';
+  const ftsStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const total = db.prepare(`
     SELECT COUNT(*) AS count
     FROM books_fts f
@@ -2333,6 +2363,19 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
     ORDER BY ${searchOrderBy}
     LIMIT ? OFFSET ?
   `).all(...(genreFilter ? [ftsQuery, ...genreFilter.params, pageSize, offset] : [ftsQuery, pageSize, offset])).map(mapBookListRow);
+
+  if (PERF_LOG_ENABLED) {
+    perfLog('fts', 'searchBooks', {
+      ms: Date.now() - ftsStartedAt,
+      field,
+      sort,
+      queryLen: String(query || '').trim().length,
+      page,
+      pageSize,
+      total,
+      items: items.length
+    });
+  }
 
   return { total, items };
 }

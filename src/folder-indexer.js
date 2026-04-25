@@ -29,10 +29,13 @@ import {
 } from './inpx.js';
 import { getOrExtractBookDetails } from './fb2.js';
 import { logSystemEvent } from './services/system-events.js';
+import { PERF_LOG_ENABLED, perfLog, readMemoryUsageMb } from './services/perf-log.js';
 
 /** Уступка циклу событий без лишней задержки (см. inpx.js — setTimeout(2) накладывался тысячи раз). */
 const yieldEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 const BOOKS_FTS_DIRTY_META_KEY = 'books_fts_dirty';
+const PERF_INDEX_BATCH_EVERY = Math.max(1, Number.parseInt(String(process.env.PERF_INDEX_BATCH_EVERY || '5'), 10) || 5);
+const PERF_INDEX_MEM_EVERY = Math.max(1, Number.parseInt(String(process.env.PERF_INDEX_MEM_EVERY || '10'), 10) || 10);
 
 /**
  * Фоновое предизвлечение обложек/аннотаций для книг источника.
@@ -884,6 +887,28 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
     tx(batchRows);
     throwIfCancelled();
     const txMs = Date.now() - txStartedAt;
+    const batchMs = metaMs + txMs;
+
+    if (PERF_LOG_ENABLED && (batchSeq === 0 || (batchSeq + 1) % PERF_INDEX_BATCH_EVERY === 0)) {
+      perfLog('index-batch', 'folder batch', {
+        sourceId: source.id,
+        batch: batchSeq + 1,
+        filesTotal: filesToProcess.length,
+        rows: batchRows.length,
+        metaMs,
+        txMs,
+        batchMs,
+        concurrency: metadataExtractConcurrency,
+        mode: incremental ? 'incremental' : 'full'
+      });
+    }
+    if (PERF_LOG_ENABLED && (batchSeq === 0 || (batchSeq + 1) % PERF_INDEX_MEM_EVERY === 0)) {
+      perfLog('memory', 'folder index snapshot', {
+        sourceId: source.id,
+        batch: batchSeq + 1,
+        ...readMemoryUsageMb()
+      });
+    }
 
     if (adaptiveConcurrencyEnabled) {
       const loopLagMs = await measureEventLoopLagMs();

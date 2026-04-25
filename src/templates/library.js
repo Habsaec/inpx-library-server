@@ -23,6 +23,18 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
   const isAuthenticated = Boolean(user);
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
   const subtitleText = homeSubtitle === '-' ? '' : (homeSubtitle || t('home.subtitle'));
+  const recommendationsShelf = isAuthenticated
+    ? (recommendations.length
+        ? renderHomeShelf({ title: t('home.shelfRecommended'), href: '/library/recommended', items: recommendations, type: 'books', isAuthenticated, showBatch: true, user, readBookIds })
+        : `
+    <section class="library-shelf" data-home-recommendations data-loaded="0">
+      <div class="section-title">
+        <h2>${escapeHtml(t('home.shelfRecommended'))}</h2>
+        <div class="actions"><a class="shelf-link" href="/library/recommended">${escapeHtml(t('home.showAll'))}</a></div>
+      </div>
+      <div data-home-recommendations-grid>${renderSkeletonGrid(8)}</div>
+    </section>`)
+    : '';
   const content = `
     <section class="page-intro page-intro-home">
       <div class="page-intro-copy">
@@ -32,7 +44,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     </section>
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}
     ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, showBatch: true, user, readBookIds })}
-    ${isAuthenticated && recommendations.length ? renderHomeShelf({ title: t('home.shelfRecommended'), href: '/library/recommended', items: recommendations, type: 'books', isAuthenticated, showBatch: true, user, readBookIds }) : ''}
+    ${recommendationsShelf}
     ${isAuthenticated ? renderHomeShelf({ title: t('home.shelfContinue'), href: '/library/continue', items: continueBooks || [], type: 'books', isAuthenticated, showBatch: true, user, readBookIds }) : ''}
     `;
   return pageShell({ title: t('home.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home') }], currentPath: '/', csrfToken, readBookIds });

@@ -12,6 +12,8 @@
     "start": "node src/server-entry.js",
     "test": "node --test test/",
     "dev": "node --watch src/server-entry.js",
+    "build:assets": "node scripts/build-assets.js",
+    "build:assets:watch": "node scripts/build-assets.js --watch",
     "reindex": "node src/server-entry.js --reindex",
     "index:worker": "node scripts/index-worker.js",
     "server:status": "node scripts/server-control.js status",
@@ -36,6 +38,7 @@
     "jxl-oxide-wasm": "^0.12.5",
     "nodemailer": "^8.0.2",
     "sharp": "^0.34.5",
-    "unzipper": "^0.12.3"
+    "unzipper": "^0.12.3",
+    "esbuild": "^0.25.10"
   }
 }

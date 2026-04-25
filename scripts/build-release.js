@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createWriteStream } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import archiver from 'archiver';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1')));
@@ -22,6 +23,16 @@ const prefix = `inpx-library-server-${version}`;
 const outDir = path.join(PROJECT, 'release');
 fs.mkdirSync(outDir, { recursive: true });
 const outPath = path.join(outDir, archiveName);
+
+const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const assetsBuild = spawnSync(npmCmd, ['run', 'build:assets'], {
+  cwd: PROJECT,
+  stdio: 'inherit'
+});
+if ((assetsBuild.status || 0) !== 0) {
+  console.error('  ERROR: asset build failed, aborting release packaging');
+  process.exit(1);
+}
 
 // --- Directories to include (recursively) ---
 const DIRS = [

@@ -67,6 +67,42 @@ db.pragma('temp_store = MEMORY');       // temp tables in RAM
 // Force WAL checkpoint on startup to clear stale locks from crashed processes
 try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore if locked briefly */ }
 
+export function getDatabasePerfStats() {
+  try {
+    const pageSize = Number(db.pragma('page_size', { simple: true }) || 0);
+    const pageCount = Number(db.pragma('page_count', { simple: true }) || 0);
+    const freelistCount = Number(db.pragma('freelist_count', { simple: true }) || 0);
+    const activeBooks = Number(db.prepare('SELECT COUNT(*) AS c FROM active_books').get()?.c || 0);
+    const ftsRows = (() => {
+      try { return Number(db.prepare('SELECT COUNT(*) AS c FROM books_fts').get()?.c || 0); } catch { return 0; }
+    })();
+    const ftsDirty = (() => {
+      try { return db.prepare("SELECT value FROM meta WHERE key = 'books_fts_dirty'").get()?.value === '1' ? 1 : 0; } catch { return 0; }
+    })();
+    const dbFileBytes = (() => {
+      try { return Number(fs.statSync(config.dbPath).size || 0); } catch { return 0; }
+    })();
+    const walFileBytes = (() => {
+      try { return Number(fs.statSync(`${config.dbPath}-wal`).size || 0); } catch { return 0; }
+    })();
+    return {
+      connectionCount: 1,
+      pageSize,
+      pageCount,
+      freelistCount,
+      dbFileMb: Number((dbFileBytes / 1024 / 1024).toFixed(1)),
+      walFileMb: Number((walFileBytes / 1024 / 1024).toFixed(1)),
+      activeBooks,
+      ftsRows,
+      ftsDirty
+    };
+  } catch {
+    return {
+      connectionCount: 1
+    };
+  }
+}
+
 function ensureUsersSchema() {
   const columns = db.prepare(`PRAGMA table_info(users)`).all();
   const hasPasswordHash = columns.some((column) => column.name === 'password_hash');
