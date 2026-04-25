@@ -7,6 +7,37 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
+async function loadHomeRecommendationsProgressively() {
+  const section = document.querySelector('[data-home-recommendations]');
+  if (!section || section.dataset.loaded === '1') return;
+  const gridMount = section.querySelector('[data-home-recommendations-grid]');
+  if (!gridMount) return;
+  try {
+    const r = await fetch('/api/library/recommended?page=1&pageSize=8', { credentials: 'same-origin' });
+    if (!r.ok) {
+      gridMount.innerHTML = '';
+      return;
+    }
+    const data = await r.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      gridMount.innerHTML = '';
+      section.remove();
+      return;
+    }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = `<div class="grid">${items.map((b) => renderCardHtml(b)).join('')}</div>`;
+    const grid = tmp.firstElementChild;
+    if (!grid) return;
+    gridMount.replaceWith(grid);
+    attachCoverErrorFallback(grid);
+    attachDownloadMenus(grid);
+    section.dataset.loaded = '1';
+  } catch {
+    gridMount.innerHTML = '';
+  }
+}
+
 function safeDomIdPart(value) {
   const s = String(value ?? '').trim().replace(/\s+/g, '_');
   const t = s.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -476,7 +507,10 @@ function attachThemeToggle() {
 
   const getTheme = () => root.dataset.theme === 'light' ? 'light' : 'dark';
   const getNextThemeLabel = (theme) => theme === 'light' ? uiT('app.themeDark') : uiT('app.themeLight');
-  const getThemeIcon = (theme) => theme === 'light' ? '☽' : '☀';
+  const THEME_SUN_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+  const THEME_MOON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+
+  const getThemeIcon = (theme) => theme === 'light' ? THEME_MOON_SVG : THEME_SUN_SVG;
 
   const render = () => {
     const theme = getTheme();
@@ -484,7 +518,7 @@ function attachThemeToggle() {
       const labelNode = button.querySelector('[data-theme-toggle-label]');
       const label = getNextThemeLabel(theme);
       if (labelNode) {
-        labelNode.textContent = getThemeIcon(theme);
+        labelNode.innerHTML = getThemeIcon(theme);
       }
       button.setAttribute('aria-label', label);
       button.setAttribute('title', label);
@@ -3125,8 +3159,10 @@ async function openAddToShelfPicker(bookIds) {
           <div class="modal-list">
             ${shelves.length ? shelves.map((s) => `
               <label class="modal-list-item">
-                <input type="checkbox" id="shelf-toggle-${safeDomIdPart(s.id)}" name="shelfToggle_${safeDomIdPart(s.id)}" value="${escapeHtml(String(s.id))}" data-shelf-toggle="${s.id}" ${s.hasBook ? 'checked' : ''}>
-                <span>${escapeHtml(s.name)}</span>
+                <div class="modal-list-item-content">
+                  <input type="checkbox" id="shelf-toggle-${safeDomIdPart(s.id)}" name="shelfToggle_${safeDomIdPart(s.id)}" value="${escapeHtml(String(s.id))}" data-shelf-toggle="${s.id}" ${s.hasBook ? 'checked' : ''}>
+                  <span>${escapeHtml(s.name)}</span>
+                </div>
               </label>
             `).join('') : `<div class="modal-list-empty">${escapeHtml(uiT('app.shelfModalEmpty'))}</div>`}
           </div>
@@ -4294,6 +4330,7 @@ attachCatalogNavLoading();
 attachSmartSearch();
 attachSearchSuggest();
 attachBookIllustrationLightbox();
+loadHomeRecommendationsProgressively();
 attachLoadMore();
 attachBatchDownloadSelection();
 attachConfirmedFormSubmits();
