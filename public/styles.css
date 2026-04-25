@@ -907,6 +907,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 .card:hover .cover {
+  transform: translateY(-6px);
   box-shadow:
     inset 4px 0 10px rgba(0,0,0,0.15),
     inset -1px 0 2px rgba(255,255,255,0.2),
@@ -937,6 +938,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-radius: 2px 6px 6px 2px;
   overflow: hidden;
   display: block;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 
 .cover::after {
