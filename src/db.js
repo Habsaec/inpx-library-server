@@ -1742,18 +1742,26 @@ function _getCachedRead(username) {
   return null;
 }
 
-function _buildReadCache(username) {
+function _buildReadIds(username) {
   ensureReadCacheStatements();
   const rows = _stmtReadIds.all(username);
-  const ids = new Set(rows.map((r) => r.book_id));
+  return new Set(rows.map((r) => r.book_id));
+}
+
+function _buildReadSeries(username) {
+  ensureReadCacheStatements();
   const sRows = _stmtReadSeries.all(username, username);
-  const series = new Set(sRows.map((r) => r.series));
-  const entry = { ids, series, expiresAt: Date.now() + READ_CACHE_TTL_MS };
+  return new Set(sRows.map((r) => r.series));
+}
+
+function _ensureCacheEntry(username) {
+  let entry = _readCache.get(username);
+  if (entry && Date.now() < entry.expiresAt) return entry;
+  entry = { ids: null, series: null, expiresAt: Date.now() + READ_CACHE_TTL_MS };
   _readCache.set(username, entry);
-  // Evict oldest if too many users cached
   if (_readCache.size > 200) {
     const oldest = _readCache.keys().next().value;
-    if (oldest !== undefined) _readCache.delete(oldest);
+    if (oldest !== undefined && oldest !== username) _readCache.delete(oldest);
   }
   return entry;
 }
@@ -1764,14 +1772,16 @@ export function invalidateReadCache(username) {
 
 export function getReadBookIdSet(username) {
   if (!username) return new Set();
-  const c = _getCachedRead(username);
-  return c ? c.ids : _buildReadCache(username).ids;
+  const entry = _ensureCacheEntry(username);
+  if (!entry.ids) entry.ids = _buildReadIds(username);
+  return entry.ids;
 }
 
 export function getFullyReadSeriesNames(username) {
   if (!username) return new Set();
-  const c = _getCachedRead(username);
-  return c ? c.series : _buildReadCache(username).series;
+  const entry = _ensureCacheEntry(username);
+  if (!entry.series) entry.series = _buildReadSeries(username);
+  return entry.series;
 }
 
 let _stmtUserStats = null;

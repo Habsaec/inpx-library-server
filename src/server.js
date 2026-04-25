@@ -19,7 +19,7 @@ import { registerDownloadRoutes } from './routes/download.js';
 import { registerReaderRoutes } from './routes/reader.js';
 import { registerUserApiRoutes } from './routes/user-api.js';
 import { registerAdminRoutes } from './routes/admin.js';
-import { registerLibraryRoutes, detailsCache, getDetailsFull, bookFlibustaSidecarEffective } from './routes/library.js';
+import { registerLibraryRoutes, detailsCache, getDetailsFull, bookFlibustaSidecarEffective, precomputeCoverThumb } from './routes/library.js';
 // --- Extracted modules ---
 import { securityHeaders } from './middleware/security-headers.js';
 import { browseLimiter } from './middleware/rate-limiter-browse.js';
@@ -203,9 +203,15 @@ function warmSharedPageCaches() {
   } catch (error) {
     console.error('Failed to warm stats cache', error);
   }
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
-      getCachedPageData('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS);
+      const sections = getCachedPageData('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS);
+      // Prewarm cover thumbs for the home "newest" shelf so the first home render
+      // does not pay 1s per cover. Done sequentially to avoid spiking the event loop.
+      const newest = Array.isArray(sections?.newest) ? sections.newest.slice(0, 12) : [];
+      for (const book of newest) {
+        try { await precomputeCoverThumb(book); } catch { /* ignore */ }
+      }
     } catch (error) {
       console.error('Failed to warm sections cache', error);
     }
@@ -858,6 +864,9 @@ async function bootstrap() {
 
     // Start scan scheduler (if SCAN_INTERVAL_HOURS > 0)
     startScanScheduler(() => startBackgroundIndexing(false, true));
+
+    // Warm shared page caches so the first '/' request after restart is fast.
+    warmSharedPageCaches();
   }, 100);
 
   setInterval(() => {

@@ -4,6 +4,7 @@
 import { PAGE_CACHE_MAX, PAGE_CACHE_TTL_MS } from '../constants.js';
 
 const pageDataCache = new Map();
+const refreshing = new Set();
 
 /**
  * Get or compute a cached value.
@@ -33,6 +34,52 @@ export function getCachedPageData(key, compute, ttlMs = PAGE_CACHE_TTL_MS) {
   return value;
 }
 
+/**
+ * Stale-while-revalidate variant of getCachedPageData.
+ * - Fresh hit (age < ttlMs)        → return value instantly.
+ * - Stale hit (age >= ttlMs)       → return stale value instantly + rebuild in background.
+ * - Cold miss (no cache at all)    → return `fallback` instantly + rebuild in background.
+ *
+ * The page renders immediately; data fills in on the next visit.
+ *
+ * @template T
+ * @param {string} key
+ * @param {() => T} compute
+ * @param {number} ttlMs
+ * @param {T} fallback
+ * @returns {T}
+ */
+export function getStaleOrSchedule(key, compute, ttlMs = PAGE_CACHE_TTL_MS, fallback = null) {
+  const now = Date.now();
+  const cached = pageDataCache.get(key);
+  if (cached && now - cached.createdAt < ttlMs) {
+    pageDataCache.delete(key);
+    pageDataCache.set(key, cached);
+    return cached.value;
+  }
+  scheduleRefresh(key, compute);
+  return cached ? cached.value : fallback;
+}
+
+function scheduleRefresh(key, compute) {
+  if (refreshing.has(key)) return;
+  refreshing.add(key);
+  setImmediate(() => {
+    try {
+      const value = compute();
+      if (pageDataCache.size >= PAGE_CACHE_MAX) {
+        const oldest = pageDataCache.keys().next().value;
+        if (oldest !== undefined && oldest !== key) pageDataCache.delete(oldest);
+      }
+      pageDataCache.set(key, { value, createdAt: Date.now() });
+    } catch (error) {
+      console.error(`[cache] background refresh failed for ${key}:`, error?.message || error);
+    } finally {
+      refreshing.delete(key);
+    }
+  });
+}
+
 export function clearPageDataCache() {
   pageDataCache.clear();
 }
@@ -42,6 +89,7 @@ export function invalidateHomeUserSnapshot(username) {
   const u = String(username || '').trim();
   if (!u) return;
   pageDataCache.delete(`home:userSnap:${u}`);
+  pageDataCache.delete(`home:readIds:${u}`);
 }
 
 /**

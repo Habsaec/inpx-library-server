@@ -7,7 +7,7 @@ import { config } from '../config.js';
 import { t, tp, getLocale } from '../i18n.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireBrowseAuth, requireBrowseOrOpds, requireWebAuth, requireAdminWeb } from '../middleware/auth.js';
-import { getCachedPageData, clearPageDataCache, invalidateHomeUserSnapshot } from '../services/cache.js';
+import { getCachedPageData, getStaleOrSchedule, clearPageDataCache, invalidateHomeUserSnapshot } from '../services/cache.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { getRecommendedLibraryView, getHomeRecommendations, buildSimilarBooks } from '../services/recommendations.js';
 import { safePage } from '../utils/safe-int.js';
@@ -355,6 +355,44 @@ function safeRecordReadingHistory(username, bookId) {
   }
 }
 
+// --- Cover thumb prewarm (used at startup to make home page covers instant) ---
+
+/**
+ * Build a cover thumbnail and store it in both in-memory and disk caches.
+ * Safe to call even when caches already contain the value (it will short-circuit).
+ * Returns true if a thumb is now available, false otherwise.
+ */
+export async function precomputeCoverThumb(book) {
+  if (!book?.id) return false;
+  if (getCachedCoverThumb(book.id)) return true;
+  const onDisk = await getDiskCachedCoverThumb(book.id);
+  if (onDisk?.data?.length) {
+    setCachedCoverThumb(book.id, onDisk.contentType, onDisk.data);
+    return true;
+  }
+  try {
+    const details = await resolveBestCoverDetails(book);
+    const mime = detectImageMimeFromBuffer(details?.cover?.data);
+    if (!mime || !ALLOWED_BOOK_IMAGE_TYPES.has(mime)) return false;
+    let outBuf = details.cover.data;
+    let outType = 'image/webp';
+    try {
+      outBuf = await sharp(details.cover.data, { failOn: 'none' })
+        .resize({ width: getCoverWidth(), height: getCoverHeight(), fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 62, effort: 2 })
+        .toBuffer();
+    } catch {
+      outType = mime;
+      outBuf = details.cover.data;
+    }
+    setCachedCoverThumb(book.id, outType, outBuf);
+    setDiskCachedCoverThumb(book.id, outType, outBuf);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- Exported accessors for other modules ---
 
 export { detailsCache, getDetailsFull, clearBookDetailsCache, bookFlibustaSidecarEffective };
@@ -377,8 +415,9 @@ export function registerLibraryRoutes(app, deps) {
     const user = req.user || null;
     const username = user?.username || '';
     const indexStatus = getIndexStatus();
+    const emptyUserSnap = { history: [], favoriteAuthors: [], favoriteSeries: [], continueBooks: [] };
     const userSnap = username
-      ? getCachedPageData(
+      ? getStaleOrSchedule(
           `home:userSnap:${username}`,
           () => ({
             history: getReadingHistory(username, 4),
@@ -386,12 +425,25 @@ export function registerLibraryRoutes(app, deps) {
             favoriteSeries: getFavoriteSeries(username, 4),
             continueBooks: getLibraryView('continue', { page: 1, pageSize: 6, username }).items
           }),
-          HOME_USER_SNAPSHOT_CACHE_TTL_MS
+          HOME_USER_SNAPSHOT_CACHE_TTL_MS,
+          emptyUserSnap
         )
-      : { history: [], favoriteAuthors: [], favoriteSeries: [], continueBooks: [] };
+      : emptyUserSnap;
     const { history, favoriteAuthors, favoriteSeries, continueBooks } = userSnap;
-    const sections = getCachedPageData('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS);
-    const readBookIds = username ? getReadBookIdSet(username) : null;
+    const sections = getStaleOrSchedule(
+      'home:sections',
+      () => getLibrarySections(),
+      HOME_SECTIONS_CACHE_TTL_MS,
+      { newest: [], titles: [], authors: [], series: [], genres: [], languages: [] }
+    );
+    const readBookIds = username
+      ? getStaleOrSchedule(
+          `home:readIds:${username}`,
+          () => getReadBookIdSet(username),
+          HOME_USER_SNAPSHOT_CACHE_TTL_MS,
+          new Set()
+        )
+      : null;
     const recommendations = getHomeRecommendations({ username });
     const canUseAnonymousHomeHtmlCache = !user && !indexStatus?.active && !indexStatus?.error;
     const csrfToken = req.csrfToken || '';
