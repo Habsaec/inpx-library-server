@@ -910,9 +910,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 .card {
-  display: flex;
-  flex-direction: column;
+  display: flex; flex-direction: column;
   gap: 10px;
+  min-width: 0;
+  height: 100%;
+  align-self: stretch;
   position: relative;
   z-index: 0;
   background: transparent;
@@ -925,26 +927,33 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .card:hover .cover-wrapper {
-    transform: translateY(-6px);
+  .card:hover .cover {
+    transform: perspective(800px) rotateY(-3deg) translateY(-8px);
+    box-shadow:
+      1px 0 0 rgba(0,0,0,0.15),
+      2px 0 0 #d4c8b3,
+      3px 0 0 rgba(0,0,0,0.08),
+      4px 0 0 #c9bda7,
+      5px 1px 0 rgba(0,0,0,0.1),
+      10px 18px 30px rgba(0,0,0,0.55),
+      6px 8px 14px rgba(0,0,0,0.4),
+      0 1px 2px rgba(0,0,0,0.3);
   }
-  
-  .card:hover .cover-wrapper::before {
-    box-shadow: 
-      inset -1px -1px 2px rgba(0,0,0,0.1),
-      6px 14px 24px rgba(0,0,0,0.55),
-      2px 4px 8px rgba(0,0,0,0.3);
+  html[data-theme="light"] .card:hover .cover {
+    box-shadow:
+      1px 0 0 rgba(0,0,0,0.1),
+      2px 0 0 #efe6d3,
+      3px 0 0 rgba(0,0,0,0.06),
+      4px 0 0 #e3d8c1,
+      5px 1px 0 rgba(0,0,0,0.06),
+      10px 18px 30px rgba(76,58,36,0.32),
+      6px 8px 14px rgba(76,58,36,0.22),
+      0 1px 2px rgba(76,58,36,0.15);
   }
 }
 
-.card:active .cover-wrapper {
-  transform: translateY(-2px) scale(0.98);
-}
-
-.card:active .cover-wrapper::before {
-  box-shadow: 
-    inset -1px -1px 2px rgba(0,0,0,0.1),
-    2px 4px 8px rgba(0,0,0,0.4);
+.card:active .cover {
+  transform: perspective(800px) rotateY(-3deg) translateY(-2px) scale(0.98);
 }
 
 .card:hover,
@@ -956,72 +965,93 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   z-index: 12;
 }
 
-.cover-wrapper {
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  position: relative;
-  border-radius: 2px 5px 5px 2px;
-  transition: transform 0.25s ease;
-}
-
-/* Book pages thickness */
-.cover-wrapper::before {
-  content: '';
-  position: absolute;
-  top: 1px;
-  bottom: -4px;
-  left: 2px;
-  right: -5px;
-  background-color: #f4eeea;
-  border-radius: 2px 6px 6px 2px;
-  box-shadow: 
-    inset -1px -1px 2px rgba(0,0,0,0.1),
-    3px 5px 10px rgba(0,0,0,0.3);
-  z-index: -1;
-  border: 1px solid rgba(0,0,0,0.1);
-  transition: box-shadow 0.25s ease;
-  background-image: repeating-linear-gradient(to bottom, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
-}
-
-html[data-theme="night"] .cover-wrapper::before {
-  background-color: #2a2a2a;
-  border-color: rgba(255,255,255,0.05);
-  box-shadow: 
-    inset -1px -1px 2px rgba(0,0,0,0.5),
-    3px 5px 10px rgba(0,0,0,0.8);
-  background-image: none;
-}
-
 .cover {
   width: 100%;
-  height: 100%;
-  position: relative;
-  border-radius: 2px 5px 5px 2px;
-  overflow: hidden;
-  display: block;
-  z-index: 2;
+  aspect-ratio: 2 / 3;
   background: var(--card-cover-bg);
-  box-shadow: 
-    inset 4px 0 10px rgba(0,0,0,0.15),
-    inset -1px 0 2px rgba(255,255,255,0.2),
-    inset 1px 0 0 rgba(0,0,0,0.2),
-    0 0 1px rgba(0,0,0,0.2);
+  position: relative;
+  border-radius: 2px 4px 4px 2px;
+  display: block;
+  isolation: isolate;
+  box-shadow:
+    /* page edges on the right (thickness) */
+    1px 0 0 rgba(0,0,0,0.15),
+    2px 0 0 #d4c8b3,
+    3px 0 0 rgba(0,0,0,0.08),
+    4px 0 0 #c9bda7,
+    5px 1px 0 rgba(0,0,0,0.1),
+    /* main drop shadow */
+    6px 8px 16px rgba(0,0,0,0.45),
+    2px 4px 8px rgba(0,0,0,0.35),
+    /* contact shadow */
+    0 1px 2px rgba(0,0,0,0.3);
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s ease;
+  transform: perspective(800px) rotateY(-3deg);
+  transform-origin: left center;
 }
 
-/* Spine crease */
-.cover-highlight {
+html[data-theme="light"] .cover {
+  box-shadow:
+    1px 0 0 rgba(0,0,0,0.1),
+    2px 0 0 #efe6d3,
+    3px 0 0 rgba(0,0,0,0.06),
+    4px 0 0 #e3d8c1,
+    5px 1px 0 rgba(0,0,0,0.06),
+    6px 8px 16px rgba(76,58,36,0.25),
+    2px 4px 8px rgba(76,58,36,0.18),
+    0 1px 2px rgba(76,58,36,0.15);
+}
+
+.cover-inner {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  z-index: 1;
+}
+
+/* Spine highlight + cover lighting overlay - sits on top of image */
+.cover::after {
   content: '';
   position: absolute;
-  top: 0; left: 0; bottom: 0; width: 14px;
-  background: linear-gradient(to right, 
-    rgba(255,255,255,0.25) 0%, 
-    rgba(255,255,255,0) 2px, 
-    rgba(0,0,0,0.2) 3px, 
-    rgba(0,0,0,0.1) 4px, 
-    rgba(255,255,255,0.15) 6px, 
-    rgba(255,255,255,0) 14px);
-  z-index: 10;
+  inset: 0;
+  z-index: 5;
   pointer-events: none;
+  border-radius: inherit;
+  background:
+    /* Outer spine shadow (right edge of spine) */
+    linear-gradient(to right,
+      rgba(0,0,0,0) 0%,
+      rgba(0,0,0,0.18) 4%,
+      rgba(0,0,0,0) 7%,
+      rgba(255,255,255,0.08) 10%,
+      rgba(255,255,255,0) 14%,
+      rgba(0,0,0,0) 92%,
+      rgba(0,0,0,0.12) 100%),
+    /* Subtle top sheen */
+    linear-gradient(to bottom,
+      rgba(255,255,255,0.08) 0%,
+      rgba(255,255,255,0) 30%,
+      rgba(0,0,0,0) 70%,
+      rgba(0,0,0,0.08) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0,0,0,0.15),
+    inset 1px 0 0 rgba(255,255,255,0.15);
+}
+
+/* Spine itself (left edge band) */
+.cover::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 5px;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(to right,
+    rgba(0,0,0,0.4) 0%,
+    rgba(0,0,0,0.15) 40%,
+    rgba(255,255,255,0.1) 70%,
+    rgba(0,0,0,0.25) 100%);
   border-radius: 2px 0 0 2px;
 }
 
@@ -1041,6 +1071,7 @@ html[data-theme="night"] .cover-wrapper::before {
   background: transparent;
   opacity: 0;
   visibility: visible;
+  border-radius: inherit;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 .cover:active .cover-image {
@@ -1075,6 +1106,8 @@ html[data-theme="night"] .cover-wrapper::before {
   inset: 0;
   z-index: 1;
   display: block;
+  border-radius: inherit;
+  overflow: hidden;
 }
 
 .cover-fallback[hidden] {
@@ -2465,16 +2498,12 @@ button.download-format-link {
   align-self: start;
 }
 
-.book-detail-cover .cover-wrapper {
+.book-detail-cover .cover {
   width: 100%;
   aspect-ratio: 2 / 3;
   border-radius: 2px 6px 6px 2px;
-}
-
-.book-detail-cover .cover {
-  width: 100%;
-  height: 100%;
-  border-radius: 2px 6px 6px 2px;
+  background: var(--card-cover-bg);
+  box-shadow: var(--card-cover-shadow);
 }
 
 .book-detail-content {
@@ -3334,7 +3363,7 @@ html[data-theme="light"] .cover-fallback-overlay {
     max-width: none;
     width: 100%;
   }
-  .book-detail-cover .cover-wrapper {
+  .book-detail-cover .cover {
     max-width: 320px;
     margin-inline: auto;
   }
@@ -3463,7 +3492,7 @@ html[data-theme="light"] .cover-fallback-overlay {
     width: 100%;
     margin-inline: 0;
   }
-  .book-detail-cover .cover-wrapper {
+  .book-detail-cover .cover {
     max-width: 280px;
     margin-inline: auto;
   }
@@ -3610,7 +3639,7 @@ html[data-theme="light"] .cover-fallback-overlay {
   .topbar { padding: 8px 8px; gap: 4px; }
   .topbar-search { grid-template-columns: minmax(0, 1fr) 80px auto; gap: 3px; }
   .page-intro-copy h1 { font-size: 18px; }
-  .book-detail-cover .cover-wrapper { max-width: 240px; }
+  .book-detail-cover .cover { max-width: 240px; }
   .book-detail-related-shelf .grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px 5px; }
   .card-detail { grid-template-columns: 1fr; }
   .card-detail-panel { padding: 10px; }

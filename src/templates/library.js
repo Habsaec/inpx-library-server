@@ -796,20 +796,18 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
         ${uniqueBooks.map((book) => `
           <article class="card" data-book-id="${escapeHtml(book.id)}">
             ${shelfBatch ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} data-batch-book-id="${escapeHtml(book.id)}" aria-label="${escapeHtml(t('batch.selectAria'))}"></label>` : ''}
-            <a class="cover-wrapper" href="/book/${encodeURIComponent(book.id)}">
-              <div class="cover" data-role="cover">
-                <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
-                <span class="cover-fallback" hidden>
-                  <img class="cover-fallback-image" src="/book-fallback.png" alt="">
-                  <span class="cover-fallback-overlay"></span>
-                  <span class="cover-fallback-copy">
-                    <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
-                    <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
-                  </span>
+            <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
+              <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
+              <span class="cover-fallback" hidden>
+                <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+                <span class="cover-fallback-overlay"></span>
+                <span class="cover-fallback-copy">
+                  <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
+                  <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
                 </span>
-              </div>
-              <div class="cover-highlight"></div>
-            </a>${readBookIds && readBookIds.has(book.id) ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : ''}
+              </span>
+            ${readBookIds && readBookIds.has(book.id) ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : ''}
+            </a>
             <div class="meta">
               <h3><a href="/book/${encodeURIComponent(book.id)}">${escapeHtml(book.title)}</a></h3>
               <div class="author">${book.authors ? `<a href="/facet/authors/${encodeURIComponent(book.authorsList?.[0] || firstAuthorValue(book.authors))}">${escapeHtml(formatAuthorLabel(book.authors))}</a>` : escapeHtml(t('book.authorUnknown'))}</div>

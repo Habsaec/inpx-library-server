@@ -499,19 +499,17 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
       ${uniqueItems.map((book) => `
         <article class="card" data-book-id="${escapeHtml(book.id)}">
           ${batchCb(book)}
-          <a class="cover-wrapper" href="/book/${encodeURIComponent(book.id)}">
-            <div class="cover" data-role="cover">
-              <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
-              <span class="cover-fallback" hidden>
-                <img class="cover-fallback-image" src="/book-fallback.png" alt="">
-                <span class="cover-fallback-overlay"></span>
-                <span class="cover-fallback-copy">
-                  <span class="cover-fallback-title">${escapeHtml(book.title || '')}</span>
-                  <span class="cover-fallback-author">${escapeHtml(firstAuthorValue(book.authors) || '')}</span>
-                </span>
+          <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
+            <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
+            <span class="cover-fallback" hidden>
+              <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+              <span class="cover-fallback-overlay"></span>
+              <span class="cover-fallback-copy">
+                <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
+                <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
               </span>
-            </div>
-            <div class="cover-highlight"></div>
+            </span>
+            ${readBadge(book)}
           </a>
           <div class="meta">
             <h3><a href="/book/${encodeURIComponent(book.id)}">${escapeHtml(book.title)}</a></h3>

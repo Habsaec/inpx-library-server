@@ -2361,24 +2361,17 @@ function renderCardHtml(book, { batchSelect = false } = {}) {
   const batchCb = batchSelect
     ? `<label class="batch-select-hit" title="${escapeHtml(uiT('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" id="batch-select-${safeDomIdPart(book.id)}" name="batch-select-${safeDomIdPart(book.id)}" data-batch-book-id="${id}" aria-label="${escapeHtml(uiT('batch.selectAria'))}"></label>`
     : '';
-  const hasReadBadge = getReadBookIdSet().has(book.id);
-  const _readBadgeSvg = hasReadBadge ? READ_BADGE_SVG : '';
   return `<article class="card" data-book-id="${id}">
     ${batchCb}
-    <a class="cover-wrapper" href="/book/${encodeURIComponent(book.id)}">
-      <div class="cover" data-role="cover">
-        <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${title}">
-        <span class="cover-fallback" hidden>
-          <img class="cover-fallback-image" src="/book-fallback.png" alt="">
-          <span class="cover-fallback-overlay"></span>
-          <span class="cover-fallback-copy">
-            <span class="cover-fallback-title">${title}</span>
-            <span class="cover-fallback-author">${authors || escapeHtml(uiT('book.authorUnknown'))}</span>
-          </span>
-        </span>
-      </div>
-      <div class="cover-highlight"></div>
-    </a>${hasReadBadge ? `<span class="read-badge">${_readBadgeSvg}</span>` : ''}
+    <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
+      <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${title}">
+      <span class="cover-fallback" hidden>
+        <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+        <span class="cover-fallback-overlay"></span>
+        <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${authors || escapeHtml(uiT('book.authorUnknown'))}</span></span>
+      </span>
+      ${getReadBookIdSet().has(book.id) ? `<span class="read-badge">${READ_BADGE_SVG}</span>` : ''}
+    </a>
     <div class="meta">
       <h3><a href="/book/${encodeURIComponent(book.id)}">${title}</a></h3>
       <div class="author">${authorKey ? `<a href="/facet/authors/${encodeURIComponent(authorKey)}">${authors}</a>` : escapeHtml(uiT('book.authorUnknown'))}</div>
