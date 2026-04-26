@@ -928,20 +928,23 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 @media (hover: hover) and (pointer: fine) {
   .card:hover .cover {
-    transform: perspective(600px) rotateY(-2deg) translateY(-6px);
+    transform: translateY(-6px);
     box-shadow:
-      inset 2px 0 3px rgba(255,255,255,0.4),
-      inset 4px 0 10px rgba(0,0,0,0.3),
-      inset -1px 0 2px rgba(0,0,0,0.2),
-      inset -3px 0 5px rgba(255,255,255,0.1),
-      -4px 8px 12px rgba(0,0,0,0.3),
-      2px 14px 24px rgba(0,0,0,0.55),
-      3px 3px 6px rgba(0,0,0,0.40);
+      1px 0 0 0 rgba(230,222,200,0.95),
+      2px 0 0 0 rgba(150,135,105,0.8),
+      3px 0 0 0 rgba(235,226,205,0.95),
+      4px 0 0 0 rgba(150,135,105,0.7),
+      5px 0 0 0 rgba(235,226,205,0.9),
+      6px 0 0 0 rgba(150,135,105,0.6),
+      inset 3px 0 6px rgba(0,0,0,0.25),
+      inset -1px 0 2px rgba(255,255,255,0.1),
+      10px 18px 28px rgba(0,0,0,0.55),
+      3px 4px 8px rgba(0,0,0,0.40);
   }
 }
 
 .card:active .cover {
-  transform: perspective(600px) rotateY(-2deg) translateY(-2px) scale(0.98);
+  transform: translateY(-2px) scale(0.99);
 }
 
 .card:hover,
@@ -958,47 +961,48 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   aspect-ratio: 2 / 3;
   background: var(--card-cover-bg);
   box-shadow: 
-    inset 2px 0 3px rgba(255,255,255,0.4),
-    inset 4px 0 10px rgba(0,0,0,0.3),
-    inset -1px 0 2px rgba(0,0,0,0.2),
-    inset -3px 0 5px rgba(255,255,255,0.1),
-    -1px 2px 4px rgba(0,0,0,0.4),
-    6px 2px 4px -2px rgba(0,0,0,0.4),
+    /* Stacked pages on the right edge - simulating book thickness */
+    1px 0 0 0 rgba(230,222,200,0.95),
+    2px 0 0 0 rgba(150,135,105,0.8),
+    3px 0 0 0 rgba(235,226,205,0.95),
+    4px 0 0 0 rgba(150,135,105,0.7),
+    5px 0 0 0 rgba(235,226,205,0.9),
+    6px 0 0 0 rgba(150,135,105,0.6),
+    /* Inner highlights on the cover surface */
+    inset 3px 0 6px rgba(0,0,0,0.25),
+    inset -1px 0 2px rgba(255,255,255,0.1),
+    /* Drop shadow beneath */
     var(--card-cover-shadow);
   position: relative;
-  border-radius: 2px 5px 5px 2px;
-  border-left: 1px solid rgba(0,0,0,0.1);
-  border-right: 1px solid rgba(255,255,255,0.1);
-  border-top: 1px solid rgba(255,255,255,0.1);
-  border-bottom: 1px solid rgba(0,0,0,0.15);
+  border-radius: 2px 3px 3px 2px;
+  border-left: 2px solid rgba(0,0,0,0.25);
   overflow: hidden;
   display: block;
   transition: transform 0.25s ease, box-shadow 0.25s ease;
-  transform: perspective(600px) rotateY(-2deg);
-  transform-style: preserve-3d;
 }
 
 .cover::before {
   content: '';
   position: absolute;
-  top: 0; right: 0; bottom: 0; width: 4px;
-  background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.35) 0, rgba(255,255,255,0.35) 1px, transparent 1px, transparent 2px), linear-gradient(to right, rgba(0,0,0,0.3) 0%, rgba(255,255,255,0.6) 100%);
+  top: 0; left: 0; bottom: 0;
+  width: 8%;
+  background: linear-gradient(to right, 
+    rgba(0,0,0,0.35) 0%,
+    rgba(0,0,0,0.15) 40%,
+    rgba(255,255,255,0.08) 65%,
+    rgba(255,255,255,0) 100%);
   z-index: 10;
   pointer-events: none;
-  opacity: 0.9;
-  border-left: 1px solid rgba(0,0,0,0.3);
 }
 
 .cover::after {
   content: '';
   position: absolute;
-  top: 0; left: 0; bottom: 0; width: 12%;
-  background: linear-gradient(to right, 
-    rgba(255,255,255,0.4) 0%, 
-    rgba(255,255,255,0) 15%, 
-    rgba(0,0,0,0.2) 30%, 
-    rgba(255,255,255,0.1) 40%, 
-    rgba(255,255,255,0) 100%);
+  top: 0; right: 0; bottom: 0;
+  width: 4%;
+  background: linear-gradient(to left,
+    rgba(0,0,0,0.3) 0%,
+    rgba(0,0,0,0) 100%);
   z-index: 10;
   pointer-events: none;
 }
