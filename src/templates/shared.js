@@ -917,7 +917,7 @@ export function renderLoginScreen({ title, subtitle, action, error = '', extraHt
         <p>${escapeHtml(subtitle)}</p>
       </div>
       ${error ? renderAlert('error', escapeHtml(error)) : ''}
-      ${hideForm ? '' : `<div class="search-form">
+      ${hideForm ? '' : `<div class="vertical-form">
         <div>
           <label for="username">${escapeHtml(t('login.username'))}</label>
           <input id="username" name="username" autocomplete="username">

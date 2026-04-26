@@ -1116,7 +1116,7 @@ export function renderProfile({ user, stats, indexStatus, userStats, ereaderEmai
         <div class="table-row table-row-stack profile-form-row">
           <div>
             <strong>${escapeHtml(t('profile.ereaderEmail'))}</strong>
-            <form method="post" action="/profile/email" class="search-form" style="margin-top:8px;">
+            <form method="post" action="/profile/email" class="vertical-form" style="margin-top:8px;">
               ${csrfHiddenField(csrfToken)}
               <div><input type="email" name="ereaderEmail" value="${escapeHtml(ereaderEmail)}" placeholder="kindle@kindle.com"></div>
               <div class="actions"><button type="submit">${escapeHtml(t('profile.save'))}</button></div>
@@ -1127,7 +1127,7 @@ export function renderProfile({ user, stats, indexStatus, userStats, ereaderEmai
           <div>
             <strong>${escapeHtml(t('profile.changePassword'))}</strong>
             <div class="muted" style="margin:4px 0 8px;font-size:12px;">${escapeHtml(t('profile.passwordRules'))}</div>
-            <form method="post" action="/profile/password" class="search-form">
+            <form method="post" action="/profile/password" class="vertical-form">
               ${csrfHiddenField(csrfToken)}
               <div><input type="password" name="currentPassword" placeholder="${escapeHtml(t('profile.currentPassword'))}" autocomplete="current-password" required></div>
               <div><input type="password" name="newPassword" placeholder="${escapeHtml(t('profile.newPassword'))}" autocomplete="new-password" required></div>
