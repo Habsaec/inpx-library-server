@@ -930,21 +930,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   .card:hover .cover {
     transform: translateY(-6px);
     box-shadow:
-      0 3px 0 #ddd1b8,
-      0 1px 0 rgba(0,0,0,0.4),
-      0 8px 8px rgba(0,0,0,0.55),
-      0 14px 18px rgba(0,0,0,0.45),
-      0 24px 36px rgba(0,0,0,0.4),
-      0 40px 60px rgba(0,0,0,0.3);
+      0 2px 1px rgba(0,0,0,0.55),
+      2px 4px 3px rgba(0,0,0,0.4),
+      8px 16px 24px rgba(0,0,0,0.55),
+      14px 30px 44px rgba(0,0,0,0.45),
+      20px 46px 68px rgba(0,0,0,0.35),
+      26px 64px 96px rgba(0,0,0,0.25);
   }
   html[data-theme="light"] .card:hover .cover {
     box-shadow:
-      0 3px 0 #f0e6d0,
-      0 1px 0 rgba(76,58,36,0.18),
-      0 8px 8px rgba(76,58,36,0.22),
-      0 14px 18px rgba(76,58,36,0.22),
-      0 24px 36px rgba(76,58,36,0.2),
-      0 40px 60px rgba(76,58,36,0.16);
+      0 2px 1px rgba(76,58,36,0.3),
+      2px 4px 3px rgba(76,58,36,0.22),
+      8px 16px 24px rgba(76,58,36,0.32),
+      14px 30px 44px rgba(76,58,36,0.26),
+      20px 46px 68px rgba(76,58,36,0.18),
+      26px 64px 96px rgba(76,58,36,0.12);
   }
 }
 
@@ -970,26 +970,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: block;
   isolation: isolate;
   box-shadow:
-    /* visible page block edge peeking out below the cover */
-    0 3px 0 #ddd1b8,
-    /* a touch of darker line where the pages meet the cover */
-    0 1px 0 rgba(0,0,0,0.4),
-    /* book casts a soft shadow on the floor */
-    0 4px 4px rgba(0,0,0,0.5),
-    0 8px 10px rgba(0,0,0,0.45),
-    0 16px 24px rgba(0,0,0,0.35),
-    0 28px 40px rgba(0,0,0,0.25);
+    /* tight under-book shadow (thickness) */
+    0 2px 1px rgba(0,0,0,0.55),
+    2px 4px 3px rgba(0,0,0,0.4),
+    /* main spreading floor shadow, offset down-right */
+    6px 12px 18px rgba(0,0,0,0.5),
+    10px 22px 32px rgba(0,0,0,0.42),
+    14px 34px 52px rgba(0,0,0,0.32),
+    18px 48px 72px rgba(0,0,0,0.22);
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s ease;
 }
 
 html[data-theme="light"] .cover {
   box-shadow:
-    0 3px 0 #f0e6d0,
-    0 1px 0 rgba(76,58,36,0.18),
-    0 4px 4px rgba(76,58,36,0.18),
-    0 8px 10px rgba(76,58,36,0.18),
-    0 16px 24px rgba(76,58,36,0.16),
-    0 28px 40px rgba(76,58,36,0.12);
+    0 2px 1px rgba(76,58,36,0.3),
+    2px 4px 3px rgba(76,58,36,0.22),
+    6px 12px 18px rgba(76,58,36,0.26),
+    10px 22px 32px rgba(76,58,36,0.22),
+    14px 34px 52px rgba(76,58,36,0.16),
+    18px 48px 72px rgba(76,58,36,0.1);
 }
 
 .cover-inner {
