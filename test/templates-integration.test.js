@@ -162,6 +162,50 @@ test('renderBook returns book detail page', async () => {
   assert.ok(html.includes('Test Author'));
 });
 
+test('renderFacetBooks: genre page renders view tabs', async () => {
+  const { renderFacetBooks } = await import('../src/templates/library.js');
+  const html = renderFacetBooks({
+    title: 'Жанр: Фэнтези',
+    items: [], total: 0, page: 1, pageSize: 24,
+    user: null, stats: {}, facetPath: '/facet/genres/sf_fantasy',
+    indexStatus: {}, sort: 'recent', breadcrumbs: [{ label: 'Home', href: '/' }],
+    facet: 'genres', facetValue: 'sf_fantasy'
+  });
+  assert.ok(html.includes('facet-view-tabs'), 'tab strip should be rendered');
+  assert.ok(html.includes('view=authors'), 'authors tab href');
+  assert.ok(html.includes('view=series'), 'series tab href');
+});
+
+test('renderFacetBooks: view=authors renders entity grid for genre', async () => {
+  const { renderFacetBooks } = await import('../src/templates/library.js');
+  const html = renderFacetBooks({
+    title: 'Жанр: Фэнтези',
+    items: [], total: 2, page: 1, pageSize: 50,
+    user: null, stats: {}, facetPath: '/facet/genres/sf_fantasy',
+    indexStatus: {}, sort: 'count', breadcrumbs: [{ label: 'Home', href: '/' }],
+    facet: 'genres', facetValue: 'sf_fantasy',
+    view: 'authors',
+    entityItems: [
+      { name: 'Толкиен', displayName: 'Толкиен', bookCount: 12 },
+      { name: 'Сапковский', displayName: 'Сапковский', bookCount: 8 }
+    ]
+  });
+  assert.ok(html.includes('/facet/authors/'), 'rows should link to author facet');
+  assert.ok(html.includes('Толкиен'), 'first author should be listed');
+});
+
+test('renderFacetBooks: non-genre facets do not render view tabs', async () => {
+  const { renderFacetBooks } = await import('../src/templates/library.js');
+  const html = renderFacetBooks({
+    title: 'Серия: Ведьмак',
+    items: [], total: 0, page: 1, pageSize: 24,
+    user: null, stats: {}, facetPath: '/facet/series/Ведьмак',
+    indexStatus: {}, sort: 'recent', breadcrumbs: [{ label: 'Home', href: '/' }],
+    facet: 'series', facetValue: 'Ведьмак'
+  });
+  assert.ok(!html.includes('facet-view-tabs'), 'series facet should not render tabs');
+});
+
 test('renderReader returns standalone reader HTML', async () => {
   const { renderReader } = await import('../src/templates/library.js');
   const html = renderReader({

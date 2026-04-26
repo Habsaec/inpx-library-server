@@ -2144,6 +2144,23 @@ button.download-format-link {
   border-top: 1px solid var(--border);
 }
 
+.facet-view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+.facet-view-tabs .button {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.facet-view-tabs .button.is-active {
+  background: var(--button-bg-hover);
+  border-color: var(--button-border-hover);
+  color: var(--link-hover);
+  pointer-events: none;
+}
+
 .facet-summary-block {
   padding: 0;
   background: transparent;

@@ -2990,6 +2990,86 @@ export function listGenres({ page = 1, pageSize = 50, query = '', sort = 'count'
   return { total, items };
 }
 
+/**
+ * Authors that have at least one book in the given genre, paginated.
+ * Used by /facet/genres/:value?view=authors so big genres don't dump 27k books in one flat list.
+ */
+export function listAuthorsByGenre({ genre, page = 1, pageSize = 50, sort = 'count' }) {
+  const value = String(genre || '').trim();
+  if (!value) return { total: 0, items: [] };
+  const offset = (page - 1) * pageSize;
+  const orderBy = sort === 'name'
+    ? 'COALESCE(a.sort_name, LOWER(a.name)) ASC'
+    : 'bookCount DESC, COALESCE(a.sort_name, LOWER(a.name)) ASC';
+
+  const total = db.prepare(`
+    SELECT COUNT(DISTINCT a.id) AS count
+    FROM book_genres bg
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    JOIN active_books b ON b.id = bg.book_id
+    JOIN book_authors ba ON ba.book_id = b.id
+    JOIN authors a ON a.id = ba.author_id
+    WHERE g.name = ?
+  `).get(value).count;
+
+  const items = db.prepare(`
+    SELECT a.name AS name,
+           COALESCE(a.display_name, a.name) AS displayName,
+           COUNT(DISTINCT b.id) AS bookCount
+    FROM book_genres bg
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    JOIN active_books b ON b.id = bg.book_id
+    JOIN book_authors ba ON ba.book_id = b.id
+    JOIN authors a ON a.id = ba.author_id
+    WHERE g.name = ?
+    GROUP BY a.id, a.name, a.display_name, a.sort_name
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `).all(value, pageSize, offset);
+
+  return { total, items };
+}
+
+/**
+ * Series that have at least one book in the given genre, paginated.
+ * Used by /facet/genres/:value?view=series.
+ */
+export function listSeriesByGenre({ genre, page = 1, pageSize = 50, sort = 'count' }) {
+  const value = String(genre || '').trim();
+  if (!value) return { total: 0, items: [] };
+  const offset = (page - 1) * pageSize;
+  const orderBy = sort === 'name'
+    ? 'COALESCE(s.sort_name, LOWER(s.name)) ASC'
+    : 'bookCount DESC, COALESCE(s.sort_name, LOWER(s.name)) ASC';
+
+  const total = db.prepare(`
+    SELECT COUNT(DISTINCT s.id) AS count
+    FROM book_genres bg
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    JOIN active_books b ON b.id = bg.book_id
+    JOIN book_series bs ON bs.book_id = b.id
+    JOIN series_catalog s ON s.id = bs.series_id
+    WHERE g.name = ?
+  `).get(value).count;
+
+  const items = db.prepare(`
+    SELECT s.name AS name,
+           COALESCE(s.display_name, s.name) AS displayName,
+           COUNT(DISTINCT b.id) AS bookCount
+    FROM book_genres bg
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    JOIN active_books b ON b.id = bg.book_id
+    JOIN book_series bs ON bs.book_id = b.id
+    JOIN series_catalog s ON s.id = bs.series_id
+    WHERE g.name = ?
+    GROUP BY s.id, s.name, s.display_name, s.sort_name
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `).all(value, pageSize, offset);
+
+  return { total, items };
+}
+
 export function listLanguages({ page = 1, pageSize = 50, query = '', sort = 'count' }) {
   const offset = (page - 1) * pageSize;
   const normalizedQuery = normalizeText(query).toLowerCase();

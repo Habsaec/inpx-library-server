@@ -498,25 +498,67 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
 }
 
-export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, csrfToken = '', readBookIds = null }) {
+export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, csrfToken = '', readBookIds = null, view = 'books', entityItems = null }) {
+  const isGenre = facet === 'genres';
+  const isEntityView = isGenre && (view === 'authors' || view === 'series');
   const facetAction = user && (facet === 'authors' || facet === 'series')
     ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" ${facet === 'authors' ? `data-favorite-author="${escapeHtml(facetValue)}"` : `data-favorite-series="${escapeHtml(facetValue)}"`} ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
     : '';
   const markSeriesReadBtn = user && facet === 'series' && items.length
     ? `<button class="button${seriesRead ? ' is-active' : ''}" type="button" data-mark-series-read="${escapeHtml(facetValue)}">${seriesRead ? escapeHtml(t('facet.seriesMarkedRead')) : escapeHtml(t('facet.markSeriesRead'))}</button>`
     : '';
-  const hasMore = items.length > 0 && total > page * pageSize;
+  const hasMore = !isEntityView && items.length > 0 && total > page * pageSize;
   const facetLoadMoreApi = hasMore
     ? `/api/facet-books?${new URLSearchParams({ facet: String(facet), value: String(facetValue), sort: String(sort || 'recent') }).toString()}`
     : '';
   const batchCtx = facet === 'series' && facetValue !== '' ? { facet: 'series', value: facetValue } : null;
   const batchCtxJson = batchCtx ? escapeHtml(JSON.stringify(batchCtx)) : '';
-  const showBatch = Boolean(batchCtx && items.length && canDownloadInUi(user));
-  const booksBlock = !items.length
-    ? renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: '/', actionLabel: t('facet.toCatalog') })
-    : hasMore
-      ? `<div data-load-more-grid data-load-more-api="${escapeHtml(facetLoadMoreApi)}" data-load-more-page="${page}" data-load-more-total="${total}" data-load-more-page-size="${pageSize}"${showBatch ? ` data-batch-context="${batchCtxJson}"` : ''}>${renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds })}</div>`
-      : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds });
+  const showBatch = !isEntityView && Boolean(batchCtx && items.length && canDownloadInUi(user));
+
+  // View switcher tabs for genre pages: Books | By authors | By series
+  const viewTabs = isGenre ? (() => {
+    const buildHref = (v) => {
+      const params = new URLSearchParams();
+      if (v !== 'books') params.set('view', v);
+      // Reset sort because allowed sort values differ between views
+      const qs = params.toString();
+      return `${facetPath}${qs ? `?${qs}` : ''}`;
+    };
+    const tab = (v, label) => `<a class="button${view === v ? ' is-active' : ''}" href="${escapeHtml(buildHref(v))}">${escapeHtml(label)}</a>`;
+    return `<div class="facet-view-tabs">${tab('books', t('facet.viewBooks'))}${tab('authors', t('facet.viewByAuthors'))}${tab('series', t('facet.viewBySeries'))}</div>`;
+  })() : '';
+
+  // Sort options + paging base differ between book view and entity view
+  const sortOptions = isEntityView
+    ? [
+        { value: 'count', label: t('sort.byBookCount') },
+        { value: 'name', label: t('sort.byName') }
+      ]
+    : [
+        { value: 'recent', label: t('sort.recentFirst') },
+        { value: 'title', label: t('sort.byTitle') },
+        { value: 'author', label: t('sort.byAuthor') },
+        { value: 'series', label: t('sort.bySeries') }
+      ];
+  const sortExtraHidden = isEntityView ? { view } : {};
+  const paginationBase = isEntityView
+    ? `${facetPath}?view=${encodeURIComponent(view)}&sort=${encodeURIComponent(sort || 'count')}`
+    : `${facetPath}?sort=${encodeURIComponent(sort || 'recent')}`;
+
+  // Body block: either entity grid or book grid
+  const entityBasePath = view === 'authors' ? '/facet/authors' : '/facet/series';
+  const bodyBlock = isEntityView
+    ? (entityItems && entityItems.length
+        ? renderEntityGrid(entityItems, entityBasePath, t('browse.empty'))
+        : renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: facetPath, actionLabel: t('facet.viewBooks') }))
+    : !items.length
+      ? renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: '/', actionLabel: t('facet.toCatalog') })
+      : hasMore
+        ? `<div data-load-more-grid data-load-more-api="${escapeHtml(facetLoadMoreApi)}" data-load-more-page="${page}" data-load-more-total="${total}" data-load-more-page-size="${pageSize}"${showBatch ? ` data-batch-context="${batchCtxJson}"` : ''}>${renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds })}</div>`
+        : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds });
+
+  const countLabelKey = isEntityView ? (view === 'authors' ? 'author' : 'series') : 'book';
+
   const facetBatchInner = `
     <section class="page-intro page-intro-slim">
       <div class="page-intro-copy">
@@ -528,22 +570,21 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
         ${renderSortControl({
           action: facetPath,
           sort,
-          options: [
-            { value: 'recent', label: t('sort.recentFirst') },
-            { value: 'title', label: t('sort.byTitle') },
-            { value: 'author', label: t('sort.byAuthor') },
-            { value: 'series', label: t('sort.bySeries') }
-          ]
+          options: sortOptions,
+          extraHidden: sortExtraHidden
         })}
       </div>
     </section>
+    ${viewTabs}
     ${showBatch ? renderBatchDownloadToolbar(batchCtx, { user }) : ''}
-    <div class="list-context-hint list-context-hint-spacious">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural('book', total)}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
-    ${booksBlock}
+    <div class="list-context-hint list-context-hint-spacious">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural(countLabelKey, total)}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
+    ${bodyBlock}
     ${hasMore ? `<div class="load-more-wrap"><button class="button load-more-button" data-load-more-trigger>${escapeHtml(t('catalog.loadMore'))}</button></div>` : ''}
-    ${hasMore
-      ? `<noscript>${renderPagination(`${facetPath}?sort=${encodeURIComponent(sort || 'recent')}`, page, pageSize, total)}</noscript>`
-      : renderPagination(`${facetPath}?sort=${encodeURIComponent(sort || 'recent')}`, page, pageSize, total)}
+    ${isEntityView
+      ? renderPagination(paginationBase, page, pageSize, total)
+      : hasMore
+        ? `<noscript>${renderPagination(paginationBase, page, pageSize, total)}</noscript>`
+        : renderPagination(paginationBase, page, pageSize, total)}
   `;
   const content = `
     ${showBatch ? `<div class="batch-select-scope">${facetBatchInner}</div>` : facetBatchInner}

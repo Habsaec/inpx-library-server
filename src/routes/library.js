@@ -42,9 +42,11 @@ import {
   isFavoriteAuthor,
   isFavoriteSeries,
   listAuthors,
+  listAuthorsByGenre,
   listGenres,
   listLanguages,
   listSeries,
+  listSeriesByGenre,
   resolveAuthorName,
   resolveSeriesCatalogName,
   recordReadingHistory,
@@ -747,6 +749,32 @@ export function registerLibraryRoutes(app, deps) {
         return;
       }
 
+      // Mode switcher for genre pages: ?view=authors|series groups the genre's books by entity
+      // so big sub-genres (10k+ books) become navigable instead of a flat dump.
+      const allowedViews = facet === 'genres' ? ['books', 'authors', 'series'] : ['books'];
+      const requestedView = String(req.query.view || 'books');
+      const view = allowedViews.includes(requestedView) ? requestedView : 'books';
+
+      if (facet === 'genres' && view !== 'books') {
+        const entityPageSize = 50;
+        const entitySort = ['count', 'name'].includes(String(req.query.sort || '')) ? String(req.query.sort) : 'count';
+        const entityResult = view === 'authors'
+          ? listAuthorsByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort })
+          : listSeriesByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort });
+        const summary = getFacetSummary(facet, value);
+        res.send(renderFacetBooks({
+          title: tp('facet.titleWithValue', { label: facetLabels[facet] || t('facet.sectionFallback'), value: displayValue }),
+          items: [], total: entityResult.total, page, pageSize: entityPageSize,
+          summary,
+          user: req.user || null, stats, facetPath,
+          indexStatus: getIndexStatus(), sort: entitySort, facet, facetValue: value,
+          favorite, seriesRead: false, breadcrumbs, csrfToken: req.csrfToken || '',
+          readBookIds: null,
+          view, entityItems: entityResult.items
+        }));
+        return;
+      }
+
       const result = await getBooksByFacetCoalesced({ facet, value, page, pageSize, sort });
       const summary = getFacetSummary(facet, value);
       const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
@@ -756,7 +784,8 @@ export function registerLibraryRoutes(app, deps) {
         user: req.user || null, stats, facetPath,
         indexStatus: getIndexStatus(), sort, facet, facetValue: value,
         favorite, seriesRead, breadcrumbs, csrfToken: req.csrfToken || '',
-        readBookIds: username ? getReadBookIdSet(username) : null
+        readBookIds: username ? getReadBookIdSet(username) : null,
+        view
       }));
     } catch (error) {
       next(error);
