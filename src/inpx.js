@@ -3978,9 +3978,48 @@ export function getAuthorBooksOpds(authorName, genre = '') {
   return db.prepare(sql).all(...params);
 }
 
+/**
+ * Books of a single author within a specific series, for OPDS drill-down from /opds/author.
+ *
+ * IMPORTANT: matches `b.series` (raw text from the books table), NOT the canonical
+ * `series_catalog.name`. The author handler groups its entries on `b.series`, so using the
+ * same column guarantees non-empty results regardless of how `series_catalog` normalizes
+ * the value (whitespace, ё/е, etc). Fixes the "каталог пуст" bug after picking an author's
+ * series in OPDS.
+ */
+export function getAuthorSeriesBooksOpds(authorName, seriesText, genre = '') {
+  const params = [String(authorName || ''), String(seriesText || '')];
+  let genreJoin = '';
+  if (genre) {
+    const genreParams = genre.split(',').map((g) => g.trim()).filter(Boolean);
+    if (genreParams.length) {
+      genreJoin = `
+        JOIN book_genres bg ON bg.book_id = b.id
+        JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genreParams.map(() => '?').join(',')})`;
+      params.push(...genreParams);
+    }
+  }
+  const sql = `
+    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+           b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+           dc.annotation
+    FROM active_books b
+    JOIN book_authors ba ON ba.book_id = b.id
+    JOIN authors a ON a.id = ba.author_id AND a.name = ?
+    ${genreJoin}
+    LEFT JOIN sources s ON s.id = b.source_id
+    LEFT JOIN book_details_cache dc ON dc.book_id = b.id
+    WHERE b.series = ?
+    GROUP BY b.id
+    ORDER BY CAST(b.series_no AS INTEGER), b.title
+    LIMIT 500`;
+  return db.prepare(sql).all(...params);
+}
+
 export function getSeriesBooksOpds(seriesName) {
-  const name = resolveSeriesCatalogName(String(seriesName || ''));
-  return db
+  const raw = String(seriesName || '');
+  const name = resolveSeriesCatalogName(raw);
+  const rows = db
     .prepare(
       `
     SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
@@ -3996,6 +4035,24 @@ export function getSeriesBooksOpds(seriesName) {
   `
     )
     .all(name);
+  if (rows.length) return rows;
+  // Defensive fallback: when canonical resolution doesn't match (whitespace, ё/е, ambiguity),
+  // fall back to raw `b.series` text match so OPDS clients never get an empty "каталог пуст".
+  return db
+    .prepare(
+      `
+    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+           b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+           dc.annotation
+    FROM active_books b
+    LEFT JOIN sources s ON s.id = b.source_id
+    LEFT JOIN book_details_cache dc ON dc.book_id = b.id
+    WHERE b.series = ?
+    ORDER BY CAST(b.series_no AS INTEGER), b.title
+    LIMIT 500
+  `
+    )
+    .all(raw);
 }
 
 export function recordReadingHistory(username, bookId) {

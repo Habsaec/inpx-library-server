@@ -11,6 +11,7 @@ import {
   listGenres, getBookById,
   opdsQuery,
   getAuthorBooksOpds,
+  getAuthorSeriesBooksOpds,
   getSeriesBooksOpds,
   opdsSearchAuthors,
   searchCatalog,
@@ -147,7 +148,14 @@ export function registerOpdsRoutes(app, deps) {
     const base = baseUrl(req);
 
     if (seriesQ) {
-      const books = getSeriesBooksOpds(seriesQ);
+      // When the user drilled in via an author entry (author=...&series=...),
+      // match books on the same raw `b.series` text we used to group on, scoped to that author.
+      // This avoids "каталог пуст" caused by mismatches between books.series and series_catalog.name
+      // (whitespace, ё/е, casing, multiple ambiguous matches).
+      const authorName = author.startsWith('=') ? author.slice(1) : '';
+      const books = authorName
+        ? getAuthorSeriesBooksOpds(authorName, seriesQ, genre)
+        : getSeriesBooksOpds(seriesQ);
       res.type('application/atom+xml; charset=utf-8');
       return res.send(renderOpdsBooksFeed(base, { id: 'search', title: seriesQ, selfPath: req.originalUrl, items: books }));
     }
