@@ -41,26 +41,37 @@ const OPDS_MIME_FOR_SOURCE = {
 };
 
 function renderOpdsBookEntries(baseUrl, items, { includeContent = false } = {}) {
+  // Atom RFC 4287 §4.1.2: every <entry> MUST contain exactly one <updated>.
+  // Atom RFC 4287 §4.2.6: <id> MUST be an IRI (a bare numeric ID is NOT valid).
+  // Strict OPDS clients (FBReader, Kindle) silently drop entries that violate either rule
+  // — that's the real cause of "каталог пуст" when drilling into series. AlReader is lenient.
+  const now = new Date().toISOString().substring(0, 19) + 'Z';
   return items.map((book) => {
     const title = `${book.seriesNo ? `${escapeHtml(String(book.seriesNo))}. ` : ''}${escapeHtml(book.title || t('opds.noTitle'))} (${escapeHtml(book.ext || 'fb2')})`;
     const authors = String(book.authors || '').split(':').map((item) => item.trim()).filter(Boolean);
     const extLower = String(book.ext || 'fb2').toLowerCase();
     const sourceMime = OPDS_MIME_FOR_SOURCE[extLower] || 'application/octet-stream';
     const dl = `/download/${encodeURIComponent(book.id)}?opds=1`;
+    const cover = `/api/books/${encodeURIComponent(book.id)}/cover?opds=1`;
+    // XML 1.0 §2.4: '&' in attribute values MUST be escaped as &amp;.
+    // Strict OPDS clients (FBReader, Kindle) abort parsing on the bare '&' in the EPUB
+    // conversion link href ("?opds=1&format=epub2") and show "каталог пуст".
+    // AlReader is lenient and accepts the malformed XML.
     const links = [
-      `<link href="${dl}" rel="http://opds-spec.org/acquisition" type="${sourceMime}" title="${escapeHtml(FORMAT_LABELS[extLower] || extLower.toUpperCase())}"/>`
+      `<link href="${escapeHtml(dl)}" rel="http://opds-spec.org/acquisition" type="${sourceMime}" title="${escapeHtml(FORMAT_LABELS[extLower] || extLower.toUpperCase())}"/>`
     ];
     if (extLower === 'fb2') {
-      links.push(`<link href="${dl}&format=epub2" rel="http://opds-spec.org/acquisition" type="application/epub+zip" title="EPUB"/>`);
+      links.push(`<link href="${escapeHtml(`${dl}&format=epub2`)}" rel="http://opds-spec.org/acquisition" type="application/epub+zip" title="EPUB"/>`);
     }
     if (book.id) {
-      links.push(`<link href="/api/books/${encodeURIComponent(book.id)}/cover?opds=1" rel="http://opds-spec.org/image" type="image/jpeg"/>`);
-      links.push(`<link href="/api/books/${encodeURIComponent(book.id)}/cover?opds=1" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>`);
+      links.push(`<link href="${escapeHtml(cover)}" rel="http://opds-spec.org/image" type="image/jpeg"/>`);
+      links.push(`<link href="${escapeHtml(cover)}" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>`);
     }
     return `
     <entry>
       <title>${title}</title>
-      <id>${escapeHtml(book.id)}</id>
+      <id>urn:inpx:book:${escapeHtml(String(book.id || ''))}</id>
+      <updated>${now}</updated>
       ${authors.length ? authors.map((author) => `<author><name>${escapeHtml(author)}</name></author>`).join('') : `<author><name>${escapeHtml(t('book.authorUnknown'))}</name></author>`}
       <dc:language>${escapeHtml(book.lang || 'ru')}</dc:language>
       ${String(book.genres || '').split(':').map((genre) => genre.trim()).filter(Boolean).map((genre) => `<category term="${escapeHtml(genre)}" label="${escapeHtml(formatGenreLabel(genre))}"/>`).join('')}
