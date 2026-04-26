@@ -928,18 +928,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 @media (hover: hover) and (pointer: fine) {
   .card:hover .cover {
-    transform: translateY(-6px);
+    transform: perspective(600px) rotateY(-2deg) translateY(-6px);
     box-shadow:
-      inset 4px 0 10px rgba(0,0,0,0.15),
-      inset -1px 0 2px rgba(255,255,255,0.2),
-      inset 1px 0 0 rgba(0,0,0,0.2),
-      8px 14px 24px rgba(0,0,0,0.55),
+      inset 2px 0 3px rgba(255,255,255,0.4),
+      inset 4px 0 10px rgba(0,0,0,0.3),
+      inset -1px 0 2px rgba(0,0,0,0.2),
+      inset -3px 0 5px rgba(255,255,255,0.1),
+      -4px 8px 12px rgba(0,0,0,0.3),
+      2px 14px 24px rgba(0,0,0,0.55),
       3px 3px 6px rgba(0,0,0,0.40);
   }
 }
 
 .card:active .cover {
-  transform: translateY(-2px) scale(0.98);
+  transform: perspective(600px) rotateY(-2deg) translateY(-2px) scale(0.98);
 }
 
 .card:hover,
@@ -956,24 +958,45 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   aspect-ratio: 2 / 3;
   background: var(--card-cover-bg);
   box-shadow: 
-    inset 4px 0 10px rgba(0,0,0,0.15),
-    inset -1px 0 2px rgba(255,255,255,0.2),
-    inset 1px 0 0 rgba(0,0,0,0.2),
+    inset 2px 0 3px rgba(255,255,255,0.4),
+    inset 4px 0 10px rgba(0,0,0,0.3),
+    inset -1px 0 2px rgba(0,0,0,0.2),
+    inset -3px 0 5px rgba(255,255,255,0.1),
+    -1px 2px 4px rgba(0,0,0,0.4),
     var(--card-cover-shadow);
   position: relative;
-  border-radius: 2px 6px 6px 2px;
+  border-radius: 2px 5px 5px 2px;
+  border-left: 1px solid rgba(0,0,0,0.1);
+  border-right: 1px solid rgba(255,255,255,0.1);
   overflow: hidden;
   display: block;
   transition: transform 0.25s ease, box-shadow 0.25s ease;
+  transform: perspective(600px) rotateY(-2deg);
+  transform-style: preserve-3d;
 }
 
 .cover::after {
   content: '';
   position: absolute;
-  top: 0; left: 0; bottom: 0; width: 4%;
-  background: linear-gradient(to right, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 100%);
+  top: 0; left: 0; bottom: 0; width: 10%;
+  background: linear-gradient(to right, 
+    rgba(255,255,255,0.5) 0%, 
+    rgba(255,255,255,0) 15%, 
+    rgba(0,0,0,0.2) 30%, 
+    rgba(255,255,255,0.1) 40%, 
+    rgba(255,255,255,0) 100%);
   z-index: 10;
   pointer-events: none;
+}
+
+.cover::before {
+  content: '';
+  position: absolute;
+  top: 0; right: 0; bottom: 0; width: 3px;
+  background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 1px, transparent 1px, transparent 2px);
+  z-index: 10;
+  pointer-events: none;
+  opacity: 0.6;
 }
 
 /* Картинка заполняет блок: без absolute flex иногда даёт нулевую высоту у img до отрисовки. */
