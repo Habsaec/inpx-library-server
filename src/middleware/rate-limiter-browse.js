@@ -13,6 +13,8 @@ const TOKENS_PER_MS = BROWSE_MAX_HITS / BROWSE_WINDOW_MS;
 
 const hits = new Map(); // ip -> { tokens: number, lastRefillAt: number, lastSeenAt: number }
 
+const EXEMPT_PATHS = new Set(['/health', '/health/perf', '/ready', '/api/index-status']);
+
 function pruneOldHits() {
   const now = Date.now();
   for (const [key, record] of hits) {
@@ -31,6 +33,7 @@ function refillTokens(record, now) {
 setInterval(pruneOldHits, 2 * 60_000).unref();
 
 export function browseLimiter(req, res, next) {
+  if (EXEMPT_PATHS.has(req.path)) return next();
   const key = getClientKey(req);
   const now = Date.now();
 
