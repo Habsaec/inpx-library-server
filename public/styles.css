@@ -928,36 +928,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 @media (hover: hover) and (pointer: fine) {
   .card:hover .cover {
-    transform: perspective(800px) rotateY(-3deg) translateY(-8px);
+    transform: translateY(-6px);
     box-shadow:
-      1px 0 0 rgba(0,0,0,0.2),
-      2px 0 0 #d4c8b3,
-      3px 0 0 rgba(0,0,0,0.1),
-      4px 0 0 #c9bda7,
-      5px 0 0 rgba(0,0,0,0.15),
-      6px 0 0 #bdb19a,
-      18px 26px 40px rgba(0,0,0,0.6),
-      12px 16px 22px rgba(0,0,0,0.45),
-      6px 8px 12px rgba(0,0,0,0.35),
-      0 2px 4px rgba(0,0,0,0.4);
+      0 2px 1px rgba(0,0,0,0.5),
+      0 3px 2px rgba(0,0,0,0.35),
+      0 14px 22px rgba(0,0,0,0.5),
+      0 24px 40px rgba(0,0,0,0.4),
+      0 36px 64px rgba(0,0,0,0.3);
   }
   html[data-theme="light"] .card:hover .cover {
     box-shadow:
-      1px 0 0 rgba(0,0,0,0.12),
-      2px 0 0 #efe6d3,
-      3px 0 0 rgba(0,0,0,0.08),
-      4px 0 0 #e3d8c1,
-      5px 0 0 rgba(0,0,0,0.1),
-      6px 0 0 #d6cbb1,
-      18px 26px 40px rgba(76,58,36,0.4),
-      12px 16px 22px rgba(76,58,36,0.28),
-      6px 8px 12px rgba(76,58,36,0.22),
-      0 2px 4px rgba(76,58,36,0.2);
+      0 2px 1px rgba(76,58,36,0.25),
+      0 3px 2px rgba(76,58,36,0.18),
+      0 14px 22px rgba(76,58,36,0.28),
+      0 24px 40px rgba(76,58,36,0.22),
+      0 36px 64px rgba(76,58,36,0.16);
   }
 }
 
 .card:active .cover {
-  transform: perspective(800px) rotateY(-3deg) translateY(-2px) scale(0.98);
+  transform: translateY(-1px) scale(0.98);
 }
 
 .card:hover,
@@ -974,40 +964,27 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   aspect-ratio: 2 / 3;
   background: var(--card-cover-bg);
   position: relative;
-  border-radius: 2px 1px 1px 2px;
+  border-radius: 2px;
   display: block;
   isolation: isolate;
   box-shadow:
-    /* page edges on the right (thickness) */
-    1px 0 0 rgba(0,0,0,0.2),
-    2px 0 0 #d4c8b3,
-    3px 0 0 rgba(0,0,0,0.1),
-    4px 0 0 #c9bda7,
-    5px 0 0 rgba(0,0,0,0.15),
-    6px 0 0 #bdb19a,
-    /* main drop shadow (deeper, more visible at rest) */
-    12px 16px 28px rgba(0,0,0,0.55),
-    8px 10px 16px rgba(0,0,0,0.4),
-    4px 5px 8px rgba(0,0,0,0.3),
-    /* contact shadow */
-    0 2px 4px rgba(0,0,0,0.4);
+    /* tight under-book shadow (thickness) */
+    0 2px 1px rgba(0,0,0,0.5),
+    0 3px 2px rgba(0,0,0,0.35),
+    /* main floor shadow */
+    0 8px 14px rgba(0,0,0,0.45),
+    0 16px 28px rgba(0,0,0,0.35),
+    0 24px 48px rgba(0,0,0,0.25);
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s ease;
-  transform: perspective(800px) rotateY(-3deg);
-  transform-origin: left center;
 }
 
 html[data-theme="light"] .cover {
   box-shadow:
-    1px 0 0 rgba(0,0,0,0.12),
-    2px 0 0 #efe6d3,
-    3px 0 0 rgba(0,0,0,0.08),
-    4px 0 0 #e3d8c1,
-    5px 0 0 rgba(0,0,0,0.1),
-    6px 0 0 #d6cbb1,
-    12px 16px 28px rgba(76,58,36,0.32),
-    8px 10px 16px rgba(76,58,36,0.24),
-    4px 5px 8px rgba(76,58,36,0.18),
-    0 2px 4px rgba(76,58,36,0.18);
+    0 2px 1px rgba(76,58,36,0.25),
+    0 3px 2px rgba(76,58,36,0.18),
+    0 8px 14px rgba(76,58,36,0.22),
+    0 16px 28px rgba(76,58,36,0.18),
+    0 24px 48px rgba(76,58,36,0.12);
 }
 
 .cover-inner {
@@ -1027,40 +1004,31 @@ html[data-theme="light"] .cover {
   pointer-events: none;
   border-radius: inherit;
   background:
-    /* Outer spine shadow (right edge of spine) */
-    linear-gradient(to right,
-      rgba(0,0,0,0) 0%,
-      rgba(0,0,0,0.18) 4%,
-      rgba(0,0,0,0) 7%,
-      rgba(255,255,255,0.08) 10%,
-      rgba(255,255,255,0) 14%,
-      rgba(0,0,0,0) 92%,
-      rgba(0,0,0,0.12) 100%),
     /* Subtle top sheen */
     linear-gradient(to bottom,
-      rgba(255,255,255,0.08) 0%,
-      rgba(255,255,255,0) 30%,
-      rgba(0,0,0,0) 70%,
-      rgba(0,0,0,0.08) 100%);
+      rgba(255,255,255,0.05) 0%,
+      rgba(255,255,255,0) 25%,
+      rgba(0,0,0,0) 75%,
+      rgba(0,0,0,0.06) 100%);
   box-shadow:
-    inset 0 0 0 1px rgba(0,0,0,0.15),
-    inset 1px 0 0 rgba(255,255,255,0.15);
+    inset 0 0 0 1px rgba(0,0,0,0.18);
 }
 
-/* Spine itself (left edge band) */
+/* Spine groove on left edge - imitates the binding fold */
 .cover::before {
   content: '';
   position: absolute;
   top: 0; bottom: 0; left: 0;
-  width: 5px;
+  width: 8px;
   z-index: 4;
   pointer-events: none;
-  background: linear-gradient(to right,
-    rgba(0,0,0,0.4) 0%,
-    rgba(0,0,0,0.15) 40%,
-    rgba(255,255,255,0.1) 70%,
-    rgba(0,0,0,0.25) 100%);
-  border-radius: 2px 0 0 2px;
+  background:
+    linear-gradient(to right,
+      rgba(0,0,0,0.18) 0%,
+      rgba(0,0,0,0.05) 25%,
+      rgba(255,255,255,0.08) 50%,
+      rgba(0,0,0,0.10) 75%,
+      rgba(255,255,255,0.04) 100%);
 }
 
 /* Картинка заполняет блок: без absolute flex иногда даёт нулевую высоту у img до отрисовки. */
