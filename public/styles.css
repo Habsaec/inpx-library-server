@@ -1040,6 +1040,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: var(--card-cover-fallback-bg);
 }
 
+.cover.cover-fallback-active .cover-image {
+  display: none !important;
+}
+
 .cover-fallback {
   position: absolute;
   inset: 0;
