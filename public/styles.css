@@ -910,11 +910,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 .card {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  min-width: 0;
-  height: 100%;
-  align-self: stretch;
   position: relative;
   z-index: 0;
   background: transparent;
@@ -927,21 +925,43 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .card:hover .cover {
-    transform: perspective(600px) rotateY(-2deg) translateY(-6px);
+  .card:hover .cover-wrapper {
+    transform: perspective(800px) rotateY(-10deg) translateX(4px) translateY(-4px) scale(1.02);
     box-shadow:
-      inset 2px 0 3px rgba(255,255,255,0.4),
-      inset 4px 0 10px rgba(0,0,0,0.3),
-      inset -1px 0 2px rgba(0,0,0,0.2),
-      inset -3px 0 5px rgba(255,255,255,0.1),
-      -4px 8px 12px rgba(0,0,0,0.3),
-      2px 14px 24px rgba(0,0,0,0.55),
-      3px 3px 6px rgba(0,0,0,0.40);
+      inset 4px 0 10px rgba(0,0,0,0.1),
+      inset -1px 0 2px rgba(255,255,255,0.3),
+      -2px 6px 12px rgba(0,0,0,0.3),
+      -12px 18px 30px rgba(0,0,0,0.5),
+      -4px 4px 6px rgba(0,0,0,0.40);
+  }
+  
+  .card:hover .cover-wrapper::before {
+    box-shadow: 
+      inset -2px 0 6px rgba(0,0,0,0.4),
+      inset 2px 0 2px rgba(255,255,255,0.4),
+      -4px 0 8px rgba(0,0,0,0.5);
+    width: 24px;
+    left: -24px;
+  }
+  
+  .card:hover .cover-wrapper::after {
+    box-shadow: inset 0 0 5px rgba(0,0,0,0.1);
+    transform: rotateY(80deg);
   }
 }
 
-.card:active .cover {
-  transform: perspective(600px) rotateY(-2deg) translateY(-2px) scale(0.98);
+.card:active .cover-wrapper {
+  transform: perspective(800px) rotateY(-6deg) translateX(2px) translateY(-1px) scale(0.98);
+  box-shadow:
+    inset 4px 0 10px rgba(0,0,0,0.1),
+    inset -1px 0 2px rgba(255,255,255,0.2),
+    -1px 3px 6px rgba(0,0,0,0.4),
+    -6px 10px 15px rgba(0,0,0,0.4);
+}
+
+.card:active .cover-wrapper::before {
+  width: 14px;
+  left: -14px;
 }
 
 .card:hover,
@@ -953,46 +973,91 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   z-index: 12;
 }
 
-.cover {
+.cover-wrapper {
   width: 100%;
   aspect-ratio: 2 / 3;
-  background: var(--card-cover-bg);
-  box-shadow: 
-    inset 2px 0 2px rgba(255,255,255,0.3),
-    inset 4px 0 6px rgba(0,0,0,0.1),
-    inset -1px 0 2px rgba(0,0,0,0.2),
-    inset -2px 0 5px rgba(255,255,255,0.1),
-    2px 4px 8px rgba(0,0,0,0.3),
-    var(--card-cover-shadow);
   position: relative;
-  border-radius: 4px 7px 7px 4px;
-  overflow: hidden;
-  display: block;
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
-  transform: perspective(1000px) rotateY(-3deg);
+  border-radius: 2px 5px 5px 2px;
+  box-shadow: 
+    inset 2px 0 3px rgba(255,255,255,0.2),
+    inset -1px 0 2px rgba(0,0,0,0.1),
+    -1px 2px 4px rgba(0,0,0,0.3),
+    -4px 6px 10px rgba(0,0,0,0.4),
+    var(--card-cover-shadow);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  transform: perspective(800px) rotateY(-5deg) translateX(2px);
   transform-style: preserve-3d;
-  transform-origin: left center;
+  background: var(--card-cover-bg);
 }
 
-.cover::after {
+/* Spine */
+.cover-wrapper::before {
   content: '';
   position: absolute;
-  inset: 0;
+  top: 0; left: -10px; bottom: 0; width: 10px;
+  background: linear-gradient(to right, 
+    rgba(255,255,255,0.1) 0%, 
+    rgba(0,0,0,0.2) 20%, 
+    rgba(255,255,255,0.2) 40%, 
+    rgba(0,0,0,0.4) 80%,
+    rgba(0,0,0,0.6) 100%), var(--card-cover-bg);
+  box-shadow: 
+    inset -2px 0 4px rgba(0,0,0,0.5),
+    inset 1px 0 2px rgba(255,255,255,0.3);
+  transform-origin: right center;
+  transform: rotateY(-80deg);
+  border-radius: 3px 0 0 3px;
+  transition: width 0.3s ease, left 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Page edges */
+.cover-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 2px; right: -2px; bottom: 2px; width: 4px;
+  background: #f0e6d2;
+  background-image: repeating-linear-gradient(
+    to bottom, 
+    rgba(0,0,0,0.05) 0, 
+    rgba(0,0,0,0.05) 1px, 
+    transparent 1px, 
+    transparent 3px
+  );
+  box-shadow: inset 0 0 3px rgba(0,0,0,0.2);
+  transform-origin: left center;
+  transform: rotateY(85deg);
+  border-radius: 0 2px 2px 0;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  z-index: 1;
+}
+
+html[data-theme="night"] .cover-wrapper::after {
+  background: #2a2a2a;
+}
+
+.cover {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  border-radius: 2px 4px 4px 2px;
+  overflow: hidden;
+  display: block;
+  z-index: 2;
+}
+
+.cover-highlight {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0; width: 12%;
+  background: linear-gradient(to right, 
+    rgba(255,255,255,0.4) 0%, 
+    rgba(255,255,255,0) 15%, 
+    rgba(0,0,0,0.15) 35%, 
+    rgba(255,255,255,0.1) 50%, 
+    rgba(255,255,255,0) 100%);
   z-index: 10;
   pointer-events: none;
-  background: linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0.25) 0%,
-    rgba(255, 255, 255, 0) 1.5%,
-    rgba(0, 0, 0, 0.05) 2.5%,
-    rgba(0, 0, 0, 0.3) 3.5%,
-    rgba(255, 255, 255, 0.2) 4.5%,
-    rgba(255, 255, 255, 0) 5.5%,
-    rgba(255, 255, 255, 0) 90%,
-    rgba(255, 255, 255, 0.1) 100%
-  );
-  box-shadow: inset 1px 1px 1px rgba(255,255,255,0.2), inset -1px -1px 2px rgba(0,0,0,0.3);
-  border-radius: inherit;
+  border-radius: 2px 0 0 2px;
 }
 
 /* Картинка заполняет блок: без absolute flex иногда даёт нулевую высоту у img до отрисовки. */
@@ -1066,17 +1131,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 .cover-fallback-overlay {
-  background: 
-    linear-gradient(180deg, rgba(13, 13, 20, 0.6) 0%, rgba(13, 13, 20, 0.85) 100%),
-    repeating-linear-gradient(45deg, rgba(0,0,0,0.05) 0px, rgba(0,0,0,0.05) 2px, transparent 2px, transparent 4px),
-    repeating-linear-gradient(-45deg, rgba(0,0,0,0.05) 0px, rgba(0,0,0,0.05) 2px, transparent 2px, transparent 4px);
+  background: linear-gradient(180deg, rgba(13, 13, 20, 0.18) 0%, rgba(13, 13, 20, 0.48) 100%);
 }
 
 html[data-theme="light"] .cover-fallback-overlay {
-  background: 
-    linear-gradient(180deg, rgba(255, 250, 242, 0.6) 0%, rgba(219, 209, 193, 0.85) 100%),
-    repeating-linear-gradient(45deg, rgba(0,0,0,0.03) 0px, rgba(0,0,0,0.03) 2px, transparent 2px, transparent 4px),
-    repeating-linear-gradient(-45deg, rgba(0,0,0,0.03) 0px, rgba(0,0,0,0.03) 2px, transparent 2px, transparent 4px);
+  background: linear-gradient(180deg, rgba(255, 250, 242, 0.06) 0%, rgba(109, 79, 42, 0.18) 100%);
 }
 
 .cover-fallback-copy {
@@ -2441,12 +2500,25 @@ button.download-format-link {
   align-self: start;
 }
 
-.book-detail-cover .cover {
+.book-detail-cover .cover-wrapper {
   width: 100%;
   aspect-ratio: 2 / 3;
   border-radius: 2px 6px 6px 2px;
   background: var(--card-cover-bg);
-  box-shadow: var(--card-cover-shadow);
+  box-shadow: 
+    inset 2px 0 3px rgba(255,255,255,0.2),
+    inset -1px 0 2px rgba(0,0,0,0.1),
+    -1px 2px 4px rgba(0,0,0,0.3),
+    -4px 6px 10px rgba(0,0,0,0.4),
+    var(--card-cover-shadow);
+  transform: perspective(800px) rotateY(-5deg) translateX(2px);
+  transform-style: preserve-3d;
+}
+
+.book-detail-cover .cover {
+  width: 100%;
+  height: 100%;
+  border-radius: 2px 6px 6px 2px;
 }
 
 .book-detail-content {
@@ -3261,6 +3333,9 @@ html[data-theme="light"] .cover-fallback-title {
 html[data-theme="light"] .cover-fallback-author {
   color: rgba(46,36,24,0.7);
 }
+html[data-theme="light"] .cover-fallback-overlay {
+  background: linear-gradient(180deg, rgba(255,250,242,0.12) 0%, rgba(239,229,213,0.55) 100%);
+}
 
 /* ── Responsive ── */
 @media (max-width: 900px) {
@@ -3303,7 +3378,7 @@ html[data-theme="light"] .cover-fallback-author {
     max-width: none;
     width: 100%;
   }
-  .book-detail-cover .cover {
+  .book-detail-cover .cover-wrapper {
     max-width: 320px;
     margin-inline: auto;
   }
@@ -3432,7 +3507,7 @@ html[data-theme="light"] .cover-fallback-author {
     width: 100%;
     margin-inline: 0;
   }
-  .book-detail-cover .cover {
+  .book-detail-cover .cover-wrapper {
     max-width: 280px;
     margin-inline: auto;
   }
@@ -3579,7 +3654,7 @@ html[data-theme="light"] .cover-fallback-author {
   .topbar { padding: 8px 8px; gap: 4px; }
   .topbar-search { grid-template-columns: minmax(0, 1fr) 80px auto; gap: 3px; }
   .page-intro-copy h1 { font-size: 18px; }
-  .book-detail-cover .cover { max-width: 240px; }
+  .book-detail-cover .cover-wrapper { max-width: 240px; }
   .book-detail-related-shelf .grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px 5px; }
   .card-detail { grid-template-columns: 1fr; }
   .card-detail-panel { padding: 10px; }
