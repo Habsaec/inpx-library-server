@@ -906,14 +906,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: transparent;
 }
 
-.card:hover .cover {
-  transform: translateY(-6px);
-  box-shadow:
-    inset 4px 0 10px rgba(0,0,0,0.15),
-    inset -1px 0 2px rgba(255,255,255,0.2),
-    inset 1px 0 0 rgba(0,0,0,0.2),
-    8px 14px 24px rgba(0,0,0,0.55),
-    3px 3px 6px rgba(0,0,0,0.40);
+@media (hover: hover) and (pointer: fine) {
+  .card:hover .cover {
+    transform: translateY(-6px);
+    box-shadow:
+      inset 4px 0 10px rgba(0,0,0,0.15),
+      inset -1px 0 2px rgba(255,255,255,0.2),
+      inset 1px 0 0 rgba(0,0,0,0.2),
+      8px 14px 24px rgba(0,0,0,0.55),
+      3px 3px 6px rgba(0,0,0,0.40);
+  }
+}
+
+.card:active .cover {
+  transform: translateY(-2px) scale(0.98);
 }
 
 .card:hover,
@@ -1083,6 +1089,8 @@ html[data-theme="light"] .cover-fallback-overlay {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .meta h3 a {
@@ -1448,8 +1456,16 @@ button.download-format-link {
   -webkit-backdrop-filter: blur(4px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0;
+  pointer-events: none;
   transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .batch-select-hit {
+    opacity: 0.75;
+    pointer-events: auto;
+  }
 }
 
 .batch-select-hit input {
@@ -1479,6 +1495,7 @@ button.download-format-link {
 .batch-select-hit:has(input:checked),
 .batch-select-hit:has(input:focus-visible) {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .batch-select-hit:hover {
@@ -1578,7 +1595,7 @@ button.download-format-link {
 
 /* ── Card detail page (book page uses wider card) ── */
 .card-detail { grid-template-columns: 200px 1fr; display: grid; gap: 20px; padding: 16px; }
-.card-detail .cover { aspect-ratio: auto; height: auto; min-height: 280px; border-radius: 4px; }
+.card-detail .cover { aspect-ratio: auto; height: auto; min-height: 280px; border-radius: 2px 6px 6px 2px; }
 
 /* ── Table lists (authors, series, genres, bookmarks) ── */
 .table-list { display: grid; gap: 4px; }
@@ -2378,7 +2395,7 @@ button.download-format-link {
 .book-detail-cover .cover {
   width: 100%;
   aspect-ratio: 2 / 3;
-  border-radius: 4px;
+  border-radius: 2px 6px 6px 2px;
   background: var(--card-cover-bg);
   box-shadow: var(--card-cover-shadow);
 }
@@ -2391,7 +2408,10 @@ button.download-format-link {
   margin: 0 0 10px;
   font-size: 28px;
   font-weight: 700;
-  line-height: 1.15;
+  line-height: 1.25;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
   letter-spacing: -0.02em;
 }
 
@@ -3302,7 +3322,7 @@ html[data-theme="light"] .cover-fallback-overlay {
 
   /* ── Card covers: compact ── */
   .cover {
-    border-radius: 4px;
+    border-radius: 2px 4px 4px 2px;
   }
   .cover-fallback-copy {
     padding: 20px 10px 16px;
@@ -3519,7 +3539,7 @@ html[data-theme="light"] .cover-fallback-overlay {
   .card-detail-panel { padding: 10px; }
   .meta h3 { font-size: 11px; }
   .meta .author { font-size: 10px; }
-  .cover { border-radius: 3px; }
+  .cover { border-radius: 2px 3px 3px 2px; }
   .cover-fallback-copy { padding: 14px 8px 10px; }
   .cover-fallback-title { font-size: 10px; }
   .cover-fallback-author { font-size: 8px; }
