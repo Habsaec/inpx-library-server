@@ -165,6 +165,9 @@
   "catalog.emptyTitle": "Nothing found",
   "catalog.emptyText": "Try shortening the query, changing the search mode, or opening the catalog manually.",
   "catalog.resetSearch": "Reset search",
+  "catalog.allLanguages": "All languages",
+  "catalog.allFormats": "All formats",
+  "catalog.year": "Year",
   "library.empty.recent.title": "No new titles yet",
   "library.empty.recent.text": "After indexing, the latest additions will appear here.",
   "library.empty.titles.title": "No books found",
@@ -525,5 +528,7 @@
   "readerJs.dayModeBtn": "Day mode (D)",
   "readerJs.nightModeBtn": "Night mode (D)",
   "readerJs.fullscreenExit": "Exit fullscreen (F)",
-  "readerJs.fullscreenEnter": "Fullscreen (F)"
+  "readerJs.fullscreenEnter": "Fullscreen (F)",
+  "admin.duplicates.description": "Search for duplicates by title and authors. May take some time on large libraries.",
+  "admin.duplicates.startSearch": "Find duplicates"
 }

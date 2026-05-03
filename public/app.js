@@ -15,7 +15,7 @@ async function loadHomeRecommendationsProgressively() {
   try {
     const r = await fetch('/api/library/recommended?page=1&pageSize=8', { credentials: 'same-origin' });
     if (!r.ok) {
-      gridMount.innerHTML = '';
+      section.remove();
       return;
     }
     const data = await r.json();
@@ -34,7 +34,31 @@ async function loadHomeRecommendationsProgressively() {
     attachDownloadMenus(grid);
     section.dataset.loaded = '1';
   } catch {
-    gridMount.innerHTML = '';
+    section.remove();
+  }
+}
+
+async function loadHomeContinueProgressively() {
+  const section = document.querySelector('[data-home-continue]');
+  if (!section || section.dataset.loaded === '1') return;
+  const gridMount = section.querySelector('[data-home-continue-grid]');
+  if (!gridMount) return;
+  try {
+    const r = await fetch('/api/library/continue?page=1&pageSize=6', { credentials: 'same-origin' });
+    if (!r.ok) { section.remove(); return; }
+    const data = await r.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) { section.remove(); return; }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = `<div class="grid">${items.map((b) => renderCardHtml(b)).join('')}</div>`;
+    const grid = tmp.firstElementChild;
+    if (!grid) return;
+    gridMount.replaceWith(grid);
+    attachCoverErrorFallback(grid);
+    attachDownloadMenus(grid);
+    section.dataset.loaded = '1';
+  } catch {
+    section.remove();
   }
 }
 
@@ -139,6 +163,8 @@ function renderIndexStatsBlock(stats) {
 function attachProfileTabs() {
   const root = document.querySelector('[data-profile-root]');
   if (!root) return;
+  if (root.dataset.profileInitialized) return;
+  root.dataset.profileInitialized = '1';
   const tabs = [...root.querySelectorAll('[data-profile-tab]')];
   const panels = [...root.querySelectorAll('[data-profile-panel]')];
   if (!tabs.length || !panels.length) return;
@@ -390,6 +416,7 @@ const _cardDetailsQueued = new Set();
 const _cardDetailsInFlight = new Set();
 let _cardDetailsFlushTimer = 0;
 let _cardDetailsObserver = null;
+let _pagehideListenerAttached = false;
 
 function applyCardDetailsForId(id, details) {
   if (!id || !details) return;
@@ -450,6 +477,13 @@ function queueCardDetailsById(id) {
   scheduleCardDetailsFlush();
 }
 
+function resetCardDetailsObserver() {
+  if (_cardDetailsObserver) {
+    _cardDetailsObserver.disconnect();
+    _cardDetailsObserver = null;
+  }
+}
+
 function getCardDetailsObserver() {
   if (_cardDetailsObserver) return _cardDetailsObserver;
   if (typeof IntersectionObserver !== 'function') return null;
@@ -475,6 +509,7 @@ function getCardDetailsObserver() {
 }
 
 function loadCardDetails(cardList) {
+  if (!cardList) resetCardDetailsObserver();
   const cards = cardList ? [...cardList] : [...document.querySelectorAll('[data-book-id]')];
   if (!cards.length) return Promise.resolve();
   const observer = getCardDetailsObserver();
@@ -788,7 +823,12 @@ function toggleReadBadgesForBook(bookId, isRead) {
 function attachCoverLongPress() {
   const LONG_PRESS_MS = 500;
   let timer = null;
+  // `fired` is true between the long-press firing and touchend/mouseup.
+  // `swallowNextClick` is true only briefly to swallow the synthetic click
+  // that may follow touchend (so the cover link doesn't navigate).
   let fired = false;
+  let swallowNextClick = false;
+  let swallowTimer = null;
   let startX = 0, startY = 0;
 
   function getCardBookId(el) {
@@ -798,6 +838,14 @@ function attachCoverLongPress() {
 
   function cancel() {
     if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  function armSwallowClick() {
+    swallowNextClick = true;
+    if (swallowTimer) clearTimeout(swallowTimer);
+    // Failsafe: Android Chrome may not synthesize a click after preventDefault
+    // on touchend. Without this, swallowNextClick would stick and break the page.
+    swallowTimer = setTimeout(() => { swallowNextClick = false; swallowTimer = null; }, 700);
   }
 
   async function toggleRead(bookId, cover) {
@@ -828,8 +876,14 @@ function attachCoverLongPress() {
     startY = point.clientY;
     timer = setTimeout(() => {
       timer = null;
-      // haptic feedback if available
-      if (navigator.vibrate) navigator.vibrate(30);
+      // Visual feedback — guaranteed even when the OS swallows our vibration request.
+      cover.classList.remove('cover-longpress-flash');
+      void cover.offsetWidth; // force reflow so re-adding restarts the animation
+      cover.classList.add('cover-longpress-flash');
+      cover.addEventListener('animationend', () => cover.classList.remove('cover-longpress-flash'), { once: true });
+      // Haptic feedback (best-effort). Android often drops short single-shots; a pattern
+      // increases the chance of being delivered, but it remains best-effort by spec.
+      try { navigator.vibrate && navigator.vibrate([40, 30, 40]); } catch (_) { /* ignore */ }
       toggleRead(bookId, cover);
     }, LONG_PRESS_MS);
   }
@@ -845,6 +899,9 @@ function attachCoverLongPress() {
     if (fired) {
       e.preventDefault();
       e.stopPropagation();
+      armSwallowClick();
+      fired = false; // CRITICAL: never leave `fired` stuck true; otherwise every
+                     // subsequent touchend on the page would be eaten until reload.
     }
   }
 
@@ -854,25 +911,39 @@ function attachCoverLongPress() {
   document.addEventListener('touchstart', onStart, { passive: true });
   document.addEventListener('touchmove', onMove, { passive: true });
   document.addEventListener('touchend', onEnd);
-  document.addEventListener('touchcancel', cancel);
-  // prevent navigation after long-press
+  document.addEventListener('touchcancel', () => { cancel(); fired = false; });
+  // prevent navigation immediately after long-press
   document.addEventListener('click', (e) => {
-    if (fired) {
+    if (swallowNextClick) {
       e.preventDefault();
       e.stopPropagation();
-      fired = false;
+      swallowNextClick = false;
+      if (swallowTimer) { clearTimeout(swallowTimer); swallowTimer = null; }
     }
   }, true);
+  // Suppress the native context menu on book covers — on mobile (Android Chrome) it
+  // pops on long-press before our 500ms timer fires, hijacking the "mark as read" UX.
+  document.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.cover[data-role="cover"]')) e.preventDefault();
+  });
 }
 
 function attachSeriesLongPress() {
   const LONG_PRESS_MS = 500;
   let timer = null;
   let fired = false;
+  let swallowNextClick = false;
+  let swallowTimer = null;
   let startX = 0, startY = 0;
 
   function cancel() {
     if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  function armSwallowClick() {
+    swallowNextClick = true;
+    if (swallowTimer) clearTimeout(swallowTimer);
+    swallowTimer = setTimeout(() => { swallowNextClick = false; swallowTimer = null; }, 700);
   }
 
   async function toggleSeriesRead(seriesName, row) {
@@ -919,7 +990,7 @@ function attachSeriesLongPress() {
     const seriesName = decodeURIComponent(m[1]);
     timer = setTimeout(() => {
       timer = null;
-      if (navigator.vibrate) navigator.vibrate(30);
+      try { navigator.vibrate && navigator.vibrate([40, 30, 40]); } catch (_) { /* ignore */ }
       toggleSeriesRead(seriesName, row);
     }, LONG_PRESS_MS);
   }
@@ -935,6 +1006,8 @@ function attachSeriesLongPress() {
     if (fired) {
       e.preventDefault();
       e.stopPropagation();
+      armSwallowClick();
+      fired = false;
     }
   }
 
@@ -944,14 +1017,20 @@ function attachSeriesLongPress() {
   document.addEventListener('touchstart', onStart, { passive: true });
   document.addEventListener('touchmove', onMove, { passive: true });
   document.addEventListener('touchend', onEnd);
-  document.addEventListener('touchcancel', cancel);
+  document.addEventListener('touchcancel', () => { cancel(); fired = false; });
   document.addEventListener('click', (e) => {
-    if (fired && e.target.closest('.table-row-link[href*="/facet/series/"]')) {
+    if (swallowNextClick && e.target.closest('.table-row-link[href*="/facet/series/"]')) {
       e.preventDefault();
       e.stopPropagation();
-      fired = false;
+      swallowNextClick = false;
+      if (swallowTimer) { clearTimeout(swallowTimer); swallowTimer = null; }
     }
   }, true);
+  // Suppress the native context menu on series rows — on mobile it
+  // pops on long-press before our 500ms timer fires, hijacking the "mark as read" UX.
+  document.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.table-row-link[href*="/facet/series/"]')) e.preventDefault();
+  });
 }
 
 function attachMarkSeriesReadActions() {
@@ -1362,7 +1441,8 @@ async function pollAdminIndexControls() {
   const timeNode = document.getElementById('sources-progress-time');
 
   const applyStatus = (status) => {
-    const active = Boolean(status?.active);
+    const phase = String(status?.phase || '');
+    const active = Boolean(status?.active) || phase === 'maintenance';
     if (!active) {
       root.style.display = 'none';
       return;
@@ -1374,26 +1454,46 @@ async function pollAdminIndexControls() {
     const total = Number(status?.totalArchives || 0);
     const processed = Number(status?.processedArchives || 0);
     const imported = Math.max(0, Math.floor(Number(status?.importedBooks) || 0));
-    const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+    const phaseDone = Number(status?.phaseDone || 0);
+    const phaseTotal = Number(status?.phaseTotal || 0);
+    const phaseLabel = String(status?.phaseLabel || '');
+    let percent = 0;
+    let title = escapeHtml(uiT('app.adminIndexingLabel'));
+    let detail = '';
+    let indeterminate = false;
+    if (phase === 'fts') {
+      percent = phaseTotal > 0 ? Math.min(100, Math.round((phaseDone / phaseTotal) * 100)) : 0;
+      title = escapeHtml(uiT('app.adminIndexPhaseFts'));
+      detail = phaseTotal > 0 ? `<span class="muted" style="margin-left:12px">${phaseDone} / ${phaseTotal}</span>` : '';
+    } else if (phase === 'maintenance') {
+      indeterminate = true;
+      title = escapeHtml(uiT('app.adminIndexPhaseMaintenance'));
+      detail = phaseLabel ? `<span class="muted" style="margin-left:12px">${escapeHtml(phaseLabel)}</span>` : '';
+    } else {
+      percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+      detail = `<span class="muted" style="margin-left:12px">${escapeHtml(uiTp('app.adminIndexFilesLine', { processed, total, imported }))}</span>`;
+    }
     const paused = Boolean(status?.pauseRequested || status?.paused);
     if (textNode) {
-      textNode.innerHTML =
-        `${escapeHtml(uiT('app.adminIndexingLabel'))} <strong>${percent}%</strong>` +
-        `<span class="muted" style="margin-left:12px">${escapeHtml(uiTp('app.adminIndexFilesLine', { processed, total, imported }))}</span>`;
+      textNode.innerHTML = `${title} ${indeterminate ? '' : `<strong>${percent}%</strong>`}${detail}`;
     }
     if (timeNode) {
+      // ETA only meaningful during the archives phase; suppress during fts/maintenance.
+      const showEta = !phase || phase === 'archives';
       const { elapsed, eta } = computeIndexTimeInfo(status?.startedAt, processed, total);
       const parts = [];
       if (elapsed) parts.push(uiTp('app.indexElapsed', { time: elapsed }));
-      if (eta) parts.push(uiTp('app.indexEta', { time: eta }));
+      if (showEta && eta) parts.push(uiTp('app.indexEta', { time: eta }));
       timeNode.textContent = parts.join('  \u00b7  ');
     }
     if (archiveNode) {
       archiveNode.textContent = status?.currentArchive ? String(status.currentArchive) : '';
     }
     if (barNode) {
-      barNode.style.width = `${percent}%`;
+      const barWidth = indeterminate ? 100 : percent;
+      barNode.style.width = `${barWidth}%`;
       barNode.style.background = 'var(--accent)';
+      barNode.classList.toggle('progress-indeterminate', indeterminate);
     }
     if (!isSourcesPage) {
       const pauseButtons = [...root.querySelectorAll('[data-operation-action="reindex-toggle-pause"]')];
@@ -2364,9 +2464,9 @@ function renderCardHtml(book, { batchSelect = false } = {}) {
   return `<article class="card" data-book-id="${id}">
     ${batchCb}
     <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-      <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${title}">
+      <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${title}">
       <span class="cover-fallback" hidden>
-        <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+        <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
         <span class="cover-fallback-overlay"></span>
         <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${authors || escapeHtml(uiT('book.authorUnknown'))}</span></span>
       </span>
@@ -2399,9 +2499,12 @@ function attachLoadMore() {
   const batchSelect = Boolean(container.dataset.batchContext);
 
   let activeFetch = null;
-  window.addEventListener('pagehide', () => {
-    if (activeFetch) activeFetch.abort();
-  });
+  if (!_pagehideListenerAttached) {
+    _pagehideListenerAttached = true;
+    window.addEventListener('pagehide', () => {
+      if (activeFetch) activeFetch.abort();
+    });
+  }
 
   const skeletonHtml = Array.from({ length: 6 }, () => '<div class="skeleton-card"><div class="skeleton-cover"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line-short"></div></div>').join('');
 
@@ -2443,6 +2546,16 @@ function attachLoadMore() {
         tmp.innerHTML = nextItems.map((b) => renderCardHtml(b, { batchSelect })).join('');
         const newCards = [...tmp.children];
         for (const card of newCards) grid.appendChild(card);
+
+        const MAX_VISIBLE_CARDS = 500;
+        const allCards = grid.querySelectorAll('.book-card');
+        if (allCards.length > MAX_VISIBLE_CARDS) {
+          const excess = allCards.length - MAX_VISIBLE_CARDS;
+          for (let i = 0; i < excess; i++) {
+            allCards[i].remove();
+          }
+        }
+
         for (const card of newCards) attachCoverErrorFallback(card);
         for (const card of newCards) attachDownloadMenus(card);
         if (batchSelect) {
@@ -3946,21 +4059,43 @@ function attachSourcesReindex() {
         const status = await res.json();
         consecutiveFails = 0;
         syncIndexControlButtons(status);
-        if (status.active) {
-          const percent = status.totalArchives ? Math.min(100, Math.round((status.processedArchives / status.totalArchives) * 100)) : 0;
+        const phase = String(status?.phase || '');
+        const stillBusy = Boolean(status?.active) || phase === 'maintenance';
+        if (stillBusy) {
           const imported = Math.max(0, Math.floor(Number(status.importedBooks) || 0));
-          const label = status.currentArchive ? escapeHtml(status.currentArchive) : '';
+          const phaseDone = Number(status.phaseDone || 0);
+          const phaseTotal = Number(status.phaseTotal || 0);
+          const phaseLabel = String(status.phaseLabel || '');
+          let percent = 0;
+          let title = escapeHtml(uiT('app.adminIndexingLabel'));
+          let detail = '';
+          let indeterminate = false;
+          if (phase === 'fts') {
+            percent = phaseTotal > 0 ? Math.min(100, Math.round((phaseDone / phaseTotal) * 100)) : 0;
+            title = escapeHtml(uiT('app.adminIndexPhaseFts'));
+            detail = phaseTotal > 0 ? `<span class="muted" style="margin-left:12px">${phaseDone} / ${phaseTotal}</span>` : '';
+          } else if (phase === 'maintenance') {
+            indeterminate = true;
+            percent = 100;
+            title = escapeHtml(uiT('app.adminIndexPhaseMaintenance'));
+            detail = phaseLabel ? `<span class="muted" style="margin-left:12px">${escapeHtml(phaseLabel)}</span>` : '';
+          } else {
+            percent = status.totalArchives ? Math.min(100, Math.round((status.processedArchives / status.totalArchives) * 100)) : 0;
+            detail = `<span class="muted" style="margin-left:12px">${escapeHtml(uiTp('app.adminIndexFilesLine', { processed: status.processedArchives || 0, total: status.totalArchives || 0, imported }))}</span>`;
+          }
+          const showEta = !phase || phase === 'archives';
+          const archiveLabel = status.currentArchive ? escapeHtml(status.currentArchive) : '';
           const { elapsed, eta } = computeIndexTimeInfo(status.startedAt, status.processedArchives || 0, status.totalArchives || 0);
           const timeParts = [];
           if (elapsed) timeParts.push(uiTp('app.indexElapsed', { time: elapsed }));
-          if (eta) timeParts.push(uiTp('app.indexEta', { time: eta }));
+          if (showEta && eta) timeParts.push(uiTp('app.indexEta', { time: eta }));
           showProgress(
-            `${escapeHtml(uiT('app.adminIndexingLabel'))} <strong>${percent}%</strong>` +
-            `<span class="muted" style="margin-left:12px">${escapeHtml(uiTp('app.adminIndexFilesLine', { processed: status.processedArchives || 0, total: status.totalArchives || 0, imported }))}</span>`,
+            `${title} ${indeterminate ? '' : `<strong>${percent}%</strong>`}${detail}`,
             percent,
-            label,
+            archiveLabel,
             timeParts.join('  \u00b7  ')
           );
+          if (progressBar) progressBar.classList.toggle('progress-indeterminate', indeterminate);
         } else {
           break;
         }
@@ -4331,6 +4466,7 @@ attachSmartSearch();
 attachSearchSuggest();
 attachBookIllustrationLightbox();
 loadHomeRecommendationsProgressively();
+loadHomeContinueProgressively();
 attachLoadMore();
 attachBatchDownloadSelection();
 attachConfirmedFormSubmits();
@@ -4350,6 +4486,34 @@ if (document.querySelector('[data-admin-events-page]')) pollAdminEventsPage();
 attachSourcesReindex();
 attachSourceDelete();
 attachAddSourceForm();
+attachDirtyFormTracking();
+
+// --- Dirty form tracking ---
+function attachDirtyFormTracking() {
+  document.querySelectorAll('form[data-track-dirty]').forEach(form => {
+    const getState = () => {
+      const fd = new FormData(form);
+      const state = {};
+      for (const [k, v] of fd.entries()) state[k] = v;
+      form.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        if (!cb.checked) state[cb.name] = 'off';
+      });
+      return JSON.stringify(state);
+    };
+    const initial = getState();
+    const check = () => {
+      const dirty = getState() !== initial;
+      form.classList.toggle('is-dirty', dirty);
+    };
+    form.addEventListener('input', check);
+    form.addEventListener('change', check);
+  });
+  window.addEventListener('beforeunload', (e) => {
+    if (document.querySelector('form.is-dirty')) {
+      e.preventDefault();
+    }
+  });
+}
 
 // --- Duplicates page: async loading ---
 (function initDuplicatesPage() {
@@ -4498,25 +4662,25 @@ attachAddSourceForm();
   }
 
   function wireActions() {
-    container.querySelectorAll('[data-dup-delete]').forEach(function(btn) {
+    resultsEl.querySelectorAll('[data-dup-delete]').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var id = btn.getAttribute('data-dup-delete');
         var title = btn.getAttribute('data-title') || id;
         dupAction('/api/admin/duplicates/delete', { bookId: id }, uiTp('admin.duplicates.deleteConfirm', { title: title }), true, btn);
       });
     });
-    container.querySelectorAll('[data-dup-auto-clean]').forEach(function(btn) {
+    resultsEl.querySelectorAll('[data-dup-auto-clean]').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var n = Number(btn.getAttribute('data-n') || 0);
         dupAction('/api/admin/duplicates/auto-clean', {}, uiTp('admin.duplicates.autoCleanConfirm', { n: n }), true, btn);
       });
     });
-    container.querySelectorAll('[data-dup-unsuppress]').forEach(function(btn) {
+    resultsEl.querySelectorAll('[data-dup-unsuppress]').forEach(function(btn) {
       btn.addEventListener('click', function() {
         dupAction('/api/admin/duplicates/unsuppress', { bookId: btn.getAttribute('data-dup-unsuppress') }, null, false, btn);
       });
     });
-    container.querySelectorAll('[data-dup-unsuppress-all]').forEach(function(btn) {
+    resultsEl.querySelectorAll('[data-dup-unsuppress-all]').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var n = Number(btn.getAttribute('data-n') || 0);
         dupAction('/api/admin/duplicates/unsuppress-all', {}, uiTp('admin.duplicates.unsuppressAllConfirm', { n: n }), true, btn);
@@ -4524,7 +4688,10 @@ attachAddSourceForm();
     });
   }
 
+  var resultsEl = document.getElementById('dup-results');
+
   function loadDuplicates(page) {
+    resultsEl.innerHTML = '<div class="admin-card" style="text-align:center;padding:48px 24px;"><div class="spinner" style="margin:0 auto 16px;"></div><div style="font-size:1.05em;font-weight:500;">' + escapeHtml(uiT('admin.duplicates.searching')) + '</div><div class="muted" style="margin-top:6px;font-size:.9em;">' + escapeHtml(uiT('admin.duplicates.searchingHint')) + '</div></div>';
     Promise.all([
       fetch('/api/admin/duplicates?page=' + page).then(function(r) { return r.json(); }),
       fetch('/api/admin/suppressed').then(function(r) { return r.json(); })
@@ -4533,7 +4700,7 @@ attachAddSourceForm();
         var data = results[0];
         var sdata = results[1];
         if (!data.ok) {
-          container.innerHTML = '<div class="admin-card"><p class="muted">Error loading duplicates</p></div>';
+          resultsEl.innerHTML = '<div class="admin-card"><p class="muted">Error loading duplicates</p></div>';
           return;
         }
         var html = renderAutoCleanPanel(data.preview)
@@ -4545,15 +4712,22 @@ attachAddSourceForm();
           + renderPagination(data.total, data.pageSize, data.page)
           + '</div>'
           + renderSuppressedSection(sdata.ok ? sdata : { total: 0, rows: [] });
-        container.innerHTML = html;
+        resultsEl.innerHTML = html;
         wireActions();
       })
       .catch(function(err) {
-        container.innerHTML = '<div class="admin-card"><p class="muted">Error: ' + escapeHtml(String(err)) + '</p></div>';
+        resultsEl.innerHTML = '<div class="admin-card"><p class="muted">Error: ' + escapeHtml(String(err)) + '</p></div>';
       });
   }
 
-  loadDuplicates(currentPage);
+  var startBtn = document.getElementById('dup-start-btn');
+  if (startBtn) {
+    startBtn.addEventListener('click', function() {
+      document.getElementById('dup-start-container').style.display = 'none';
+      resultsEl.style.display = '';
+      loadDuplicates(1);
+    });
+  }
 })();
 
 // PWA: register Service Worker

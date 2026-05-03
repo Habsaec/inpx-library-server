@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import util from 'node:util';
 import { config } from '../config.js';
+import { rotateIfNeeded } from '../utils/log-rotate.js';
 
 const MAX_RUNTIME_LOGS = 5000;
 const runtimeLogs = [];
@@ -116,6 +117,7 @@ function publishRuntimeLog(entry) {
 function appendFileLine(line) {
   try {
     fs.mkdirSync(config.dataDir, { recursive: true });
+    rotateIfNeeded(runtimeLogPath);
     fs.appendFileSync(runtimeLogPath, line + '\n', 'utf8');
   } catch {
     // Ignore I/O errors in logging path.

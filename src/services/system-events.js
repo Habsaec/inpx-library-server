@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { emitRuntimeLog } from './runtime-logs.js';
 
 const systemEventSubscribers = new Set();
+const MAX_EVENT_SUBSCRIBERS = 50;
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -38,6 +39,10 @@ function normalizeEventTimestamp(value) {
 
 export function subscribeSystemEvents(listener) {
   if (typeof listener !== 'function') return () => {};
+  if (systemEventSubscribers.size >= MAX_EVENT_SUBSCRIBERS) {
+    console.warn(`[system-events] subscriber limit reached (${MAX_EVENT_SUBSCRIBERS}), rejecting new subscription`);
+    return () => {};  // no-op unsubscribe
+  }
   systemEventSubscribers.add(listener);
   return () => systemEventSubscribers.delete(listener);
 }

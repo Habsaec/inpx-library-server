@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { brotliCompress, constants as zlibConstants } from 'node:zlib';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
@@ -19,7 +20,7 @@ import { registerDownloadRoutes } from './routes/download.js';
 import { registerReaderRoutes } from './routes/reader.js';
 import { registerUserApiRoutes } from './routes/user-api.js';
 import { registerAdminRoutes } from './routes/admin.js';
-import { registerLibraryRoutes, detailsCache, getDetailsFull, bookFlibustaSidecarEffective, precomputeCoverThumb } from './routes/library.js';
+import { registerLibraryRoutes, detailsCache, getDetailsFull, bookFlibustaSidecarEffective } from './routes/library.js';
 // --- Extracted modules ---
 import { securityHeaders } from './middleware/security-headers.js';
 import { browseLimiter } from './middleware/rate-limiter-browse.js';
@@ -35,8 +36,6 @@ import {
 import { getOnlineUserCount, pruneOfflineUsers } from './services/online-tracker.js';
 import { getCachedPageData, clearPageDataCache } from './services/cache.js';
 import { logSystemEvent } from './services/system-events.js';
-import { createPerfMetricsMiddleware, getPerfSnapshot } from './services/perf-metrics.js';
-import { PERF_LOG_ENABLED, perfLog, readMemoryUsageMb } from './services/perf-log.js';
 
 import { mirrorIndexingLogsToDataFile, appendIndexDiaryLine } from './services/file-log.js';
 import { installRuntimeLogCapture } from './services/runtime-logs.js';
@@ -44,7 +43,7 @@ import { startScanScheduler } from './services/scheduler.js';
 import {
   STATS_CACHE_TTL_MS, HOME_SECTIONS_CACHE_TTL_MS
 } from './constants.js';
-import { db, getUserByUsername, hasAdminUser, initDb, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, getDatabasePerfStats } from './db.js';
+import { db, getUserByUsername, hasAdminUser, initDb, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView } from './db.js';
 import {
   backfillCatalogSearchFields,
   getConfiguredInpxFile,
@@ -88,7 +87,6 @@ installRuntimeLogCapture();
 const app = express();
 app.set('trust proxy', config.trustProxy);
 app.use(securityHeaders);
-app.use(createPerfMetricsMiddleware());
 const serverStartedAt = new Date();
 let lastKnownIndexActive = false;
 let lastIndexProgressLog = 0;
@@ -146,7 +144,9 @@ function getDiskUsageForPath(targetPath) {
   }
 }
 
-function gracefulExit(code = 0) {
+export function gracefulExit(code = 0) {
+  // Allow time for streaming responses, database checkpoints, and background jobs to complete
+  const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 8000;
   // Cancel pending maintenance timers to avoid DB ops after close
   if (postIndexMaintenanceTimer) {
     clearTimeout(postIndexMaintenanceTimer);
@@ -156,7 +156,7 @@ function gracefulExit(code = 0) {
   const closeDb = () => { try { db.close(); } catch {} };
   if (server) {
     server.close(() => { closeDb(); process.exit(code); });
-    setTimeout(() => { closeDb(); process.exit(code); }, 3000);
+    setTimeout(() => { closeDb(); process.exit(code); }, SHUTDOWN_TIMEOUT_MS);
   } else {
     closeDb();
     process.exit(code);
@@ -204,19 +204,23 @@ function warmSharedPageCaches() {
   } catch (error) {
     console.error('Failed to warm stats cache', error);
   }
-  setImmediate(async () => {
+  setImmediate(() => {
     try {
-      const sections = getCachedPageData('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS);
-      // Prewarm cover thumbs for the home "newest" shelf so the first home render
-      // does not pay 1s per cover. Done sequentially to avoid spiking the event loop.
-      const newest = Array.isArray(sections?.newest) ? sections.newest.slice(0, 12) : [];
-      for (const book of newest) {
-        try { await precomputeCoverThumb(book); } catch { /* ignore */ }
-      }
+      getCachedPageData('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS);
     } catch (error) {
       console.error('Failed to warm sections cache', error);
     }
   });
+}
+
+/** Периодический прогрев shared-кэшей — stats и sections всегда актуальны для первого запроса. */
+function schedulePeriodicCacheWarm() {
+  const delayMs = 5 * 60 * 1000; // 5 минут — гарантирует прогрев до истечения stats (10 мин)
+  const t = setTimeout(() => {
+    warmSharedPageCaches();
+    schedulePeriodicCacheWarm();
+  }, delayMs);
+  if (typeof t.unref === 'function') t.unref();
 }
 
 // Session, CSRF, auth middleware — imported from src/middleware/auth.js and src/services/session.js
@@ -349,7 +353,6 @@ function getOperationsSnapshot() {
     diskTotalMB: disk?.totalMB ?? null,
     diskFreeMB: disk?.freeMB ?? null,
     cpuPercent: sampleProcessCpuPercent(),
-    perf: getPerfSnapshot(),
     appVersion: readPackageVersion(),
     sources: getSources()
   };
@@ -388,7 +391,60 @@ function runRepairMetadata() {
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
-app.use(compression({ threshold: 1024 }));
+// gzip/deflate — обрабатывается пакетом compression (fallback для клиентов без Brotli).
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => !res._brotliApplied && compression.filter(req, res)
+}));
+
+// Brotli (br) — ~15-20 % эффективнее gzip для текстовых ответов.
+// Используем встроенный zlib (Node 18+). Middleware стоит ПОСЛЕ compression:
+// наш патч res.end вызывается первым; если br применён, compression видит
+// Content-Encoding: br и пропускает повторное сжатие.
+function brotliCompressible(ct) {
+  if (!ct) return false;
+  if (ct.includes('event-stream')) return false;
+  return /text|json|xml|javascript|css|svg|html|atom/i.test(ct);
+}
+app.use(function brotli(req, res, next) {
+  const accept = req.headers['accept-encoding'] || '';
+  if (!accept.includes('br')) return next();
+
+  const _end = res.end;
+  res.end = function brotliEnd(chunk, encoding, cb) {
+    if (typeof chunk === 'function') { cb = chunk; chunk = null; encoding = undefined; }
+    if (typeof encoding === 'function') { cb = encoding; encoding = undefined; }
+
+    const ce = res.getHeader('content-encoding');
+    const ct = String(res.getHeader('content-type') || '');
+    if (ce || res.headersSent || !brotliCompressible(ct)) {
+      return _end.call(res, chunk, encoding, cb);
+    }
+
+    let body = chunk;
+    if (body != null && !Buffer.isBuffer(body)) {
+      body = Buffer.from(String(body), encoding || 'utf8');
+    }
+    if (!body || body.length < 1024) {
+      return _end.call(res, chunk, encoding, cb);
+    }
+
+    brotliCompress(body, {
+      params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 }
+    }, (err, compressed) => {
+      if (err || !compressed || compressed.length >= body.length) {
+        return _end.call(res, body, cb);
+      }
+      res._brotliApplied = true;
+      res.setHeader('Content-Encoding', 'br');
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.removeHeader('Content-Length');
+      res.setHeader('Content-Length', compressed.length);
+      _end.call(res, compressed, cb);
+    });
+  };
+  next();
+});
 app.use((req, res, next) => runWithLocale(req, () => next()));
 app.get('/set-lang', (req, res) => {
   const lang = req.query.lang === 'en' ? 'en' : 'ru';
@@ -441,15 +497,32 @@ function browseHtmlNoStore(req, res, next) {
   next();
 }
 app.use(browseHtmlNoStore);
+
+// Cache-Control для API: не кэшировать на клиенте (данные персонализированы / динамичны).
+app.use('/api/', (req, res, next) => {
+  if (!res.getHeader('Cache-Control')) {
+    res.setHeader('Cache-Control', 'private, no-cache');
+  }
+  next();
+});
+// OPDS-клиенты выигрывают от кратковременного кэша (5 мин).
+app.use('/opds', (req, res, next) => {
+  if (!res.getHeader('Cache-Control')) {
+    res.setHeader('Cache-Control', 'private, max-age=300');
+  }
+  next();
+});
+
 app.use(browseLimiter);
 
 // Публичные диагностические маршруты — до express.static, чтобы не пересекаться с файлами из public/.
-registerHealthRoutes(app, { getCachedStats, getServiceValidation, getPerfSnapshot });
+registerHealthRoutes(app, { getCachedStats, getServiceValidation });
 registerBrowseApiRoutes(app);
 
 app.use(express.static(config.publicDir, {
-  maxAge: '6h',
-  etag: true
+  maxAge: '365d',
+  immutable: true,
+  etag: false
 }));
 
 registerAuthRoutes(app, { getCachedStats });
@@ -803,6 +876,22 @@ function scheduleDeferredOptimize() {
   if (typeof t.unref === 'function') t.unref();
 }
 
+/** Периодический PASSIVE WAL checkpoint — не блокирует читателей, сдерживает рост WAL-файла. */
+function schedulePeriodicWalCheckpoint() {
+  const delayMs = 2 * 60 * 1000; // 2 минуты — чаще при простое, PASSIVE не блокирует
+  const t = setTimeout(() => {
+    try {
+      if (!getIndexStatus().active) {
+        db.pragma('wal_checkpoint(PASSIVE)');
+      }
+    } catch (err) {
+      console.warn('[db] WAL checkpoint не удался:', err.message);
+    }
+    schedulePeriodicWalCheckpoint();
+  }, delayMs);
+  if (typeof t.unref === 'function') t.unref();
+}
+
 /* ── Express: глобальный обработчик ошибок (должен быть ПОСЛЕ всех маршрутов) ── */
 app.use((err, req, res, next) => {
   console.error('[express-error]', err.stack || err);
@@ -816,12 +905,6 @@ app.use((err, req, res, next) => {
 async function bootstrap() {
   initDb();
   await rebuildActiveBooksView(); // Пересоздаём VIEW с учётом исключённых языков
-  if (PERF_LOG_ENABLED) {
-    perfLog('db', 'startup snapshot', {
-      ...getDatabasePerfStats(),
-      ...readMemoryUsageMb()
-    });
-  }
   // Run DB optimize manually/offline; in-process optimize can block HTTP loop on large datasets.
   setSiteName(getSetting('site_name'));
   setAllowAnonymousDownload(getSetting('allow_anonymous_download') === '1');
@@ -834,12 +917,26 @@ async function bootstrap() {
   app.set('httpServer', httpServer);
 
   // --- Таймауты для защиты от утечки соединений при нагрузке ---
-  httpServer.keepAliveTimeout = 65_000;
-  httpServer.headersTimeout = 70_000;
-  httpServer.requestTimeout = 30_000;
+  const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS) || 30_000;
+  httpServer.keepAliveTimeout = 10 * 60_000; // 10 минут — предотвращает TCP-разрыв при простое
+  httpServer.headersTimeout   = 11 * 60_000; // чуть больше keepAlive (обязательно)
+  httpServer.requestTimeout = REQUEST_TIMEOUT_MS;
   if (typeof httpServer.maxRequestsPerSocket !== 'undefined') {
     httpServer.maxRequestsPerSocket = 200;
   }
+
+  // --- Route-level extended timeouts for streaming/download routes ---
+  function extendedTimeout(ms) {
+    return (req, res, next) => {
+      req.setTimeout(ms);
+      res.setTimeout(ms);
+      next();
+    };
+  }
+  app.use('/api/book/download', extendedTimeout(300_000));  // 5 min for downloads
+  app.use('/download', extendedTimeout(300_000));
+  app.use('/api/batch', extendedTimeout(300_000));
+  app.use('/opds', extendedTimeout(120_000));  // 2 min for OPDS
 
   setTimeout(async () => {
     if (getMeta('books_fts_dirty') === '1') {
@@ -871,9 +968,6 @@ async function bootstrap() {
 
     // Start scan scheduler (if SCAN_INTERVAL_HOURS > 0)
     startScanScheduler(() => startBackgroundIndexing(false, true));
-
-    // Warm shared page caches so the first '/' request after restart is fast.
-    warmSharedPageCaches();
   }, 100);
 
   setInterval(() => {
@@ -916,23 +1010,14 @@ async function bootstrap() {
     lastKnownIndexActive = status.active;
   }, 3000).unref();
 
-  // Avoid synchronous wal_checkpoint in the main HTTP event loop:
-  // under heavy write/read contention it can block responses for long periods.
+  // Периодический PASSIVE checkpoint — сдерживает рост WAL без блокировки читателей
+  schedulePeriodicWalCheckpoint();
+  schedulePeriodicCacheWarm();
 
   setInterval(() => {
     pruneLoginAttempts();
     pruneOfflineUsers();
   }, 15 * 60 * 1000).unref();
-
-  if (PERF_LOG_ENABLED) {
-    const perfIntervalMs = Math.max(15_000, Number.parseInt(String(process.env.PERF_LOG_INTERVAL_MS || '60000'), 10) || 60_000);
-    setInterval(() => {
-      perfLog('runtime', 'snapshot', {
-        ...readMemoryUsageMb(),
-        ...getDatabasePerfStats()
-      });
-    }, perfIntervalMs).unref();
-  }
 }
 
 bootstrap().catch((error) => {

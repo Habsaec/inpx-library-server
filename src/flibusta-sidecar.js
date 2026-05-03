@@ -33,14 +33,16 @@ const SIDECAR_COVER_CACHE_TTL_MS = parseEnvTimeoutMs('SIDECAR_COVER_CACHE_TTL_MS
 const SIDECAR_COVER_NEGATIVE_TTL_MS = parseEnvTimeoutMs('SIDECAR_COVER_NEGATIVE_TTL_MS', 2 * 60_000);
 const SIDECAR_COVER_CACHE_MAX_ENTRIES = Math.max(
   32,
-  Number.parseInt(String(process.env.SIDECAR_COVER_CACHE_MAX_ENTRIES || ''), 10) || 800
+  Number.parseInt(String(process.env.SIDECAR_COVER_CACHE_MAX_ENTRIES || ''), 10) || 2000
 );
 const SIDECAR_COVER_CACHE_MAX_BYTES = Math.max(
   8 * 1024 * 1024,
-  Number.parseInt(String(process.env.SIDECAR_COVER_CACHE_MAX_BYTES || ''), 10) || 96 * 1024 * 1024
+  Number.parseInt(String(process.env.SIDECAR_COVER_CACHE_MAX_BYTES || ''), 10) || 256 * 1024 * 1024
 );
 const sidecarCoverCache = new Map();
 let sidecarCoverCacheBytes = 0;
+let _coverCacheHits = 0;
+let _coverCacheMisses = 0;
 const require = createRequire(import.meta.url);
 let jxlDecoderInitState = 0; // 0 unknown, 1 ready, -1 failed
 
@@ -65,16 +67,32 @@ function deleteSidecarCoverCacheEntry(cacheKey) {
 
 function getSidecarCoverCache(cacheKey) {
   const item = sidecarCoverCache.get(cacheKey);
-  if (!item) return undefined;
+  if (!item) {
+    _coverCacheMisses++;
+    _logCoverCacheMetrics();
+    return undefined;
+  }
   const now = Date.now();
   const ttl = item.value ? SIDECAR_COVER_CACHE_TTL_MS : SIDECAR_COVER_NEGATIVE_TTL_MS;
   if (ttl > 0 && now - item.at > ttl) {
     deleteSidecarCoverCacheEntry(cacheKey);
+    _coverCacheMisses++;
+    _logCoverCacheMetrics();
     return undefined;
   }
   sidecarCoverCache.delete(cacheKey);
   sidecarCoverCache.set(cacheKey, item);
+  _coverCacheHits++;
+  _logCoverCacheMetrics();
   return item.value;
+}
+
+function _logCoverCacheMetrics() {
+  const total = _coverCacheHits + _coverCacheMisses;
+  if (total > 0 && total % 1000 === 0) {
+    const ratio = total > 0 ? (_coverCacheHits / total * 100).toFixed(1) : '0.0';
+    console.log(`[sidecar-cache] hits=${_coverCacheHits} misses=${_coverCacheMisses} ratio=${ratio}% entries=${sidecarCoverCache.size} bytes=${(sidecarCoverCacheBytes / (1024 * 1024)).toFixed(1)}MB`);
+  }
 }
 
 function setSidecarCoverCache(cacheKey, value) {
@@ -99,6 +117,8 @@ function setSidecarCoverCache(cacheKey, value) {
 function clearSidecarCoverCache() {
   sidecarCoverCache.clear();
   sidecarCoverCacheBytes = 0;
+  _coverCacheHits = 0;
+  _coverCacheMisses = 0;
 }
 
 function isPathInsideRoot(root, absPath) {

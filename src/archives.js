@@ -198,7 +198,13 @@ export async function readArchiveEntryBuffer(archivePath, entryPath) {
           `Book file too large: ${(hit.uncompressedSize / (1024 * 1024)).toFixed(1)} MB`
         );
       }
-      return readSevenZipEntry(archivePath, hit.path, config.sevenZipPath);
+      const uc = Number(hit.uncompressedSize) || 0;
+      const retryMs = Math.min(600_000, 60_000 + Math.floor(uc / 25_000));
+      return promiseWithTimeout(
+        readSevenZipEntry(archivePath, hit.path, config.sevenZipPath),
+        retryMs,
+        `7z retry ${path.basename(archivePath)}/${hit.path}`
+      );
     }
   }
 

@@ -53,12 +53,29 @@ export function getStaleOrSchedule(key, compute, ttlMs = PAGE_CACHE_TTL_MS, fall
   const now = Date.now();
   const cached = pageDataCache.get(key);
   if (cached && now - cached.createdAt < ttlMs) {
+    // Fresh hit
     pageDataCache.delete(key);
     pageDataCache.set(key, cached);
     return cached.value;
   }
-  scheduleRefresh(key, compute);
-  return cached ? cached.value : fallback;
+  if (cached) {
+    // Stale hit — return stale data instantly, refresh in background
+    scheduleRefresh(key, compute);
+    return cached.value;
+  }
+  // Cold miss — compute synchronously to avoid empty page
+  try {
+    if (pageDataCache.size >= PAGE_CACHE_MAX) {
+      const oldest = pageDataCache.keys().next().value;
+      if (oldest !== undefined) pageDataCache.delete(oldest);
+    }
+    const value = compute();
+    pageDataCache.set(key, { value, createdAt: now });
+    return value;
+  } catch (err) {
+    console.error(`[cache] sync compute failed for ${key}:`, err?.message || err);
+    return fallback;
+  }
 }
 
 function scheduleRefresh(key, compute) {

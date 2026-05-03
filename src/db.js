@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import { config } from './config.js';
@@ -37,9 +38,13 @@ export function decryptValue(stored) {
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 
-export const db = new Database(config.dbPath);
+export const db = new Database(config.dbPath, { timeout: 30000 });
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 30000');
+const appliedTimeout = db.pragma('busy_timeout', { simple: true });
+if (appliedTimeout !== 30000) {
+  throw new Error(`[db] CRITICAL: busy_timeout could not be set (requested 30000, got ${appliedTimeout})`);
+}
 db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = ON');
 db.pragma('wal_autocheckpoint = 1000');
@@ -67,40 +72,20 @@ db.pragma('temp_store = MEMORY');       // temp tables in RAM
 // Force WAL checkpoint on startup to clear stale locks from crashed processes
 try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore if locked briefly */ }
 
-export function getDatabasePerfStats() {
-  try {
-    const pageSize = Number(db.pragma('page_size', { simple: true }) || 0);
-    const pageCount = Number(db.pragma('page_count', { simple: true }) || 0);
-    const freelistCount = Number(db.pragma('freelist_count', { simple: true }) || 0);
-    const activeBooks = Number(db.prepare('SELECT COUNT(*) AS c FROM active_books').get()?.c || 0);
-    const ftsRows = (() => {
-      try { return Number(db.prepare('SELECT COUNT(*) AS c FROM books_fts').get()?.c || 0); } catch { return 0; }
-    })();
-    const ftsDirty = (() => {
-      try { return db.prepare("SELECT value FROM meta WHERE key = 'books_fts_dirty'").get()?.value === '1' ? 1 : 0; } catch { return 0; }
-    })();
-    const dbFileBytes = (() => {
-      try { return Number(fs.statSync(config.dbPath).size || 0); } catch { return 0; }
-    })();
-    const walFileBytes = (() => {
-      try { return Number(fs.statSync(`${config.dbPath}-wal`).size || 0); } catch { return 0; }
-    })();
-    return {
-      connectionCount: 1,
-      pageSize,
-      pageCount,
-      freelistCount,
-      dbFileMb: Number((dbFileBytes / 1024 / 1024).toFixed(1)),
-      walFileMb: Number((walFileBytes / 1024 / 1024).toFixed(1)),
-      activeBooks,
-      ftsRows,
-      ftsDirty
-    };
-  } catch {
-    return {
-      connectionCount: 1
-    };
+// Lightweight integrity check at startup (quick_check is faster than full integrity_check)
+try {
+  const result = db.pragma('quick_check');
+  if (result[0]?.quick_check !== 'ok') {
+    console.error('[db] DATABASE INTEGRITY WARNING:', result);
+    // logSystemEvent deferred to avoid circular import at module init
+    import('./services/system-events.js').then(m =>
+      m.logSystemEvent('error', 'database', 'integrity check failed at startup', { result })
+    ).catch(() => {});
+  } else {
+    console.log('[db] integrity check passed');
   }
+} catch (err) {
+  console.error('[db] integrity check error:', err.message);
 }
 
 function ensureUsersSchema() {
@@ -369,13 +354,15 @@ function seedDefaultAdmin() {
   }
 }
 
+let _stmtGetUser = null;
 export function getUserByUsername(username) {
-  return db.prepare(`
+  _stmtGetUser ??= db.prepare(`
     SELECT username, password_hash AS passwordHash, role, created_at AS createdAt,
            COALESCE(session_gen, 0) AS sessionGen, COALESCE(blocked, 0) AS blocked
     FROM users
     WHERE username = ?
-  `).get(username);
+  `);
+  return _stmtGetUser.get(username);
 }
 
 export function listUsers() {
@@ -389,13 +376,16 @@ export function listUsers() {
   `).all();
 }
 
+let _stmtCountAdmins = null;
 export function hasAdminUser() {
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin'`).get();
+  _stmtCountAdmins ??= db.prepare(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin'`);
+  const row = _stmtCountAdmins.get();
   return Number(row?.count || 0) > 0;
 }
 
 export function countAdminUsers() {
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin'`).get();
+  _stmtCountAdmins ??= db.prepare(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin'`);
+  const row = _stmtCountAdmins.get();
   return Number(row?.count || 0);
 }
 
@@ -516,6 +506,26 @@ let fastSqliteImportDepth = 0;
 let savedSynchronousLevel = null;
 let savedBusyTimeoutMs = null;
 
+/* ── Exclusive operation lock: prevents simultaneous indexing + deletion ── */
+let _activeOperation = null; // 'indexing' | 'deleting' | null
+
+export function beginExclusiveOperation(opName) {
+  if (_activeOperation && _activeOperation !== opName) {
+    throw new Error(`Cannot start ${opName}: ${_activeOperation} is already in progress`);
+  }
+  _activeOperation = opName;
+}
+
+export function endExclusiveOperation(opName) {
+  if (_activeOperation === opName) {
+    _activeOperation = null;
+  }
+}
+
+export function getActiveOperation() {
+  return _activeOperation;
+}
+
 /**
  * На время массового импорта: synchronous=OFF (быстрее, при сбое питания возможна порча БД).
  * wal_autocheckpoint не трогаем: завышенное значение откладывает checkpoint в «одну огромную»
@@ -527,6 +537,12 @@ export function beginFastSqliteImport() {
   if (fastSqliteImportDepth === 0) {
     const cur = db.pragma('synchronous', { simple: true });
     savedSynchronousLevel = typeof cur === 'number' ? cur : 1;
+    // Matches the documented intent above: OFF disables fsync on every commit.
+    // Safe here because destructive callers (indexing, deleteSourceProgressive)
+    // create a DB backup beforehand and FTS is recovered via books_fts_dirty
+    // flag on next startup. With NORMAL, this function was a no-op (startup
+    // already sets NORMAL), forcing an fsync per chunk commit and making
+    // mass indexing/deletion dramatically slower on spinning/network disks.
     db.pragma('synchronous = OFF');
 
     const bt = db.pragma('busy_timeout', { simple: true });
@@ -556,18 +572,34 @@ export function endFastSqliteImport() {
  * Одна команда VALUES('rebuild') блокирует event loop на минуты при сотнях тысяч книг;
  * поэтому по умолчанию: delete-all + батчи INSERT с уступкой циклу; при сбое — классический rebuild.
  */
+const FTS_REBUILD_PROGRESS_KEY = 'fts_rebuild_last_rowid';
+
 export async function rebuildBooksFtsFromContent(options = {}) {
   const { onProgress } = options;
-  const BATCH = 2000;
   try {
+    // Check for saved progress from a previous interrupted rebuild
+    const savedProgress = db.prepare('SELECT value FROM meta WHERE key = ?').get(FTS_REBUILD_PROGRESS_KEY);
+    let lastRowid = savedProgress ? Number(savedProgress.value) : 0;
+    const resuming = lastRowid > 0;
+
     await new Promise((resolve) => setImmediate(resolve));
-    appendIndexDiaryLine('FTS: команда delete-all (может занять до нескольких минут на огромной БД)…');
-    console.log('[index] FTS: delete-all…');
-    const tDel0 = Date.now();
-    db.exec(`INSERT INTO books_fts(books_fts) VALUES('delete-all')`);
-    console.log(`[index] FTS: delete-all готово за ${((Date.now() - tDel0) / 1000).toFixed(1)} с`);
-    appendIndexDiaryLine(`FTS: delete-all завершён за ${Date.now() - tDel0} ms`);
+
+    if (!resuming) {
+      // Fresh rebuild — delete all FTS content first
+      appendIndexDiaryLine('FTS: команда delete-all (может занять до нескольких минут на огромной БД)…');
+      console.log('[index] FTS: delete-all…');
+      const tDel0 = Date.now();
+      db.exec(`INSERT INTO books_fts(books_fts) VALUES('delete-all')`);
+      console.log(`[index] FTS: delete-all готово за ${((Date.now() - tDel0) / 1000).toFixed(1)} с`);
+      appendIndexDiaryLine(`FTS: delete-all завершён за ${Date.now() - tDel0} ms`);
+    } else {
+      console.log(`[index] FTS: resuming rebuild from rowid ${lastRowid}`);
+      appendIndexDiaryLine(`FTS: resuming rebuild from rowid ${lastRowid}`);
+    }
+
     const total = db.prepare('SELECT COUNT(*) AS c FROM books').get()?.c ?? 0;
+    // Адаптивный размер батча: меньше для крупных библиотек, чтобы не блокировать HTTP
+    const BATCH = total > 500_000 ? 1000 : 2000;
     const sel = db.prepare(`
       SELECT rowid, id, title, authors, genres, series, keywords FROM books
       WHERE rowid > ? ORDER BY rowid LIMIT ?
@@ -576,12 +608,13 @@ export async function rebuildBooksFtsFromContent(options = {}) {
       INSERT INTO books_fts(rowid, id, title, authors, genres, series, keywords)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    let lastRowid = 0;
-    let done = 0;
+    let done = resuming ? db.prepare('SELECT COUNT(*) AS c FROM books WHERE rowid <= ?').get(lastRowid)?.c ?? 0 : 0;
     let batchNum = 0;
+    const saveProgress = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
     for (;;) {
       const rows = sel.all(lastRowid, BATCH);
       if (!rows.length) break;
+      lastRowid = rows[rows.length - 1].rowid;
       db.transaction(() => {
         for (const r of rows) {
           ins.run(
@@ -594,9 +627,9 @@ export async function rebuildBooksFtsFromContent(options = {}) {
             r.keywords ?? ''
           );
         }
+        saveProgress.run(FTS_REBUILD_PROGRESS_KEY, String(lastRowid));
       })();
       done += rows.length;
-      lastRowid = rows[rows.length - 1].rowid;
       batchNum += 1;
       if (typeof onProgress === 'function') {
         try {
@@ -610,10 +643,23 @@ export async function rebuildBooksFtsFromContent(options = {}) {
       }
       await new Promise((resolve) => setImmediate(resolve));
     }
+    // Rebuild complete — remove progress marker
+    db.prepare('DELETE FROM meta WHERE key = ?').run(FTS_REBUILD_PROGRESS_KEY);
     console.log(`[index] FTS: поэтапная сборка завершена (${done} документов)`);
   } catch (err) {
     console.warn('[index] FTS: поэтапная пересборка не удалась, одна команда rebuild:', err?.message || err);
     db.exec(`INSERT INTO books_fts(books_fts) VALUES('rebuild')`);
+    // Clean up progress marker after fallback full rebuild
+    try { db.prepare('DELETE FROM meta WHERE key = ?').run(FTS_REBUILD_PROGRESS_KEY); } catch {}
+  }
+}
+
+export function runIntegrityCheck() {
+  try {
+    const result = db.pragma('integrity_check(100)');
+    return { ok: result[0]?.integrity_check === 'ok', details: result };
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
 }
 
@@ -823,6 +869,12 @@ WHERE rp.progress >= 99
       suppressed_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS excluded_filters (
+      type TEXT NOT NULL,
+      value TEXT NOT NULL,
+      PRIMARY KEY (type, value)
+    );
+
     CREATE TABLE IF NOT EXISTS sources (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -913,6 +965,7 @@ WHERE rp.progress >= 99
       CREATE INDEX IF NOT EXISTS idx_books_deleted ON books(deleted);
       CREATE INDEX IF NOT EXISTS idx_books_deleted_source ON books(deleted, source_id);
       CREATE INDEX IF NOT EXISTS idx_books_lang ON books(lang);
+      CREATE INDEX IF NOT EXISTS idx_books_ext ON books(ext);
       CREATE INDEX IF NOT EXISTS idx_books_lang_norm ON books(COALESCE(NULLIF(lang, ''), 'unknown'));
       CREATE INDEX IF NOT EXISTS idx_books_series_index_title ON books(series_index, title_sort, id DESC);
       CREATE INDEX IF NOT EXISTS idx_bookmarks_username ON bookmarks(username);
@@ -938,9 +991,11 @@ WHERE rp.progress >= 99
       CREATE INDEX IF NOT EXISTS idx_authors_book_count ON authors(book_count DESC);
       CREATE INDEX IF NOT EXISTS idx_series_catalog_book_count ON series_catalog(book_count DESC);
       CREATE INDEX IF NOT EXISTS idx_genres_catalog_book_count ON genres_catalog(book_count DESC);
+      CREATE INDEX IF NOT EXISTS idx_book_ratings_book ON book_ratings(book_id);
+      CREATE INDEX IF NOT EXISTS idx_book_ratings_user_book ON book_ratings(username, book_id);
     `);
     db.exec(`DROP VIEW IF EXISTS active_books`);
-    db.exec(`CREATE VIEW active_books AS SELECT * FROM books WHERE deleted = 0 AND (source_id IS NULL OR EXISTS (SELECT 1 FROM sources WHERE sources.id = books.source_id AND sources.enabled = 1))`);
+    db.exec(`CREATE VIEW active_books AS SELECT b.* FROM books b LEFT JOIN sources s ON s.id = b.source_id WHERE b.deleted = 0 AND (b.source_id IS NULL OR s.enabled = 1)`);
     db.prepare(`
       INSERT INTO meta(key, value) VALUES(?, '1')
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -951,7 +1006,7 @@ WHERE rp.progress >= 99
       db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'active_books'`).get()
     );
     if (!hasActiveBooksView) {
-      db.exec(`CREATE VIEW active_books AS SELECT * FROM books WHERE deleted = 0 AND (source_id IS NULL OR EXISTS (SELECT 1 FROM sources WHERE sources.id = books.source_id AND sources.enabled = 1))`);
+      db.exec(`CREATE VIEW active_books AS SELECT b.* FROM books b LEFT JOIN sources s ON s.id = b.source_id WHERE b.deleted = 0 AND (b.source_id IS NULL OR s.enabled = 1)`);
     }
   }
 
@@ -984,19 +1039,36 @@ WHERE rp.progress >= 99
 }
 
 // --- Sources CRUD ---
+// Sources change very rarely (add/remove/toggle/reindex) but are read on every
+// HTTP request (admin pages, health, flibusta sidecar, library rendering).
+// Small in-memory cache avoids re-prepared statements and lock contention with
+// the writer during indexing/deletion. Invalidated explicitly on any mutation
+// via invalidateSourcesCache() below.
+let _sourcesCacheAll = null;
+let _sourcesCacheEnabled = null;
+const _sourcesCacheById = new Map();
+
+export function invalidateSourcesCache() {
+  _sourcesCacheAll = null;
+  _sourcesCacheEnabled = null;
+  _sourcesCacheById.clear();
+}
 
 export function getSources() {
-  return db.prepare(`
+  if (_sourcesCacheAll) return _sourcesCacheAll;
+  _sourcesCacheAll = db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
            flibusta_sidecar AS flibustaSidecar
     FROM sources
     ORDER BY created_at ASC
   `).all();
+  return _sourcesCacheAll;
 }
 
 export function getEnabledSources() {
-  return db.prepare(`
+  if (_sourcesCacheEnabled) return _sourcesCacheEnabled;
+  _sourcesCacheEnabled = db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
            flibusta_sidecar AS flibustaSidecar
@@ -1004,16 +1076,22 @@ export function getEnabledSources() {
     WHERE enabled = 1
     ORDER BY created_at ASC
   `).all();
+  return _sourcesCacheEnabled;
 }
 
 export function getSourceById(id) {
-  return db.prepare(`
+  const key = Number(id);
+  if (!Number.isFinite(key)) return null;
+  if (_sourcesCacheById.has(key)) return _sourcesCacheById.get(key);
+  const row = db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
            flibusta_sidecar AS flibustaSidecar
     FROM sources
     WHERE id = ?
-  `).get(id) || null;
+  `).get(key) || null;
+  _sourcesCacheById.set(key, row);
+  return row;
 }
 
 export function getSourceByPath(sourcePath) {
@@ -1037,6 +1115,7 @@ export function addSource({ name, type, path: sourcePath }) {
   const result = db.prepare(`
     INSERT INTO sources(name, type, path) VALUES(?, ?, ?)
   `).run(trimmedName, normalizedType, trimmedPath);
+  invalidateSourcesCache();
   return getSourceById(result.lastInsertRowid);
 }
 
@@ -1056,6 +1135,7 @@ export function updateSource(id, { name, enabled }) {
   if (!parts.length) return getSourceById(id);
   params.push(id);
   db.prepare(`UPDATE sources SET ${parts.join(', ')} WHERE id = ?`).run(...params);
+  invalidateSourcesCache();
   return getSourceById(id);
 }
 
@@ -1066,12 +1146,12 @@ const DELETE_SOURCE_BOOKS_CHUNK = 300;
  * записи, на которые больше ни одна книга не ссылается через junction-таблицы.
  */
 async function cleanupOrphanedCatalogs() {
-  db.exec(`DELETE FROM authors WHERE NOT EXISTS (SELECT 1 FROM book_authors WHERE author_id = authors.id)`);
-  await new Promise(r => setImmediate(r));
-  db.exec(`DELETE FROM series_catalog WHERE NOT EXISTS (SELECT 1 FROM book_series WHERE series_id = series_catalog.id)`);
-  await new Promise(r => setImmediate(r));
-  db.exec(`DELETE FROM genres_catalog WHERE NOT EXISTS (SELECT 1 FROM book_genres WHERE genre_id = genres_catalog.id)`);
-  await new Promise(r => setImmediate(r));
+  db.transaction(() => {
+    db.exec(`DELETE FROM authors WHERE NOT EXISTS (SELECT 1 FROM book_authors WHERE author_id = authors.id)`);
+    db.exec(`DELETE FROM series_catalog WHERE NOT EXISTS (SELECT 1 FROM book_series WHERE series_id = series_catalog.id)`);
+    db.exec(`DELETE FROM genres_catalog WHERE NOT EXISTS (SELECT 1 FROM book_genres WHERE genre_id = genres_catalog.id)`);
+  })();
+  await new Promise(r => setImmediate(r));  // Single yield after all cleanup
 }
 
 export async function deleteSourceProgressive(
@@ -1095,11 +1175,13 @@ export async function deleteSourceProgressive(
   }
   const safeChunk = Math.max(100, Math.min(2000, Math.floor(Number(chunkSize) || DELETE_SOURCE_BOOKS_CHUNK)));
 
-  // Fast import mode: synchronous=OFF + longer busy_timeout — same as indexing.
-  // Without this, each commit does fsync (synchronous=NORMAL) making deletion
-  // dramatically slower than indexing and blocking the event loop for much longer.
-  beginFastSqliteImport();
+
   try {
+    beginExclusiveOperation('deleting');
+    // Fast import mode: synchronous=OFF + longer busy_timeout — same as indexing.
+    // Without this, each commit does fsync (synchronous=NORMAL) making deletion
+    // dramatically slower than indexing and blocking the event loop for much longer.
+    beginFastSqliteImport();
     onProgress?.({ deleted: 0, total: 0, stage: 'prepare' });
 
     const total = db.prepare('SELECT COUNT(*) AS c FROM books WHERE source_id = ?').get(sid)?.c ?? 0;
@@ -1159,6 +1241,7 @@ export async function deleteSourceProgressive(
     const sourceDeleted = deleteSourceRow
       ? db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes
       : 0;
+    invalidateSourcesCache();
 
     onProgress?.({ deleted, total, stage: 'catalogs' });
     try { await cleanupOrphanedCatalogs(); } catch {}
@@ -1177,12 +1260,44 @@ export async function deleteSourceProgressive(
       } else {
         console.log('[db] no free pages to reclaim after source delete');
       }
-      // Flush WAL to main db file and truncate WAL
-      db.pragma('wal_checkpoint(TRUNCATE)');
-      db.pragma('mmap_size = 268435456');
+      // Flush WAL to main db file — try TRUNCATE first, fall back to less aggressive modes
+      let checkpointed = false;
+      for (const mode of ['TRUNCATE', 'RESTART', 'PASSIVE']) {
+        try {
+          const result = db.pragma(`wal_checkpoint(${mode})`);
+          const info = result[0] || result;
+          if (info.busy === 0 || mode === 'PASSIVE') {
+            checkpointed = true;
+            console.log(`[db] WAL checkpoint ${mode} succeeded`);
+            break;
+          }
+          console.warn(`[db] WAL checkpoint ${mode} partially completed, trying less aggressive mode`);
+        } catch (err) {
+          console.warn(`[db] WAL checkpoint ${mode} failed: ${err.message}`);
+        }
+      }
+      if (!checkpointed) {
+        console.error('[db] WAL checkpoint failed in all modes — WAL file may be large');
+      }
+      // Only re-enable mmap if no busy pages remain after checkpoint;
+      // otherwise pending WAL entries could cause corruption with mmap active.
+      const lastCkpt = db.pragma('wal_checkpoint(PASSIVE)')[0] || {};
+      if (lastCkpt.busy === 0) {
+        db.pragma(`mmap_size = ${_mmapSize}`);
+      } else {
+        console.warn(`[db] skipping mmap re-enable: ${lastCkpt.busy} busy pages remain after checkpoint`);
+      }
     } catch (vacErr) {
       console.warn('[db] incremental_vacuum after source delete failed:', vacErr.message);
-      try { db.pragma('mmap_size = 268435456'); } catch {}
+      // Only re-enable mmap if safe (no busy pages)
+      try {
+        const recoverCkpt = db.pragma('wal_checkpoint(PASSIVE)')[0] || {};
+        if (recoverCkpt.busy === 0) {
+          db.pragma(`mmap_size = ${_mmapSize}`);
+        } else {
+          console.warn(`[db] skipping mmap re-enable in recovery: ${recoverCkpt.busy} busy pages remain`);
+        }
+      } catch {}
     }
 
     // No full FTS rebuild needed — targeted FTS deletes above kept the index consistent.
@@ -1199,6 +1314,7 @@ export async function deleteSourceProgressive(
     throw err;
   } finally {
     endFastSqliteImport();
+    endExclusiveOperation('deleting');
   }
 }
 
@@ -1207,7 +1323,9 @@ export function detachSource(id) {
   if (!Number.isFinite(sid)) {
     throw new Error('Некорректный id источника');
   }
-  return db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes;
+  const changes = db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes;
+  invalidateSourcesCache();
+  return changes;
 }
 
 /**
@@ -1245,6 +1363,7 @@ export function forceDetachSourceRowUnsafe(id) {
   try {
     db.pragma('foreign_keys = OFF');
     const result = db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes;
+    invalidateSourcesCache();
     try { rebuildBooksFtsFromContentSync(); } catch {}
     return result;
   } finally {
@@ -1255,15 +1374,18 @@ export function forceDetachSourceRowUnsafe(id) {
 export function updateSourceBookCount(id) {
   const count = db.prepare('SELECT COUNT(*) AS cnt FROM books WHERE source_id = ?').get(id)?.cnt || 0;
   db.prepare('UPDATE sources SET book_count = ? WHERE id = ?').run(count, id);
+  invalidateSourcesCache();
   return count;
 }
 
 export function updateSourceIndexedAt(id) {
   db.prepare('UPDATE sources SET last_indexed_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+  invalidateSourcesCache();
 }
 
 export function updateSourceFlibustaSidecar(id, enabled) {
   db.prepare('UPDATE sources SET flibusta_sidecar = ? WHERE id = ?').run(enabled ? 1 : 0, id);
+  invalidateSourcesCache();
 }
 
 /** Запись отзыва: legacy body и/или указатель на 7z (как в FLibrary). */
@@ -1400,6 +1522,7 @@ export function migrateInpxToSources() {
   db.prepare('UPDATE books SET source_id = ? WHERE source_id IS NULL').run(sourceId);
   const count = db.prepare('SELECT COUNT(*) AS cnt FROM books WHERE source_id = ?').get(sourceId)?.cnt || 0;
   db.prepare('UPDATE sources SET book_count = ? WHERE id = ?').run(count, sourceId);
+  invalidateSourcesCache();
 }
 
 export function getMeta(key) {
@@ -1487,13 +1610,17 @@ db.exec(`CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL DEFAULT ''
 )`);
 
+let _stmtGetSetting = null;
 export function getSetting(key) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  _stmtGetSetting ??= db.prepare('SELECT value FROM settings WHERE key = ?');
+  const row = _stmtGetSetting.get(key);
   return row?.value || '';
 }
 
+let _stmtSetSetting = null;
 export function setSetting(key, value) {
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value ?? ''));
+  _stmtSetSetting ??= db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  _stmtSetSetting.run(key, String(value ?? ''));
 }
 
 /**
@@ -1525,6 +1652,40 @@ export function getDistinctGenres() {
   `).all();
 }
 
+/* ── Prepared statement reset (called after active_books VIEW rebuild) ── */
+const _viewResetCallbacks = [];
+
+/**
+ * Register a callback to be called when the active_books VIEW is rebuilt.
+ * Used by other modules (e.g. inpx.js) to reset their cached prepared statements.
+ */
+export function onViewRebuild(cb) { _viewResetCallbacks.push(cb); }
+
+/**
+ * Reset all cached prepared statements in db.js.
+ * Must be called after DROP/CREATE VIEW active_books to avoid stale statement handles.
+ */
+export function resetDbPreparedStatements() {
+  _stmtGetSetting = null;
+  _stmtSetSetting = null;
+  _stmtGetUser = null;
+  _stmtCountAdmins = null;
+  _stmtGetReadPos = null;
+  _stmtSetReadPos = null;
+  _stmtDeleteReadHistory = null;
+  _stmtUpsertReadHistory = null;
+  _stmtGetReaderBookmarks = null;
+  _stmtAllReaderBm = null;
+  _stmtAddReaderBm = null;
+  _stmtDelReaderBm = null;
+  _stmtGetEreaderEmail = null;
+  _stmtSetEreaderEmail = null;
+  _stmtReadBooksCount = null;
+  _stmtReadIds = null;
+  _stmtReadSeries = null;
+  _stmtUserStats = null;
+}
+
 /**
  * Пересоздание VIEW active_books с учётом исключённых языков и жанров.
  * Вызывается при изменении настроек excluded_languages / excluded_genres.
@@ -1535,25 +1696,32 @@ export async function rebuildActiveBooksView() {
     ? excluded.split(',').map(s => s.trim()).filter(Boolean)
     : [];
 
-  let langFilter = '';
-  if (langs.length > 0) {
-    const placeholders = langs.map(l => `'${l.replace(/'/g, "''")}'`).join(',');
-    langFilter = ` AND COALESCE(NULLIF(lang, ''), 'unknown') NOT IN (${placeholders})`;
-  }
-
   const excludedGenres = getSetting('excluded_genres');
   const genres = excludedGenres
     ? excludedGenres.split(',').map(s => s.trim()).filter(Boolean)
     : [];
 
-  let genreFilter = '';
-  if (genres.length > 0) {
-    const gPlaceholders = genres.map(g => `'${g.replace(/'/g, "''")}'`).join(',');
-    genreFilter = ` AND NOT EXISTS (SELECT 1 FROM book_genres bg JOIN genres_catalog gc ON gc.id = bg.genre_id WHERE bg.book_id = books.id AND gc.name IN (${gPlaceholders}))`;
-  }
+  // Populate excluded_filters table with current settings (safe parameterized inserts)
+  db.exec('DELETE FROM excluded_filters');
+  const insertFilter = db.prepare('INSERT OR IGNORE INTO excluded_filters (type, value) VALUES (?, ?)');
+  const populateFilters = db.transaction(() => {
+    for (const lang of langs) insertFilter.run('lang', lang);
+    for (const genre of genres) insertFilter.run('genre', genre);
+  });
+  populateFilters();
+
+  // Build VIEW referencing the config table — no string interpolation in DDL
+  const langFilter = langs.length > 0
+    ? ` AND COALESCE(NULLIF(b.lang, ''), 'unknown') NOT IN (SELECT value FROM excluded_filters WHERE type = 'lang')`
+    : '';
+  const genreFilter = genres.length > 0
+    ? ` AND NOT EXISTS (SELECT 1 FROM book_genres bg JOIN genres_catalog gc ON gc.id = bg.genre_id WHERE bg.book_id = b.id AND gc.name IN (SELECT value FROM excluded_filters WHERE type = 'genre'))`
+    : '';
 
   db.exec('DROP VIEW IF EXISTS active_books');
-  db.exec(`CREATE VIEW active_books AS SELECT * FROM books WHERE deleted = 0 AND (source_id IS NULL OR EXISTS (SELECT 1 FROM sources WHERE sources.id = books.source_id AND sources.enabled = 1))${langFilter}${genreFilter}`);
+  db.exec(`CREATE VIEW active_books AS SELECT b.* FROM books b LEFT JOIN sources s ON s.id = b.source_id WHERE b.deleted = 0 AND (b.source_id IS NULL OR s.enabled = 1)${langFilter}${genreFilter}`);
+  resetDbPreparedStatements();
+  for (const cb of _viewResetCallbacks) cb();
   await refreshCatalogBookCounts();
 }
 
@@ -1642,41 +1810,55 @@ db.exec(`CREATE TABLE IF NOT EXISTS reader_bookmarks (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_reader_bookmarks_user_book ON reader_bookmarks(username, book_id)`);
+// Speeds up source deletion: DELETE ... WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)
+// would otherwise do a full table scan because the primary/unique keys are on (username, book_id).
+db.exec(`CREATE INDEX IF NOT EXISTS idx_reading_positions_book_id ON reading_positions(book_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_reader_bookmarks_book_id ON reader_bookmarks(book_id)`);
 
+let _stmtGetReadPos = null;
 export function getReadingPosition(username, bookId) {
-  return db.prepare('SELECT position, progress FROM reading_positions WHERE username = ? AND book_id = ?').get(username, bookId) || null;
+  _stmtGetReadPos ??= db.prepare('SELECT position, progress FROM reading_positions WHERE username = ? AND book_id = ?');
+  return _stmtGetReadPos.get(username, bookId) || null;
 }
 
+let _stmtSetReadPos = null;
 export function setReadingPosition(username, bookId, position, progress) {
-  db.prepare(`INSERT INTO reading_positions (username, book_id, position, progress, updated_at)
+  _stmtSetReadPos ??= db.prepare(`INSERT INTO reading_positions (username, book_id, position, progress, updated_at)
     VALUES (?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(username, book_id) DO UPDATE SET position = excluded.position, progress = excluded.progress, updated_at = excluded.updated_at`
-  ).run(username, bookId, String(position), Number(progress) || 0);
+    ON CONFLICT(username, book_id) DO UPDATE SET position = excluded.position, progress = excluded.progress, updated_at = excluded.updated_at`);
+  _stmtSetReadPos.run(username, bookId, String(position), Number(progress) || 0);
 }
 
+let _stmtDeleteReadHistory = null;
 export function deleteReadingHistoryEntry(username, bookId) {
-  db.prepare('DELETE FROM reading_history WHERE username = ? AND book_id = ?').run(username, bookId);
+  _stmtDeleteReadHistory ??= db.prepare('DELETE FROM reading_history WHERE username = ? AND book_id = ?');
+  _stmtDeleteReadHistory.run(username, bookId);
 }
 
 /** Восстановление строки истории (для отмены удаления в профиле). */
+let _stmtUpsertReadHistory = null;
 export function upsertReadingHistoryEntry(username, bookId, lastOpenedAt, openCount) {
   const opened = String(lastOpenedAt || '').trim() || new Date().toISOString();
   const count = Math.max(1, Number(openCount) || 1);
-  db.prepare(`
+  _stmtUpsertReadHistory ??= db.prepare(`
     INSERT INTO reading_history(username, book_id, last_opened_at, open_count)
     VALUES(?, ?, ?, ?)
     ON CONFLICT(username, book_id) DO UPDATE SET
       last_opened_at = excluded.last_opened_at,
       open_count = excluded.open_count
-  `).run(username, bookId, opened, count);
+  `);
+  _stmtUpsertReadHistory.run(username, bookId, opened, count);
 }
 
+let _stmtGetReaderBookmarks = null;
 export function getReaderBookmarks(username, bookId) {
-  return db.prepare('SELECT id, position, title, created_at AS createdAt FROM reader_bookmarks WHERE username = ? AND book_id = ? ORDER BY created_at').all(username, bookId);
+  _stmtGetReaderBookmarks ??= db.prepare('SELECT id, position, title, created_at AS createdAt FROM reader_bookmarks WHERE username = ? AND book_id = ? ORDER BY created_at');
+  return _stmtGetReaderBookmarks.all(username, bookId);
 }
 
+let _stmtAllReaderBm = null;
 export function getAllReaderBookmarks(username, limit = 10) {
-  return db.prepare(`
+  _stmtAllReaderBm ??= db.prepare(`
     SELECT rb.id, rb.book_id AS bookId, rb.position, rb.title AS label, rb.created_at AS createdAt,
            b.title AS bookTitle, b.authors
     FROM reader_bookmarks rb
@@ -1684,40 +1866,34 @@ export function getAllReaderBookmarks(username, limit = 10) {
     WHERE rb.username = ?
     ORDER BY rb.created_at DESC
     LIMIT ?
-  `).all(username, limit);
+  `);
+  return _stmtAllReaderBm.all(username, limit);
 }
 
+let _stmtAddReaderBm = null;
 export function addReaderBookmark(username, bookId, position, title) {
-  const info = db.prepare('INSERT INTO reader_bookmarks (username, book_id, position, title) VALUES (?, ?, ?, ?)').run(username, bookId, String(position), String(title || ''));
+  _stmtAddReaderBm ??= db.prepare('INSERT INTO reader_bookmarks (username, book_id, position, title) VALUES (?, ?, ?, ?)');
+  const info = _stmtAddReaderBm.run(username, bookId, String(position), String(title || ''));
   return info.lastInsertRowid;
 }
 
+let _stmtDelReaderBm = null;
 export function deleteReaderBookmark(id, username) {
-  db.prepare('DELETE FROM reader_bookmarks WHERE id = ? AND username = ?').run(id, username);
+  _stmtDelReaderBm ??= db.prepare('DELETE FROM reader_bookmarks WHERE id = ? AND username = ?');
+  _stmtDelReaderBm.run(id, username);
 }
 
+let _stmtGetEreaderEmail = null;
 export function getEreaderEmail(username) {
-  const row = db.prepare('SELECT ereader_email FROM users WHERE username = ?').get(username);
+  _stmtGetEreaderEmail ??= db.prepare('SELECT ereader_email FROM users WHERE username = ?');
+  const row = _stmtGetEreaderEmail.get(username);
   return row?.ereader_email || '';
 }
 
+let _stmtSetEreaderEmail = null;
 export function setEreaderEmail(username, email) {
-  db.prepare('UPDATE users SET ereader_email = ? WHERE username = ?').run(String(email || '').trim(), username);
-}
-
-export function isBookRead(username, bookId) {
-  return Boolean(db.prepare('SELECT 1 FROM read_books WHERE username = ? AND book_id = ?').get(username, bookId));
-}
-
-export function toggleReadBook(username, bookId) {
-  const exists = isBookRead(username, bookId);
-  if (exists) {
-    db.prepare('DELETE FROM read_books WHERE username = ? AND book_id = ?').run(username, bookId);
-    return false;
-  }
-  db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
-  db.prepare('INSERT OR IGNORE INTO read_books(username, book_id) VALUES(?, ?)').run(username, bookId);
-  return true;
+  _stmtSetEreaderEmail ??= db.prepare('UPDATE users SET ereader_email = ? WHERE username = ?');
+  _stmtSetEreaderEmail.run(String(email || '').trim(), username);
 }
 
 export function getReadBooks(username, sort = 'date') {
@@ -1737,18 +1913,20 @@ export function getReadBooks(username, sort = 'date') {
   `).all(username);
 }
 
+let _stmtReadBooksCount = null;
 export function getReadBooksCount(username) {
-  const row = db.prepare('SELECT COUNT(*) AS cnt FROM read_books rb JOIN active_books b ON b.id = rb.book_id WHERE rb.username = ?').get(username);
+  _stmtReadBooksCount ??= db.prepare('SELECT COUNT(*) AS cnt FROM read_books rb JOIN active_books b ON b.id = rb.book_id WHERE rb.username = ?');
+  const row = _stmtReadBooksCount.get(username);
   return row?.cnt || 0;
 }
 
 /* ── Per-user read status cache (short TTL, invalidated on toggle) ── */
 const _readCache = new Map();  // username → { ids: Set, series: Set, expiresAt }
-const READ_CACHE_TTL_MS = 60_000; // 60 seconds
+const READ_CACHE_TTL_MS = 30 * 60_000; // 30 мин (инвалидируется invalidateReadCache при действиях юзера)
 let _stmtReadIds = null;
 let _stmtReadSeries = null;
 
-function ensureReadCacheStatements() {
+function _ensureReadStmts() {
   if (!_stmtReadIds) {
     _stmtReadIds = db.prepare('SELECT rb.book_id FROM read_books rb JOIN active_books b ON b.id = rb.book_id WHERE rb.username = ?');
   }
@@ -1778,26 +1956,18 @@ function _getCachedRead(username) {
   return null;
 }
 
-function _buildReadIds(username) {
-  ensureReadCacheStatements();
+function _buildReadCache(username) {
+  _ensureReadStmts();
   const rows = _stmtReadIds.all(username);
-  return new Set(rows.map((r) => r.book_id));
-}
-
-function _buildReadSeries(username) {
-  ensureReadCacheStatements();
+  const ids = new Set(rows.map((r) => r.book_id));
   const sRows = _stmtReadSeries.all(username, username);
-  return new Set(sRows.map((r) => r.series));
-}
-
-function _ensureCacheEntry(username) {
-  let entry = _readCache.get(username);
-  if (entry && Date.now() < entry.expiresAt) return entry;
-  entry = { ids: null, series: null, expiresAt: Date.now() + READ_CACHE_TTL_MS };
+  const series = new Set(sRows.map((r) => r.series));
+  const entry = { ids, series, expiresAt: Date.now() + READ_CACHE_TTL_MS };
   _readCache.set(username, entry);
+  // Evict oldest if too many users cached
   if (_readCache.size > 200) {
     const oldest = _readCache.keys().next().value;
-    if (oldest !== undefined && oldest !== username) _readCache.delete(oldest);
+    if (oldest !== undefined) _readCache.delete(oldest);
   }
   return entry;
 }
@@ -1808,39 +1978,39 @@ export function invalidateReadCache(username) {
 
 export function getReadBookIdSet(username) {
   if (!username) return new Set();
-  const entry = _ensureCacheEntry(username);
-  if (!entry.ids) entry.ids = _buildReadIds(username);
-  return entry.ids;
+  const c = _getCachedRead(username);
+  return c ? c.ids : _buildReadCache(username).ids;
 }
 
 export function getFullyReadSeriesNames(username) {
   if (!username) return new Set();
-  const entry = _ensureCacheEntry(username);
-  if (!entry.series) entry.series = _buildReadSeries(username);
-  return entry.series;
+  const c = _getCachedRead(username);
+  return c ? c.series : _buildReadCache(username).series;
 }
 
 let _stmtUserStats = null;
 
-function ensureUserStatsStatement() {
-  if (_stmtUserStats) return _stmtUserStats;
-  _stmtUserStats = db.prepare(`
-    SELECT
-      (SELECT COUNT(*) FROM reading_history rh JOIN active_books b ON b.id = rh.book_id WHERE rh.username = ?) AS readingCount,
-      (SELECT COUNT(*) FROM bookmarks WHERE username = ?) AS bookmarkCount,
-      (SELECT COUNT(*) FROM read_books rb2 JOIN active_books ab2 ON ab2.id = rb2.book_id WHERE rb2.username = ?) AS readBooksCount,
-      (SELECT COUNT(*) FROM (SELECT ab.series FROM active_books ab LEFT JOIN read_books rb3 ON rb3.username = ? AND rb3.book_id = ab.id WHERE ab.series IS NOT NULL AND ab.series != '' GROUP BY ab.series HAVING COUNT(*) = COUNT(rb3.book_id))) AS readSeriesCount,
-      (SELECT COUNT(*) FROM favorite_authors WHERE username = ?) AS favoriteAuthorsCount,
-      (SELECT COUNT(*) FROM favorite_series WHERE username = ?) AS favoriteSeriesCount,
-      (SELECT COUNT(*) FROM shelves WHERE username = ?) AS shelvesCount,
-      (SELECT COUNT(*) FROM shelf_books sb JOIN shelves s ON s.id = sb.shelf_id WHERE s.username = ?) AS shelfBooksCount,
-      (SELECT COUNT(*) FROM reader_bookmarks WHERE username = ?) AS readerBookmarksCount,
-      (SELECT created_at FROM users WHERE username = ?) AS createdAt
-  `);
+function _ensureUserStatsStmt() {
+  if (!_stmtUserStats) {
+    _stmtUserStats = db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM reading_history rh JOIN active_books b ON b.id = rh.book_id WHERE rh.username = ?) AS readingCount,
+        (SELECT COUNT(*) FROM bookmarks WHERE username = ?) AS bookmarkCount,
+        (SELECT COUNT(*) FROM read_books rb2 JOIN active_books ab2 ON ab2.id = rb2.book_id WHERE rb2.username = ?) AS readBooksCount,
+        (SELECT COUNT(*) FROM (SELECT ab.series FROM active_books ab LEFT JOIN read_books rb3 ON rb3.username = ? AND rb3.book_id = ab.id WHERE ab.series IS NOT NULL AND ab.series != '' GROUP BY ab.series HAVING COUNT(*) = COUNT(rb3.book_id))) AS readSeriesCount,
+        (SELECT COUNT(*) FROM favorite_authors WHERE username = ?) AS favoriteAuthorsCount,
+        (SELECT COUNT(*) FROM favorite_series WHERE username = ?) AS favoriteSeriesCount,
+        (SELECT COUNT(*) FROM shelves WHERE username = ?) AS shelvesCount,
+        (SELECT COUNT(*) FROM shelf_books sb JOIN shelves s ON s.id = sb.shelf_id WHERE s.username = ?) AS shelfBooksCount,
+        (SELECT COUNT(*) FROM reader_bookmarks WHERE username = ?) AS readerBookmarksCount,
+        (SELECT created_at FROM users WHERE username = ?) AS createdAt
+    `);
+  }
   return _stmtUserStats;
 }
+
 export function getUserStats(username) {
-  const row = ensureUserStatsStatement().get(username, username, username, username, username, username, username, username, username, username);
+  const row = _ensureUserStatsStmt().get(username, username, username, username, username, username, username, username, username, username);
   return {
     readingCount: row?.readingCount || 0,
     bookmarkCount: row?.bookmarkCount || 0,
@@ -1951,7 +2121,10 @@ export function unsuppressBook(bookId) {
 }
 
 export function unsuppressAll() {
-  const ids = db.prepare('SELECT book_id FROM suppressed_books').all().map(r => r.book_id);
+  const ids = [];
+  for (const row of db.prepare('SELECT book_id FROM suppressed_books').iterate()) {
+    ids.push(row.book_id);
+  }
   if (!ids.length) return 0;
   const tx = db.transaction(() => {
     const restoreStmt = db.prepare('UPDATE books SET deleted = 0 WHERE id = ?');
@@ -1973,8 +2146,19 @@ export function getSuppressedBooks({ page = 1, pageSize = 50 } = {}) {
   return { total, rows };
 }
 
+export function getSuppressedBookSubquery() {
+  return 'SELECT book_id FROM suppressed_books';
+}
+
 export function getSuppressedBookIds() {
-  return new Set(db.prepare('SELECT book_id FROM suppressed_books').all().map(r => r.book_id));
+  const ids = new Set();
+  for (const row of db.prepare('SELECT book_id FROM suppressed_books').iterate()) {
+    ids.add(row.book_id);
+  }
+  if (ids.size > 50000) {
+    console.warn(`[db] Large suppression list: ${ids.size} entries – consider SQL subquery approach`);
+  }
+  return ids;
 }
 
 // ── Book Ratings ──
@@ -1999,3 +2183,4 @@ export function getBookAverageRating(bookId) {
   const row = db.prepare('SELECT AVG(rating) AS avg, COUNT(*) AS cnt FROM book_ratings WHERE book_id = ?').get(bookId);
   return { average: row?.avg ? Math.round(row.avg * 10) / 10 : 0, count: row?.cnt || 0 };
 }
+

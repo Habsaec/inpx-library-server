@@ -114,7 +114,7 @@ function sanitizeZipEntryName(value, fallback = 'book.bin') {
 }
 
 async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, format }) {
-  const lockKey = `${req.user?.username || 'anon'}`;
+  const lockKey = req.user?.username || `anon:${req.ip}`;
   const startedAt = Date.now();
   try {
     if (bookIds.length > BATCH_DOWNLOAD_MAX) {
@@ -146,12 +146,16 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
 
     const archive = archiver('zip', { store: true, forceZip64: false, forceLocalTime: true });
     archive.on('error', () => {
+      archive.destroy();  // Explicitly destroy to prevent stream leak
       batchDownloadLocks.delete(lockKey);
       if (!res.headersSent) {
         res.status(500).send(t('api.batch.archiveError'));
       }
     });
     res.on('close', () => {
+      if (!archive.finalized) {
+        archive.destroy();
+      }
       batchDownloadLocks.delete(lockKey);
     });
     archive.pipe(res);

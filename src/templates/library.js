@@ -19,7 +19,7 @@ import {
   formatGenreLabel, parseGenreCodes
 } from './shared.js';
 
-export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], continueBooks = [], homeSubtitle = '', csrfToken = '', readBookIds = null }) {
+export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], continueBooks = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false }) {
   const isAuthenticated = Boolean(user);
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
   const subtitleText = homeSubtitle === '-' ? '' : (homeSubtitle || t('home.subtitle'));
@@ -45,18 +45,28 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}
     ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, showBatch: true, user, readBookIds })}
     ${recommendationsShelf}
-    ${isAuthenticated ? renderHomeShelf({ title: t('home.shelfContinue'), href: '/library/continue', items: continueBooks || [], type: 'books', isAuthenticated, showBatch: true, user, readBookIds }) : ''}
+    ${isAuthenticated && hasContinueData
+      ? (continueBooks.length
+        ? renderHomeShelf({ title: t('home.shelfContinue'), href: '/library/continue', items: continueBooks, type: 'books', isAuthenticated, showBatch: true, user, readBookIds })
+        : `<section class="library-shelf" data-home-continue data-loaded="0">
+      <div class="section-title">
+        <h2>${escapeHtml(t('home.shelfContinue'))}</h2>
+        <div class="actions"><a class="shelf-link" href="/library/continue">${escapeHtml(t('home.showAll'))}</a></div>
+      </div>
+      <div data-home-continue-grid>${renderSkeletonGrid(6)}</div>
+    </section>`)
+      : ''}
     `;
   return pageShell({ title: t('home.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home') }], currentPath: '/', csrfToken, readBookIds });
 }
 
-export function renderCatalog({ items, total, page, pageSize, query, field, sort, genre = '', letter = '', user, stats, indexStatus, csrfToken = '', readBookIds = null }) {
+export function renderCatalog({ items, total, page, pageSize, query, field, sort, genre = '', letter = '', lang = '', format = '', year = 0, langs = [], formats = [], user, stats, indexStatus, csrfToken = '', readBookIds = null }) {
   const fieldLabels = {
     books: t('catalog.inBooks'),
     authors: t('catalog.inAuthors'),
     series: t('catalog.inSeries')
   };
-  const hasSearchContext = Boolean(query || genre || letter);
+  const hasSearchContext = Boolean(query || genre || letter || lang || format || year);
   const isBookField = ['books', 'title', 'book-authors', 'book-series', 'genres', 'keywords'].includes(field);
   const sortOptions = isBookField
     ? [
@@ -69,7 +79,7 @@ export function renderCatalog({ items, total, page, pageSize, query, field, sort
         { value: 'count', label: t('sort.popularFirst') },
         { value: 'name', label: t('sort.byName') }
       ];
-  const catalogApiParams = `field=${encodeURIComponent(field)}&sort=${encodeURIComponent(sort)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}${letter ? `&letter=${encodeURIComponent(letter)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+  const catalogApiParams = `field=${encodeURIComponent(field)}&sort=${encodeURIComponent(sort)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}${letter ? `&letter=${encodeURIComponent(letter)}` : ''}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}${format ? `&format=${encodeURIComponent(format)}` : ''}${year ? `&year=${encodeURIComponent(year)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
   const batchAdhocJson = escapeHtml(JSON.stringify({ adhoc: true }));
   const catalogHintBlock = hasSearchContext
     ? (() => {
@@ -122,24 +132,40 @@ export function renderCatalog({ items, total, page, pageSize, query, field, sort
             query,
             field,
             genre,
-            options: sortOptions
+            options: sortOptions,
+            extraHidden: {
+              ...(lang ? { lang } : {}),
+              ...(format ? { format } : {}),
+              ...(year ? { year: String(year) } : {})
+            }
           })}
         </div>
       </div>
       ${!hasSearchContext ? `<div class="list-context-hint">${tp('catalog.pickMode', { books: `<strong>${escapeHtml(t('search.books'))}</strong>`, authors: `<strong>${escapeHtml(t('search.authors'))}</strong>`, series: `<strong>${escapeHtml(t('search.series'))}</strong>` })}</div>` : ''}
+      <div class="catalog-filters" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <select name="lang" onchange="var u=new URL(location);u.searchParams.set('lang',this.value);if(!this.value)u.searchParams.delete('lang');u.searchParams.delete('page');location=u;">
+          <option value="">${escapeHtml(t('catalog.allLanguages'))}</option>
+          ${langs.map(l => `<option value="${escapeHtml(l)}"${l === lang ? ' selected' : ''}>${escapeHtml(l.toUpperCase())}</option>`).join('')}
+        </select>
+        <select name="format" onchange="var u=new URL(location);u.searchParams.set('format',this.value);if(!this.value)u.searchParams.delete('format');u.searchParams.delete('page');location=u;">
+          <option value="">${escapeHtml(t('catalog.allFormats'))}</option>
+          ${formats.map(f => `<option value="${escapeHtml(f)}"${f === format ? ' selected' : ''}>${escapeHtml(f.toUpperCase())}</option>`).join('')}
+        </select>
+        <input type="number" name="year" min="1800" max="2100" placeholder="${escapeHtml(t('catalog.year'))}" value="${year || ''}" style="width:90px;" onchange="var u=new URL(location);if(this.value)u.searchParams.set('year',this.value);else u.searchParams.delete('year');u.searchParams.delete('page');location=u;">
+      </div>
       ${letter && !query ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(tp('catalog.letterResults', { letter: letter.toUpperCase() }))}</div>` : ''}
       ${resultsMarkup}
       ${isBookField && items.length && total > page * pageSize ? `<div class="load-more-wrap"><button class="button load-more-button" data-load-more-trigger>${escapeHtml(t('catalog.loadMore'))}</button></div>` : ''}
       ${isBookField && items.length && total > page * pageSize
-        ? `<noscript>${renderPagination(`/catalog?field=${encodeURIComponent(field)}&sort=${encodeURIComponent(sort)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`, page, pageSize, total, query)}</noscript>`
+        ? `<noscript>${renderPagination(`/catalog?field=${encodeURIComponent(field)}&sort=${encodeURIComponent(sort)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}${format ? `&format=${encodeURIComponent(format)}` : ''}${year ? `&year=${encodeURIComponent(year)}` : ''}`, page, pageSize, total, query)}</noscript>`
         : ''}
-      ${!isBookField || !items.length ? renderPagination(`/catalog?field=${encodeURIComponent(field)}&sort=${encodeURIComponent(sort)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`, page, pageSize, total, query) : ''}
+      ${!isBookField || !items.length ? renderPagination(`/catalog?field=${encodeURIComponent(field)}&sort=${encodeURIComponent(sort)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}${format ? `&format=${encodeURIComponent(format)}` : ''}${year ? `&year=${encodeURIComponent(year)}` : ''}`, page, pageSize, total, query) : ''}
     </section>`;
   return pageShell({ title: t('catalog.title'), content, user, query, field, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('catalog.title') }], currentPath: '/catalog', csrfToken, readBookIds });
 }
 
 
-export function renderLibraryView({ view, title, subtitle = '', items, total, page, pageSize, user, stats, indexStatus, csrfToken = '', readBookIds = null }) {
+export function renderLibraryView({ view, title, subtitle = '', items, total, page, pageSize, type = '', itemType = '', user, stats, indexStatus, csrfToken = '', readBookIds = null, readSeriesNames = null }) {
   const emptyStates = {
     recent: {
       title: t('library.empty.recent.title'),
@@ -160,11 +186,12 @@ export function renderLibraryView({ view, title, subtitle = '', items, total, pa
     }
   };
 
-  const currentPath = `/library/${view}`;
+  const currentPath = type ? `/library/${view}?type=${encodeURIComponent(type)}` : `/library/${view}`;
+  const isSeries = itemType === 'series';
   const countHintLabel = view === 'continue' || view === 'recommended' || view === 'read' ? t('library.countInSection') : t('library.countInCatalog');
   const totalN = Math.max(0, Math.floor(Number(total) || 0));
   const totalNum = formatLocaleInt(totalN);
-  const totalBookWord = plural('book', totalN);
+  const totalBookWord = isSeries ? plural('series', totalN) : plural('book', totalN);
   const libBatchJson = '';
   const content = `
     <section class="page-intro">
@@ -176,7 +203,12 @@ export function renderLibraryView({ view, title, subtitle = '', items, total, pa
     ${items.length
       ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(countHintLabel)}: <strong>${totalNum}</strong> ${totalBookWord}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
       <section class="library-shelf library-shelf-primary">
-        <div data-load-more-grid data-load-more-api="/api/library/${encodeURIComponent(view)}" data-load-more-page="${page}" data-load-more-total="${total}" data-load-more-page-size="${pageSize}">${renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: false, user, readBookIds })}</div>
+        ${isSeries
+          ? `<div class="table-list entity-list">${items.map(item => `
+              <a class="table-row table-row-link" href="/facet/series/${encodeURIComponent(item.name)}">
+                <div style="display:flex;align-items:center"><span><strong>${escapeHtml(item.name)}</strong><br><span class="muted">${countLabel('book', item.bookCount)} ${escapeHtml(t('entity.inLibrary'))}</span></span>${readSeriesNames && readSeriesNames.has(item.name) ? `<span class="read-series-badge">${READ_CHECK_SVG}</span>` : ''}</div>
+              </a>`).join('')}</div>`
+          : `<div data-load-more-grid data-load-more-api="/api/library/${encodeURIComponent(view)}" data-load-more-page="${page}" data-load-more-total="${total}" data-load-more-page-size="${pageSize}">${renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: false, user, readBookIds })}</div>`}
       </section>`
       : `
     <div class="list-context-hint list-context-hint-spacious">${escapeHtml(countHintLabel)}: <strong>${totalNum}</strong> ${totalBookWord}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
@@ -838,9 +870,9 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
           <article class="card" data-book-id="${escapeHtml(book.id)}">
             ${shelfBatch ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} data-batch-book-id="${escapeHtml(book.id)}" aria-label="${escapeHtml(t('batch.selectAria'))}"></label>` : ''}
             <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-              <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
+              <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
               <span class="cover-fallback" hidden>
-                <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+                <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
                 <span class="cover-fallback-overlay"></span>
                 <span class="cover-fallback-copy">
                   <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
@@ -1121,7 +1153,7 @@ export function renderProfile({ user, stats, indexStatus, userStats, ereaderEmai
                   ? `<a href="/library/read">${countLabel('book', readBooksTotal)}</a>`
                   : `<span class="muted">${escapeHtml(t('profile.nothingYet'))}</span>`}
                 ${readSeriesTotal > 0
-                  ? `<a href="/library/read">${countLabel('series', readSeriesTotal)}</a>`
+                  ? `<a href="/library/read?type=series">${countLabel('series', readSeriesTotal)}</a>`
                   : ''}
               </div>
             </div>

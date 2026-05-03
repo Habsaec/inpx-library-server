@@ -391,7 +391,6 @@ export function registerUserApiRoutes(app, deps) {
         batchEmailLocks.delete(lockKey);
       }
     } catch (error) {
-      batchEmailLocks.delete(req.user?.username || '');
       console.error('Batch send to ereader error:', error);
       let msg = translateKnownErrorMessage(error.message) || t('api.error.unknown');
       if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
@@ -450,7 +449,6 @@ export function registerUserApiRoutes(app, deps) {
       } else if (msg.includes('EENVELOPE') || msg.includes('rejected')) {
         msg = t('api.email.err.smtpRejected');
       }
-      batchEmailLocks.delete(req.user?.username || '');
       res.status(500).json({ ok: false, code: ApiErrorCode.SMTP_ERROR, error: msg });
     }
   });

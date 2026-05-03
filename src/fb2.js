@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { db } from './db.js';
+import { statSyncCached } from './utils/fs-probe.js';
 import { getLibraryRoot, getSourceRoot, effectiveSourceFlibustaForBook } from './inpx.js';
 import { readArchiveEntryBuffer } from './archives.js';
 import {
@@ -121,7 +122,7 @@ function findRangeArchive(libraryRoot, book) {
         const m = f.match(/^(.+)-(\d+)-(\d+)\.(zip|7z)$/i);
         if (!m) continue;
         const abs = path.join(root, f);
-        try { if (!fs.statSync(abs).isFile()) continue; } catch { continue; }
+        try { const st = statSyncCached(abs); if (!st || !st.isFile()) continue; } catch { continue; }
         entries.push({ file: f, start: Number(m[2]), end: Number(m[3]) });
       }
     } catch { /* no access */ }

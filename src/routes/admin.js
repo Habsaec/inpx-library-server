@@ -7,6 +7,7 @@ import { runWithLocaleLang, resolveLocale, t, tp, countLabel, translateKnownErro
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireAdminWeb, requireAdminApi } from '../middleware/auth.js';
 import { clearPageDataCache } from '../services/cache.js';
+import { invalidateAllRecommendations } from '../services/recommendations.js';
 import { verifySmtpConnection } from '../services/email.js';
 import {
   logSystemEvent, getSystemEventCategories, parseSystemEventsFilters,
@@ -342,14 +343,34 @@ export function registerAdminRoutes(app, deps) {
       page: 1, pageSize: SYSTEM_EVENTS_MAX_COUNT,
       level: filters.level, category: filters.category
     });
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', events: initial.items, total: initial.total })}\n\n`);
-    const unsubscribe = subscribeSystemEvents((event) => {
+
+    let unsubscribe = null;
+    let heartbeat = null;
+    let closed = false;
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      if (heartbeat !== null) clearInterval(heartbeat);
+      if (unsubscribe !== null) unsubscribe();
+    };
+
+    res.on('error', cleanup);
+    req.on('close', cleanup);
+
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'snapshot', events: initial.items, total: initial.total })}\n\n`);
+    } catch { cleanup(); return; }
+
+    unsubscribe = subscribeSystemEvents((event) => {
       if (filters.level && event.level !== filters.level) return;
       if (filters.category && event.category !== filters.category) return;
-      res.write(`data: ${JSON.stringify({ type: 'event', event })}\n\n`);
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'event', event })}\n\n`);
+      } catch { cleanup(); }
     });
-    const heartbeat = setInterval(() => { res.write(': ping\n\n'); }, 15000);
-    req.on('close', () => { clearInterval(heartbeat); unsubscribe(); });
+    heartbeat = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch { cleanup(); }
+    }, 15000);
   });
 
   // --- Runtime Logs ---
@@ -365,12 +386,32 @@ export function registerAdminRoutes(app, deps) {
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     if (typeof res.flushHeaders === 'function') res.flushHeaders();
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', logs: getRecentRuntimeLogs(limit) })}\n\n`);
-    const unsubscribe = subscribeRuntimeLogs((entry) => {
-      res.write(`data: ${JSON.stringify({ type: 'log', entry })}\n\n`);
+
+    let unsubscribe = null;
+    let heartbeat = null;
+    let closed = false;
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      if (heartbeat !== null) clearInterval(heartbeat);
+      if (unsubscribe !== null) unsubscribe();
+    };
+
+    res.on('error', cleanup);
+    req.on('close', cleanup);
+
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'snapshot', logs: getRecentRuntimeLogs(limit) })}\n\n`);
+    } catch { cleanup(); return; }
+
+    unsubscribe = subscribeRuntimeLogs((entry) => {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'log', entry })}\n\n`);
+      } catch { cleanup(); }
     });
-    const heartbeat = setInterval(() => { res.write(': ping\n\n'); }, 15000);
-    req.on('close', () => { clearInterval(heartbeat); unsubscribe(); });
+    heartbeat = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch { cleanup(); }
+    }, 15000);
   });
 
   app.get('/api/admin/runtime-logs/download', requireAdminApi, (req, res) => {
@@ -547,6 +588,7 @@ export function registerAdminRoutes(app, deps) {
       const name = req.body.name !== undefined ? String(req.body.name).trim() : undefined;
       const enabled = req.body.enabled !== undefined ? req.body.enabled === '1' : undefined;
       updateSource(id, { name, enabled });
+      clearArchiveReadCaches();
       clearPageDataCache();
       markLibraryDedupProjectionStale();
       logSystemEvent('info', 'settings', 'source updated', { actor: req.user.username, sourceId: id });
@@ -607,6 +649,7 @@ export function registerAdminRoutes(app, deps) {
         operationsState.sourceDeleteRunning = false;
         clearArchiveReadCaches();
         invalidateDuplicatesCache();
+        invalidateAllRecommendations();
         clearPageDataCache();
         markLibraryDedupProjectionStale();
       }
@@ -884,6 +927,8 @@ export function registerAdminRoutes(app, deps) {
             failures.push({ id: source.id, name: source.name, error: error.message });
           }
         }
+      } catch (error) {
+        logSystemEvent('error', 'operations', 'sidecar rebuild failed', { error: error.message });
       } finally {
         operationsState.sidecarRunning = false;
         if (failures.length) {
@@ -893,8 +938,9 @@ export function registerAdminRoutes(app, deps) {
         }
       }
     })().catch((error) => {
+      // Absolute last-resort catch
       operationsState.sidecarRunning = false;
-      logSystemEvent('error', 'operations', 'sidecar rebuild failed', { error: error.message });
+      console.error('[admin] sidecar rebuild unhandled:', error);
     });
   });
 

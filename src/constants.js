@@ -23,7 +23,7 @@ export const HOME_SECTIONS_CACHE_TTL_MS = 1000 * 60 * 30; // 30 min
  * тяжёлых запросов на каждый F5. Инвалидируется адресно при действиях пользователя через
  * clearPageDataCache(`home:userSnap:${username}`), поэтому TTL может быть большим.
  */
-export const HOME_USER_SNAPSHOT_CACHE_TTL_MS = 1000 * 60 * 5;
+export const HOME_USER_SNAPSHOT_CACHE_TTL_MS = 1000 * 60 * 30;   // 30 мин (инвалидируется адресно при действиях юзера)
 
 // --- Rate limiting ---
 export const SYSTEM_EVENTS_MAX_COUNT = 1000;

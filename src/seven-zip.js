@@ -9,7 +9,8 @@ const MAX_BOOK_SIZE = ARCHIVE_MAX_ENTRY_BYTES;
 
 /* ── Семафор: ограничение параллельных 7z-процессов ── */
 const SEVEN_Z_MAX_CONCURRENT = Number(process.env.SEVEN_Z_MAX_CONCURRENT) || 6;
-const SEVEN_Z_MAX_QUEUE = 50;
+const SEVEN_Z_MAX_QUEUE = Number(process.env.SEVEN_Z_MAX_QUEUE) || 20;
+const SEVEN_Z_QUEUE_TIMEOUT_MS = Number(process.env.SEVEN_Z_QUEUE_TIMEOUT_MS) || 60_000;
 let active7z = 0;
 const queue7z = [];
 
@@ -21,12 +22,22 @@ function acquire7zSlot() {
   if (queue7z.length >= SEVEN_Z_MAX_QUEUE) {
     return Promise.reject(new Error('Очередь 7z переполнена, попробуйте позже'));
   }
-  return new Promise((resolve, reject) => queue7z.push({ resolve, reject }));
+  return new Promise((resolve, reject) => {
+    const entry = { resolve, reject, timer: null };
+    entry.timer = setTimeout(() => {
+      const idx = queue7z.indexOf(entry);
+      if (idx !== -1) queue7z.splice(idx, 1);
+      reject(new Error('7z queue timeout: waited too long for available slot'));
+    }, SEVEN_Z_QUEUE_TIMEOUT_MS);
+    queue7z.push(entry);
+  });
 }
 
 function release7zSlot() {
   if (queue7z.length > 0) {
-    queue7z.shift().resolve();
+    const entry = queue7z.shift();
+    clearTimeout(entry.timer);
+    entry.resolve();
   } else {
     active7z--;
   }

@@ -3,7 +3,7 @@
  */
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { PAGE_CACHE_TTL_MS } from '../constants.js';
-import { getCachedPageData } from '../services/cache.js';
+import { getCachedPageData, getStaleOrSchedule } from '../services/cache.js';
 import { safePage } from '../utils/safe-int.js';
 import {
   getBooksByFacetCoalesced,
@@ -29,13 +29,17 @@ export function registerBrowseApiRoutes(app) {
     const view = String(req.params.view);
     const page = safePage(req.query.page);
     const pageSize = 24;
+    const type = String(req.query.type || '').trim();
     const user = req.user || null;
     const canUseSharedCache = view === 'recent';
+    const username = user?.username || '';
     const result = canUseSharedCache
-      ? getCachedPageData(`library:${view}:page:${page}:size:${pageSize}`, () => getLibraryView(view, { page, pageSize }), PAGE_CACHE_TTL_MS)
+      ? getStaleOrSchedule(`library:${view}:page:${page}:size:${pageSize}`, () => getLibraryView(view, { page, pageSize }), PAGE_CACHE_TTL_MS, { total: 0, items: [] })
       : view === 'recommended'
-        ? getRecommendedLibraryView({ page, pageSize, username: user?.username || '' })
-        : getLibraryView(view, { page, pageSize, username: user?.username || '' });
+        ? getRecommendedLibraryView({ page, pageSize, username })
+        : view === 'continue' || view === 'read'
+          ? getStaleOrSchedule(`library:${view}:${username}:p${page}:s${pageSize}`, () => getLibraryView(view, { page, pageSize, username, type }), PAGE_CACHE_TTL_MS, { total: 0, items: [] })
+          : getLibraryView(view, { page, pageSize, username, type });
     res.json({ items: result.items, total: result.total, page, pageSize });
   });
 
@@ -45,12 +49,15 @@ export function registerBrowseApiRoutes(app) {
     const sort = String(req.query.sort || 'recent');
     const genre = String(req.query.genre || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
+    const lang = String(req.query.lang || '').trim();
+    const format = String(req.query.format || '').trim();
+    const year = Number(req.query.year) || 0;
     const page = safePage(req.query.page);
     const pageSize = 24;
-    const cacheKey = `api:catalog:${field}:${sort}:${genre}:${letter}:${query}:p${page}:s${pageSize}`;
+    const cacheKey = `api:catalog:${field}:${sort}:${genre}:${letter}:${lang}:${format}:${year}:${query}:p${page}:s${pageSize}`;
     const result = getCachedPageData(
       cacheKey,
-      () => searchCatalog({ query, page, pageSize, field, sort, genre, letter }),
+      () => searchCatalog({ query, page, pageSize, field, sort, genre, letter, lang, format, year }),
       PAGE_CACHE_TTL_MS
     );
     res.json({ items: result.items, total: result.total, page, pageSize, field: result.field });

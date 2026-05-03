@@ -11,6 +11,7 @@ import {
   listGenres, getBookById,
   opdsQuery,
   getAuthorBooksOpds,
+  getAuthorSeriesBooksOpds,
   getSeriesBooksOpds,
   opdsSearchAuthors,
   searchCatalog,
@@ -49,7 +50,20 @@ export function registerOpdsV2Routes(app, deps) {
   app.get('/opds/v2/authors', requireOpdsAuth, (req, res) => {
     const prefix = String(req.query.prefix || '');
     const genre = String(req.query.genre || '');
+    const series = String(req.query.series || '');
     const base = baseUrl(req);
+
+    if (series && prefix.startsWith('=')) {
+      const authorName = prefix.slice(1);
+      const books = getAuthorSeriesBooksOpds(authorName, series, genre);
+      res.type(OPDS_JSON);
+      return res.send(renderOpds2PublicationsFeed(base, {
+        title: series,
+        selfPath: req.originalUrl,
+        items: books,
+        total: books.length
+      }));
+    }
 
     if (prefix.startsWith('=')) {
       const authorName = prefix.slice(1);
@@ -177,7 +191,9 @@ export function registerOpdsV2Routes(app, deps) {
     try {
       const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
       book.annotation = details?.annotation || '';
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn('[OPDS v2] book detail annotation extraction failed for id=%s: %s', book.id, err?.message || err);
+    }
     res.type(OPDS_JSON);
     res.send(renderOpds2BookDetail(baseUrl(req), book));
   });

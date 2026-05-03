@@ -16,95 +16,131 @@ export function registerReaderRoutes(app) {
   /* ── Reading position ──────────────────────────────────────────── */
 
   app.get('/api/books/:id/position', requireApiAuth, (req, res) => {
-    const pos = getReadingPosition(req.user.username, req.params.id);
-    res.json(pos || { position: '', progress: 0 });
+    try {
+      const pos = getReadingPosition(req.user.username, req.params.id);
+      res.json(pos || { position: '', progress: 0 });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   app.post('/api/books/:id/position', requireApiAuth, (req, res) => {
-    const { position, progress } = req.body;
-    const bookId = req.params.id;
-    const username = req.user.username;
-    if (!getBookById(bookId)) {
-      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    try {
+      const { position, progress } = req.body;
+      const bookId = req.params.id;
+      const username = req.user.username;
+      if (!getBookById(bookId)) {
+        return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      }
+      setReadingPosition(username, bookId, position, progress);
+      // Auto-mark as read when progress reaches 95%+
+      let markedRead = false;
+      if (Number(progress) >= 99 && !isBookRead(username, bookId)) {
+        addReadBooksIfMissing(username, [bookId]);
+        markedRead = true;
+      }
+      res.json({ ok: true, markedRead });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
     }
-    setReadingPosition(username, bookId, position, progress);
-    // Auto-mark as read when progress reaches 95%+
-    let markedRead = false;
-    if (Number(progress) >= 99 && !isBookRead(username, bookId)) {
-      addReadBooksIfMissing(username, [bookId]);
-      markedRead = true;
-    }
-    res.json({ ok: true, markedRead });
   });
 
   /* ── Auto-mark as read when finished ────────────────────────── */
 
   app.post('/api/books/:id/mark-read', requireApiAuth, (req, res) => {
-    const bookId = req.params.id;
-    if (isBookRead(req.user.username, bookId)) {
-      return res.json({ ok: true, already: true });
+    try {
+      const bookId = req.params.id;
+      if (isBookRead(req.user.username, bookId)) {
+        return res.json({ ok: true, already: true });
+      }
+      if (!getBookById(bookId)) {
+        return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      }
+      addReadBooksIfMissing(req.user.username, [bookId]);
+      res.json({ ok: true, marked: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
     }
-    if (!getBookById(bookId)) {
-      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
-    }
-    addReadBooksIfMissing(req.user.username, [bookId]);
-    res.json({ ok: true, marked: true });
   });
 
   /* ── Reader bookmarks ──────────────────────────────────────────── */
 
   app.get('/api/books/:id/bookmarks', requireApiAuth, (req, res) => {
-    res.json(getReaderBookmarks(req.user.username, req.params.id));
+    try {
+      res.json(getReaderBookmarks(req.user.username, req.params.id));
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   app.post('/api/books/:id/bookmarks', requireApiAuth, (req, res) => {
-    const { position, title } = req.body;
-    if (!getBookById(req.params.id)) {
-      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    try {
+      const { position, title } = req.body;
+      if (!getBookById(req.params.id)) {
+        return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      }
+      const id = addReaderBookmark(req.user.username, req.params.id, position, title);
+      res.json({ ok: true, id: Number(id) });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
     }
-    const id = addReaderBookmark(req.user.username, req.params.id, position, title);
-    res.json({ ok: true, id: Number(id) });
   });
 
   app.delete('/api/books/:id/bookmarks/:bmId', requireApiAuth, (req, res) => {
-    const bmId = Number(req.params.bmId);
-    if (!Number.isInteger(bmId) || bmId < 1) {
-      return apiFail(res, 400, ApiErrorCode.BOOKMARK_INVALID_ID, t('api.bookmark.invalidId'));
+    try {
+      const bmId = Number(req.params.bmId);
+      if (!Number.isInteger(bmId) || bmId < 1) {
+        return apiFail(res, 400, ApiErrorCode.BOOKMARK_INVALID_ID, t('api.bookmark.invalidId'));
+      }
+      deleteReaderBookmark(bmId, req.user.username);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
     }
-    deleteReaderBookmark(bmId, req.user.username);
-    res.json({ ok: true });
   });
 
   /* Legacy endpoint */
   app.delete('/api/reader-bookmarks/:bmId', requireApiAuth, (req, res) => {
-    const bmId = Number(req.params.bmId);
-    if (!Number.isInteger(bmId) || bmId < 1) {
-      return apiFail(res, 400, ApiErrorCode.BOOKMARK_INVALID_ID, t('api.bookmark.invalidId'));
+    try {
+      const bmId = Number(req.params.bmId);
+      if (!Number.isInteger(bmId) || bmId < 1) {
+        return apiFail(res, 400, ApiErrorCode.BOOKMARK_INVALID_ID, t('api.bookmark.invalidId'));
+      }
+      deleteReaderBookmark(bmId, req.user.username);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
     }
-    deleteReaderBookmark(bmId, req.user.username);
-    res.json({ ok: true });
   });
 
   /* ── Reading history ───────────────────────────────────────────── */
 
   app.post('/api/reading-history/:bookId', requireApiAuth, (req, res) => {
-    const bookId = String(req.params.bookId || '');
-    if (!bookId) {
-      return apiFail(res, 400, ApiErrorCode.BOOK_INVALID_ID, t('api.book.invalidId'));
+    try {
+      const bookId = String(req.params.bookId || '');
+      if (!bookId) {
+        return apiFail(res, 400, ApiErrorCode.BOOK_INVALID_ID, t('api.book.invalidId'));
+      }
+      if (!getBookById(bookId)) {
+        return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      }
+      const lastOpenedAt = String(req.body?.lastOpenedAt || '').trim();
+      const openCount = req.body?.openCount;
+      upsertReadingHistoryEntry(req.user.username, bookId, lastOpenedAt, openCount);
+      invalidateHomeUserSnapshot(req.user.username);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
     }
-    if (!getBookById(bookId)) {
-      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
-    }
-    const lastOpenedAt = String(req.body?.lastOpenedAt || '').trim();
-    const openCount = req.body?.openCount;
-    upsertReadingHistoryEntry(req.user.username, bookId, lastOpenedAt, openCount);
-    invalidateHomeUserSnapshot(req.user.username);
-    res.json({ ok: true });
   });
 
   app.delete('/api/reading-history/:bookId', requireApiAuth, (req, res) => {
-    deleteReadingHistoryEntry(req.user.username, String(req.params.bookId));
-    invalidateHomeUserSnapshot(req.user.username);
-    res.json({ ok: true });
+    try {
+      deleteReadingHistoryEntry(req.user.username, String(req.params.bookId));
+      invalidateHomeUserSnapshot(req.user.username);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 }

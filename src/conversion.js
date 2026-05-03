@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { config } from './config.js';
+import { logSystemEvent } from './services/system-events.js';
 import { readBookBuffer, readBookBufferForDelivery } from './fb2.js';
 import {
   DOWNLOAD_FORMATS,
@@ -35,6 +36,104 @@ const FILE_EXTENSIONS = {
 const conversionLocks = new Map();
 const converterWaiters = [];
 let activeConverters = 0;
+
+const CONVERSION_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const CONVERSION_CACHE_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function cleanupConversionCache() {
+  try {
+    const dir = config.conversionCacheDir;
+    if (!dir) return;
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    const now = Date.now();
+    let removed = 0;
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      try {
+        const filePath = path.join(dir, entry.name);
+        const stat = await fs.promises.stat(filePath);
+        if (now - stat.mtimeMs > CONVERSION_CACHE_MAX_AGE_MS) {
+          await fs.promises.unlink(filePath);
+          removed++;
+        }
+      } catch { /* ignore per-file errors */ }
+    }
+    if (removed > 0) console.log(`[conversion] cache cleanup: removed ${removed} stale file(s)`);
+  } catch (err) {
+    console.warn('[conversion] cache cleanup error:', err.message);
+  }
+}
+
+const STALE_TEMP_SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+
+async function cleanupStaleTempSessions() {
+  try {
+    const dir = config.conversionTempDir;
+    if (!dir) return;
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    const now = Date.now();
+    let removed = 0;
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('job-')) continue;
+      try {
+        const dirPath = path.join(dir, entry.name);
+        const stat = await fs.promises.stat(dirPath);
+        if (now - stat.mtimeMs > STALE_TEMP_SESSION_MAX_AGE_MS) {
+          await fs.promises.rm(dirPath, { recursive: true, force: true });
+          removed++;
+        }
+      } catch { /* ignore per-dir errors */ }
+    }
+    if (removed > 0) console.log(`[conversion] temp session cleanup: removed ${removed} stale dir(s)`);
+  } catch (err) {
+    console.warn('[conversion] temp session cleanup error:', err.message);
+  }
+}
+
+// Synchronous startup cleanup of stale temp directories (before async periodic cleanup)
+function cleanupStaleTempDirsSync() {
+  try {
+    const tempBase = config.conversionTempDir;
+    if (!tempBase || !fs.existsSync(tempBase)) return;
+
+    const now = Date.now();
+    const ONE_HOUR = 60 * 60 * 1000;
+    const entries = fs.readdirSync(tempBase, { withFileTypes: true });
+    let cleaned = 0;
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('job-')) continue;
+      try {
+        const dirPath = path.join(tempBase, entry.name);
+        const stat = fs.statSync(dirPath);
+        if (now - stat.mtimeMs > ONE_HOUR) {
+          fs.rmSync(dirPath, { recursive: true, force: true });
+          cleaned++;
+        }
+      } catch (e) {
+        // Ignore individual cleanup failures
+      }
+    }
+
+    if (cleaned > 0) {
+      console.log(`[conversion] startup cleanup: removed ${cleaned} stale temp directories`);
+    }
+  } catch (err) {
+    console.warn('[conversion] startup cleanup failed:', err.message);
+  }
+}
+
+// Run synchronous cleanup immediately on module load
+cleanupStaleTempDirsSync();
+
+// Run async cleanup at startup and every 6 hours
+try {
+  fs.mkdirSync(config.conversionCacheDir, { recursive: true });
+} catch { /* directory may already exist or config not set */ }
+cleanupConversionCache();
+cleanupStaleTempSessions();
+setInterval(cleanupConversionCache, CONVERSION_CACHE_CLEANUP_INTERVAL_MS).unref();
+setInterval(cleanupStaleTempSessions, CONVERSION_CACHE_CLEANUP_INTERVAL_MS).unref();
 const DEFAULT_MAX_CONVERTERS = (() => {
   const cpuCount = Array.isArray(os.cpus()) ? os.cpus().length : 4;
   return Math.max(2, Math.min(6, Math.floor(cpuCount / 2) || 2));
@@ -138,10 +237,18 @@ function getFormatCachePath(book, format) {
   return path.join(config.conversionCacheDir, `${getBookCacheKey(book, format)}.${getFormatExtension(format)}`);
 }
 
+/**
+ * Resource limits for fb2cng child processes.
+ * CONVERTER_TIMEOUT_MS — hard kill after 2 minutes to prevent hanging conversions.
+ * CONVERTER_OUTPUT_MAX — cap stdout/stderr capture at 10 MB per stream; prevents
+ *   unbounded memory growth when a converter emits verbose diagnostics or binary
+ *   garbage.  With up to MAX_CONVERTERS (6) parallel slots this bounds total
+ *   buffered output to ~120 MB worst-case.
+ */
 const CONVERTER_TIMEOUT_MS = 120_000;
-const CONVERTER_OUTPUT_MAX = 1024 * 1024;
+const CONVERTER_OUTPUT_MAX = 10 * 1024 * 1024; // 10 MB per stream — intentional resource limit
 
-async function runConverter(args) {
+async function runConverter(args, bookInfo = {}) {
   await fs.promises.access(config.fb2cngPath, fs.constants.R_OK);
   const fullArgs = config.fb2cngConfigPath
     ? ['-c', config.fb2cngConfigPath, ...args]
@@ -158,9 +265,20 @@ async function runConverter(args) {
     const timer = setTimeout(() => {
       killed = true;
       child.kill('SIGKILL');
-      reject(new Error('fb2cng timed out'));
+      // Log timeout as a system event with book details for debugging
+      const detail = {
+        bookId: bookInfo.id || 'unknown',
+        title: String(bookInfo.title || '').slice(0, 120),
+        authors: String(bookInfo.authors || '').slice(0, 120),
+        timeoutMs: CONVERTER_TIMEOUT_MS,
+        args: fullArgs.join(' ').slice(0, 200)
+      };
+      logSystemEvent('error', 'conversion', 'fb2cng process timed out — killed', detail);
+      console.error(`[conversion] fb2cng timed out after ${CONVERTER_TIMEOUT_MS} ms for book ${detail.bookId}: ${detail.title}`);
+      reject(new Error(`fb2cng timed out after ${CONVERTER_TIMEOUT_MS} ms for book "${detail.title}" (${detail.bookId})`));
     }, CONVERTER_TIMEOUT_MS);
     child.stdout.on('data', (chunk) => {
+      // Intentional cap: discard output beyond CONVERTER_OUTPUT_MAX to prevent OOM
       if (stdout.length < CONVERTER_OUTPUT_MAX) stdout += String(chunk || '');
     });
     child.stderr.on('data', (chunk) => {
@@ -198,8 +316,10 @@ async function convertFb2Book(book, format) {
   }
 
   const work = (async () => {
-    await acquireConverterSlot();
+    let slotAcquired = false;
     try {
+      await acquireConverterSlot();
+      slotAcquired = true;
       const sessionDir = await fs.promises.mkdtemp(path.join(config.conversionTempDir, 'job-'));
       try {
         const sourcePath = path.join(sessionDir, `${getBookBaseName(book)}.fb2`);
@@ -212,7 +332,7 @@ async function convertFb2Book(book, format) {
           convertArgs.push('--ebook');
         }
         convertArgs.push(sourcePath, outputDir);
-        await runConverter(convertArgs);
+        await runConverter(convertArgs, book);
         const outputItems = await fs.promises.readdir(outputDir, { withFileTypes: true });
         const files = outputItems.filter((item) => item.isFile()).map((item) => item.name);
         const expectedSuffix = `.${getFormatExtension(format)}`.toLowerCase();
@@ -226,7 +346,7 @@ async function convertFb2Book(book, format) {
         await fs.promises.rm(sessionDir, { recursive: true, force: true });
       }
     } finally {
-      releaseConverterSlot();
+      if (slotAcquired) releaseConverterSlot();
     }
   })();
 

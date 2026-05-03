@@ -25,10 +25,25 @@ import {
   renderOpdsBookDetail,
 } from '../templates.js';
 
+const OPDS_BOOK_PAGE_SIZE = 50;
+
 function formatAuthorForOpds(author) {
   if (!author) return '';
   const parts = author.split(',');
   return parts.slice(0, 3).join(', ') + (parts.length > 3 ? t('opds.authorEtAl') : '');
+}
+
+/**
+ * Paginate a flat book array for OPDS feeds.
+ * Returns { pageItems, nextHref } where nextHref is '' when there are no more pages.
+ */
+function paginateOpdsBooks(allItems, page, selfPathBase) {
+  const offset = page * OPDS_BOOK_PAGE_SIZE;
+  const pageItems = allItems.slice(offset, offset + OPDS_BOOK_PAGE_SIZE);
+  const hasMore = offset + OPDS_BOOK_PAGE_SIZE < allItems.length;
+  const sep = selfPathBase.includes('?') ? '&' : '?';
+  const nextHref = hasMore ? `${selfPathBase}${sep}page=${page + 1}` : '';
+  return { pageItems, nextHref };
 }
 
 
@@ -120,8 +135,12 @@ export function registerOpdsRoutes(app, deps) {
       }
 
       if (type === 'title') {
+        const hasMoreTitle = result.total > page * limit;
+        const nextHref = hasMoreTitle
+          ? `/opds/search?type=title&term=${encodeURIComponent(term)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}&page=${page + 1}`
+          : '';
         res.type('application/atom+xml; charset=utf-8');
-        return res.send(renderOpdsBooksFeed(base, { id: 'search', title: t('opds.nav.search'), selfPath: req.originalUrl, items: result.items }));
+        return res.send(renderOpdsBooksFeed(base, { id: 'search', title: t('opds.nav.search'), selfPath: req.originalUrl, items: result.items, nextHref }));
       }
 
       const entries = result.items.map((item) => ({
@@ -156,8 +175,11 @@ export function registerOpdsRoutes(app, deps) {
       const books = authorName
         ? getAuthorSeriesBooksOpds(authorName, seriesQ, genre)
         : getSeriesBooksOpds(seriesQ);
+      const pg = safePage(req.query.page) - 1;  // safePage is 1-based, we need 0-based
+      const basePath = req.originalUrl.replace(/[&?]page=\d+/g, '');
+      const { pageItems, nextHref } = paginateOpdsBooks(books, Math.max(0, pg), basePath);
       res.type('application/atom+xml; charset=utf-8');
-      return res.send(renderOpdsBooksFeed(base, { id: 'search', title: seriesQ, selfPath: req.originalUrl, items: books }));
+      return res.send(renderOpdsBooksFeed(base, { id: 'search', title: seriesQ, selfPath: req.originalUrl, items: pageItems, nextHref }));
     }
 
     if (author.startsWith('=')) {
@@ -225,8 +247,11 @@ export function registerOpdsRoutes(app, deps) {
     if (series.startsWith('=')) {
       const seriesName = series.slice(1);
       const books = getSeriesBooksOpds(seriesName);
+      const pg = safePage(req.query.page) - 1;
+      const basePath = req.originalUrl.replace(/[&?]page=\d+/g, '');
+      const { pageItems, nextHref } = paginateOpdsBooks(books, Math.max(0, pg), basePath);
       res.type('application/atom+xml; charset=utf-8');
-      return res.send(renderOpdsBooksFeed(base, { id: 'search', title: seriesName || t('facet.facetSeries'), selfPath: req.originalUrl, items: books }));
+      return res.send(renderOpdsBooksFeed(base, { id: 'search', title: seriesName || t('facet.facetSeries'), selfPath: req.originalUrl, items: pageItems, nextHref }));
     }
 
     const entries = [];
@@ -328,7 +353,9 @@ export function registerOpdsRoutes(app, deps) {
     try {
       const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
       book.annotation = details?.annotation || '';
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn('[OPDS] book detail annotation extraction failed for uid=%s: %s', book.id, err?.message || err);
+    }
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsBookDetail(baseUrl(req), book));
   });

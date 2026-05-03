@@ -164,17 +164,38 @@ function renderAdminIndexStatus(indexStatus) {
 }
 
 function renderAdminIndexControls(indexStatus) {
-  const active = Boolean(indexStatus?.active);
+  const phase = String(indexStatus?.phase || '');
+  const active = Boolean(indexStatus?.active) || phase === 'maintenance';
   const paused = Boolean(indexStatus?.pauseRequested || indexStatus?.paused);
   const total = Number(indexStatus?.totalArchives || 0);
   const processed = Number(indexStatus?.processedArchives || 0);
   const imported = Math.max(0, Math.floor(Number(indexStatus?.importedBooks) || 0));
-  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const phaseDone = Number(indexStatus?.phaseDone || 0);
+  const phaseTotal = Number(indexStatus?.phaseTotal || 0);
+  const phaseLabel = String(indexStatus?.phaseLabel || '');
+  // Percent reflects the active phase: archives during import, FTS during rebuild,
+  // indeterminate (animated bar) during post-index maintenance.
+  let percent = 0;
+  let title = escapeHtml(t('app.adminIndexingLabel'));
+  let detail = '';
+  let indeterminate = false;
+  if (phase === 'fts') {
+    percent = phaseTotal > 0 ? Math.min(100, Math.round((phaseDone / phaseTotal) * 100)) : 0;
+    title = escapeHtml(t('app.adminIndexPhaseFts'));
+    detail = phaseTotal > 0 ? `<span class="muted" style="margin-left:12px">${phaseDone} / ${phaseTotal}</span>` : '';
+  } else if (phase === 'maintenance') {
+    indeterminate = true;
+    title = escapeHtml(t('app.adminIndexPhaseMaintenance'));
+    detail = phaseLabel ? `<span class="muted" style="margin-left:12px">${escapeHtml(phaseLabel)}</span>` : '';
+  } else {
+    percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+    detail = `<span class="muted" style="margin-left:12px">${escapeHtml(tp('app.adminIndexFilesLine', { processed, total, imported }))}</span>`;
+  }
   const line = active
-    ? `${escapeHtml(t('app.adminIndexingLabel'))} <strong>${percent}%</strong>` +
-      `<span class="muted" style="margin-left:12px">${escapeHtml(tp('app.adminIndexFilesLine', { processed, total, imported }))}</span>`
+    ? `${title} ${indeterminate ? '' : `<strong>${percent}%</strong>`}${detail}`
     : '';
   const archive = active && indexStatus?.currentArchive ? escapeHtml(String(indexStatus.currentArchive)) : '';
+  const barWidth = indeterminate ? 100 : percent;
   return `
     <div id="sources-index-progress" class="alert alert-info" data-admin-index-controls style="${active ? '' : 'display:none'}">
       <div class="index-banner-row">
@@ -187,7 +208,7 @@ function renderAdminIndexControls(indexStatus) {
       <div class="muted" id="sources-progress-archive" style="margin-top:6px;word-break:break-word;min-height:1.2em">${archive}</div>
       <div class="muted" id="sources-progress-time" style="margin-top:4px;font-size:12px;min-height:1.2em" data-index-started="${active && indexStatus?.startedAt ? escapeHtml(indexStatus.startedAt) : ''}"></div>
       <div style="margin-top:8px;height:4px;background:var(--border);border-radius:2px;overflow:hidden">
-        <div id="sources-progress-bar" style="height:100%;width:${percent}%;background:var(--accent);transition:width .3s ease"></div>
+        <div id="sources-progress-bar" class="${indeterminate ? 'progress-indeterminate' : ''}" style="height:100%;width:${barWidth}%;background:var(--accent);transition:width .3s ease"></div>
       </div>
     </div>
   `;
@@ -448,9 +469,39 @@ function renderTopbarSearch(query = '', field = 'all') {
     </form>`;
 }
 
+/* ── Card HTML fragment cache (M7) ── */
+const _cardHtmlCache = new Map();
+const CARD_CACHE_MAX = 3000;
+const CARD_CACHE_TTL = 600_000; // 10 minutes
+
+function _cardCacheKey(book, flags) {
+  return `${book.id}|${flags}`;
+}
+
+function getCachedCardHtml(key) {
+  const cached = _cardHtmlCache.get(key);
+  if (cached && Date.now() - cached.ts < CARD_CACHE_TTL) return cached.html;
+  if (cached) _cardHtmlCache.delete(key);
+  return null;
+}
+
+function setCachedCardHtml(key, html) {
+  if (_cardHtmlCache.size >= CARD_CACHE_MAX) {
+    const firstKey = _cardHtmlCache.keys().next().value;
+    if (firstKey !== undefined) _cardHtmlCache.delete(firstKey);
+  }
+  _cardHtmlCache.set(key, { html, ts: Date.now() });
+}
+
+/** Clear all cached card HTML fragments. Call when book metadata is edited. */
+export function clearCardHtmlCache() { _cardHtmlCache.clear(); }
+
 export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false, readBookIds = null } = {}) {
   const uniqueItems = uniqueBooksById(items);
   const effectiveBatch = batchSelect && !hideDownloads;
+  const canDl = canDownloadInUi(user);
+  // Flags string encodes rendering-affecting state for cache key
+  const flags = `${effectiveBatch ? '1' : '0'}${hideDownloads ? '1' : '0'}${canDl ? '1' : '0'}`;
   const batchCb = (book) =>
     effectiveBatch
       ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} data-batch-book-id="${escapeHtml(book.id)}" aria-label="${escapeHtml(t('batch.selectAria'))}"></label>`
@@ -459,14 +510,18 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
   return `
     <div class="grid">
       ${uniqueItems.map((book) => {
+        const isRead = readBookIds && readBookIds.has(book.id);
+        const cacheKey = _cardCacheKey(book, `${flags}${isRead ? '1' : '0'}`);
+        const cached = getCachedCardHtml(cacheKey);
+        if (cached) return cached;
         const cardDl = effectiveBatch || hideDownloads ? '' : renderDownloadMenu(book, { compact: true, user });
-        return `
+        const html = `
         <article class="card" data-book-id="${escapeHtml(book.id)}">
           ${batchCb(book)}
           <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-            <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
+            <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
             <span class="cover-fallback" hidden>
-              <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+              <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
               <span class="cover-fallback-overlay"></span>
               <span class="cover-fallback-copy">
                 <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
@@ -483,6 +538,8 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
             ${cardDl ? `<div class="card-actions">${cardDl}</div>` : ''}
           </div>
         </article>`;
+        setCachedCardHtml(cacheKey, html);
+        return html;
       }).join('')}
     </div>`;
 }
@@ -500,9 +557,9 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
         <article class="card" data-book-id="${escapeHtml(book.id)}">
           ${batchCb(book)}
           <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-            <img class="cover-image is-loaded" loading="lazy" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
+            <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
             <span class="cover-fallback" hidden>
-              <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+              <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
               <span class="cover-fallback-overlay"></span>
               <span class="cover-fallback-copy">
                 <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
@@ -901,7 +958,7 @@ export function renderLoginScreen({ title, subtitle, action, error = '', extraHt
     })();
   </script>
   <link rel="icon" href="/favicon.png" type="image/png">
-  <link rel="stylesheet" href="/styles.css?v=${STATIC_ASSET_VERSION}">
+  <link rel="stylesheet" href="/${CSS_ASSET_FILE}?v=${STATIC_ASSET_VERSION}">
   <style>
     .spinner{display:block;width:36px;height:36px;border:4px solid rgba(255,255,255,.15);border-top-color:var(--accent-hover,#a1671b);border-radius:50%;animation:spin .7s linear infinite;}
     html[data-theme="light"] .spinner{border-color:rgba(0,0,0,.12);border-top-color:var(--accent-hover,#a1671b);}

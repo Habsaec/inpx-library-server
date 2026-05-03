@@ -17,11 +17,14 @@ import {
   rebuildBooksFtsFromContent,
   beginFastSqliteImport,
   endFastSqliteImport,
+  beginExclusiveOperation,
+  endExclusiveOperation,
   refreshCatalogBookCounts,
   suppressBook,
-  getSuppressedBookIds
+  getSuppressedBookIds,
+  invalidateReadCache,
+  onViewRebuild
 } from './db.js';
-import { invalidateReadCache } from './db.js';
 import { config } from './config.js';
 import { formatGenreLabel, formatGenreList } from './genre-map.js';
 import { getAvailableDownloadFormats, FORMAT_LABELS } from './download-formats.js';
@@ -29,10 +32,9 @@ import { BATCH_DOWNLOAD_MAX } from './constants.js';
 import { t } from './i18n.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { logSystemEvent } from './services/system-events.js';
-import { PERF_LOG_ENABLED, perfLog, readMemoryUsageMb } from './services/perf-log.js';
+import { invalidateAllRecommendations } from './services/recommendations.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from './utils/async-timeout.js';
 import { resolveLibraryArchiveFile } from './flibusta-sidecar.js';
-import { clearArchiveReadCaches } from './archives.js';
 
 /** Уступка циклу событий между тяжёлыми синхронными участками (чтобы HTTP не «замирал»).
  *  Используем setImmediate без фиксированной задержки: на больших библиотеках setTimeout(2) давал
@@ -42,11 +44,25 @@ const yieldEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 /** Одна «логическая» строка INPX длиннее этого — пропуск: иначе split/нормализация могут блокировать поток надолго. */
 const MAX_INPX_LINE_CHARS = 256 * 1024;
 
-/** Периодичность PERF_LOG для INPX чанков и memory snapshot (только если PERF_LOG=1). */
-const PERF_INPX_CHUNK_EVERY = Math.max(1, Number.parseInt(String(process.env.PERF_INPX_CHUNK_EVERY || '20'), 10) || 20);
-const PERF_INPX_MEM_EVERY = Math.max(1, Number.parseInt(String(process.env.PERF_INPX_MEM_EVERY || '50'), 10) || 50);
-/** Защита от патологически больших .inp внутри INPX (память + бесконечное чтение). */
+/**
+ * Memory-budget constants for INPX/.inp buffering.
+ *
+ * MAX_INP_ENTRY_BYTES (80 MB) — single .inp files larger than this are skipped.
+ *   Flibusta's biggest .inp is ~60 MB; 80 MB gives headroom without risking OOM.
+ *
+ * HEAP_WARNING_THRESHOLD_MB (600 MB) — when V8 heap exceeds this during indexing
+ *   we emit a system-level warning.  For libraries with >500 000 books the Node
+ *   process typically needs ≥1.5 GB RSS; if you see repeated warnings, start the
+ *   server with  --max-old-space-size=2048  (or higher).
+ *
+ * Minimum RAM recommendation:
+ *   • <100 K books  — 512 MB is usually sufficient
+ *   • 100–500 K     — 1 GB
+ *   • >500 K         — 1.5 GB+  (set --max-old-space-size accordingly)
+ */
 const MAX_INP_ENTRY_BYTES = 80 * 1024 * 1024;
+const HEAP_WARNING_THRESHOLD_MB = 600;
+const HEAP_PRESSURE_THRESHOLD = 0.80; // 80% of max heap — triggers adaptive batch reduction
 const FACET_CACHE_TTL_MS = 120_000; // 20s → 120s:减少分面/系列/作者页面查询
 /** COUNT дедупа по фасету не зависит от страницы — кешируем отдельно, чтобы «далее» не гоняло тяжёлый подсчёт. */
 const FACET_DEDUP_TOTAL_TTL_MS = parseEnvTimeoutMs('FACET_DEDUP_TOTAL_TTL_MS', 300_000);
@@ -65,6 +81,31 @@ const authorGroupedCache = new Map();
 const authorGroupedInflight = new Map();
 const facetBooksInflight = new Map();
 const archiveStemLookupCache = new Map();
+
+/* ── Reset cached prepared statements when active_books VIEW is rebuilt ── */
+function resetInpxPreparedStatements() {
+  _stmtGetBookById = null;
+  _stmtGenresGrouped = null;
+  _stmtDupTotal = null;
+  _stmtDupGroups = null;
+  _stmtLibSections = null;
+  _stmtContinueCount = null;
+  _stmtContinueItems = null;
+  _stmtReadSeriesCount = null;
+  _stmtReadSeriesItems = null;
+  _stmtReadViewCount = null;
+  _stmtReadViewItems = null;
+  _stmtRecordHistoryUser = null;
+  _stmtRecordHistoryUpsert = null;
+  _stmtGetReadHistory = null;
+  _stmtIsFavAuthor = null;
+  _stmtIsFavSeries = null;
+  _stmtIsBookmarked = null;
+  _stmtGetStats = null;
+  _stmtIsBookRead = null;
+  _stmtIsSeriesFullyRead = null;
+}
+onViewRebuild(resetInpxPreparedStatements);
 
 function isAdaptiveInpxImportEnabled() {
   const raw = String(process.env.INPX_ADAPTIVE_IMPORT || '1').trim().toLowerCase();
@@ -108,6 +149,8 @@ function clearRuntimeQueryCaches() {
   facetSummaryCache.clear();
   authorGroupedCache.clear();
   archiveStemLookupCache.clear();
+  _distinctLangsCache = null;
+  _distinctFormatsCache = null;
 }
 
 /** Раньше сбрасывала проекцию дедупа; оставлено имя для совместимости вызовов из server. */
@@ -120,8 +163,11 @@ export function markLibraryDedupProjectionStale() {
   clearRuntimeQueryCaches();
 }
 
+/** Сбросить кеши, связанные с дедупликацией (вызывается после soft-delete / auto-clean). */
 export function invalidateDuplicatesCache() {
-  clearRuntimeQueryCaches();
+  facetDedupTotalCache.clear();
+  facetBooksCache.clear();
+  facetSummaryCache.clear();
 }
 
 /**
@@ -949,8 +995,6 @@ export function startBackgroundIndexing(force = false, incremental = true) {
     return false;
   }
 
-  clearArchiveReadCaches();
-
   indexState.active = true;
   indexState.error = '';
   indexState.startedAt = new Date().toISOString();
@@ -971,12 +1015,22 @@ export function startBackgroundIndexing(force = false, incremental = true) {
     sourceNames: enabledList.map((s) => s.name).slice(0, 24)
   });
   indexAllSources(force, useIncremental)
-    .then(async () => {
+    .then(() => {
+      // Flip status to 'ready' immediately so the UI shows completion.
+      // Heavy housekeeping (catalog book counts) runs in background.
       indexState.ready = true;
       indexState.active = false;
       indexState.finishedAt = new Date().toISOString();
-      await refreshCatalogBookCounts();
       resetIndexControlState();
+      setImmediate(async () => {
+        try {
+          await refreshCatalogBookCounts();
+          invalidateAllRecommendations();
+        } catch (err) {
+          logSystemEvent('warn', 'index', 'global index post-processing (background) failed', { error: err.message });
+          console.error('[index] background post-processing failed:', err);
+        }
+      });
     })
     .catch((error) => {
       indexState.active = false;
@@ -1004,8 +1058,6 @@ export function startSourceIndexing(sourceId, force = false) {
     return false;
   }
 
-  clearArchiveReadCaches();
-
   indexState.active = true;
   indexState.error = '';
   indexState.startedAt = new Date().toISOString();
@@ -1025,12 +1077,24 @@ export function startSourceIndexing(sourceId, force = false) {
     type: srcRow?.type || ''
   });
   indexSingleSource(sourceId, force)
-    .then(async () => {
+    .then(() => {
+      // Flip status to 'ready' immediately so the UI shows completion.
+      // Heavy housekeeping (catalog book counts) runs in background.
       indexState.ready = true;
       indexState.active = false;
       indexState.finishedAt = new Date().toISOString();
-      await refreshCatalogBookCounts();
       resetIndexControlState();
+      setImmediate(async () => {
+        try {
+          await refreshCatalogBookCounts();
+          invalidateAllRecommendations();
+        } catch (err) {
+          logSystemEvent('warn', 'index', 'single source index post-processing (background) failed', {
+            sourceId, name: srcRow?.name || '', error: err.message
+          });
+          console.error('[index] background post-processing failed:', err);
+        }
+      });
     })
     .catch((error) => {
       indexState.active = false;
@@ -1088,6 +1152,7 @@ async function indexSingleSource(sourceId, force = false) {
 
 async function indexAllSources(force = false, incremental = true) {
   await checkIndexControlPoint();
+
   const sources = getEnabledSources();
 
   if (!sources.length) {
@@ -1177,7 +1242,7 @@ async function ensureInpxSourceIndex(source, force = false, incremental = true) 
     throw new Error(`INPX файл не найден: ${inpxPath}`);
   }
 
-  const currentMtime = String(fs.statSync(inpxPath).mtimeMs);
+  const currentMtime = String((await fs.promises.stat(inpxPath)).mtimeMs);
   const mtimeKey = `inpx_mtime_${source.id}`;
   const previousMtime = getMeta(mtimeKey);
   const useIncremental = incremental && !force && source.lastIndexedAt;
@@ -1421,8 +1486,13 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
   let completedSuccessfully = false;
 
   try {
+  beginExclusiveOperation('indexing');
+  // Fast-import mode (synchronous=OFF + longer busy_timeout) is now used for
+  // incremental indexing too: per-chunk fsync was the dominant cost on slow
+  // disks. Safety: indexAllSources/indexSingleSource take a DB backup before
+  // calling us, so a power loss can be recovered.
+  beginFastSqliteImport();
   if (ftsBulkMode) {
-    beginFastSqliteImport();
     setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
   }
   if (!incremental) {
@@ -1686,6 +1756,23 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
     const content = iconv.decode(buffer, TEXT_ENCODING);
     const approxMiB = (buffer.length / (1024 * 1024)).toFixed(2);
     console.log(`[index] INPX: ${archiveName} декодирован ~${approxMiB} MiB — потоковый разбор строк (без split на весь файл)`);
+    {
+      const heapMb = Math.round(process.memoryUsage().heapUsed / (1024 * 1024));
+      const bufMb = Math.round(buffer.length / (1024 * 1024));
+      if (bufMb > 10) {
+        console.log(`[index] .inp декодирован: ~${bufMb} МБ, heap: ${heapMb} МБ`);
+      }
+      if (heapMb > HEAP_WARNING_THRESHOLD_MB) {
+        const warnMsg = `Высокое потребление памяти при парсинге INPX: heap ${heapMb} МБ (порог ${HEAP_WARNING_THRESHOLD_MB} МБ)`;
+        console.warn(`[index] ${warnMsg}`);
+        logSystemEvent('warn', 'index', warnMsg, {
+          heapMb,
+          thresholdMb: HEAP_WARNING_THRESHOLD_MB,
+          archive: archiveName,
+          suggestion: 'Consider increasing Node.js --max-old-space-size for large libraries'
+        });
+      }
+    }
     await yieldEventLoop();
 
     /** Обновлять подпись в UI чаще, чем раз в 120 чанков — иначе на одном толстом .inp кажется, что индексация «застыла» на середине. */
@@ -1721,25 +1808,6 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         console.warn(
           `[index] INPX: медленный чанк ${nextChunk} (${archiveName}): ${ms} ms — при большой библиотеке это нормально, не обрывайте процесс`
         );
-      }
-      if (PERF_LOG_ENABLED && (nextChunk === 1 || nextChunk % PERF_INPX_CHUNK_EVERY === 0 || ms > 30_000)) {
-        perfLog('inpx-chunk', 'INPX flush', {
-          sourceId,
-          archive: path.basename(String(archiveName || '')),
-          chunk: nextChunk,
-          rows: batch.length,
-          ms,
-          target: adaptiveChunkTarget,
-          importedBooks: indexState.importedBooks,
-          ftsBulkMode: ftsBulkMode ? 1 : 0
-        });
-      }
-      if (PERF_LOG_ENABLED && (nextChunk === 1 || nextChunk % PERF_INPX_MEM_EVERY === 0)) {
-        perfLog('memory', 'INPX snapshot', {
-          sourceId,
-          chunk: nextChunk,
-          ...readMemoryUsageMb()
-        });
       }
       if (adaptiveImportEnabled) {
         if (ms > 3500) {
@@ -1792,6 +1860,21 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
       batch.push(line);
       const targetChunkSize = adaptiveImportEnabled ? adaptiveChunkTarget : inpxImportChunkTarget();
       if (batch.length >= targetChunkSize) {
+        // Adaptive heap pressure: check once per chunk flush, NOT per row.
+        // process.memoryUsage() is a syscall that walks all V8 arenas; on Windows
+        // it costs tens of microseconds. Per-row checks turned a 10-20 min index
+        // into 1+ hour on multi-million book libraries.
+        if (adaptiveImportEnabled) {
+          const heapInfo = process.memoryUsage();
+          const heapRatio = heapInfo.heapUsed / (heapInfo.heapTotal || 1);
+          if (heapRatio > HEAP_PRESSURE_THRESHOLD) {
+            const prev = adaptiveChunkTarget;
+            adaptiveChunkTarget = Math.max(minChunkTarget, Math.floor(adaptiveChunkTarget / 2));
+            if (adaptiveChunkTarget !== prev) {
+              console.warn(`[index] heap pressure ${(heapRatio * 100).toFixed(0)}%, reducing batch ${prev} -> ${adaptiveChunkTarget}`);
+            }
+          }
+        }
         flush();
         if (chunkSeq % UI_LINE_PROGRESS_EVERY === 0) {
           indexState.currentArchive = `${archiveName} … импорт ~${lineCount} строк (чанк ${chunkSeq}, архив ${ei + 1}/${entriesToProcess.length})`;
@@ -1882,6 +1965,9 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
   } finally {
     if (ftsBulkMode && completedSuccessfully) {
       indexState.currentArchive = 'FTS: полная пересборка поиска…';
+      indexState.phase = 'fts';
+      indexState.phaseDone = 0;
+      indexState.phaseTotal = 0;
       const ftsT0 = Date.now();
       console.log(
         '[index] FTS: полная пересборка полнотекстового индекса (books_fts) — при больших библиотеках может занять несколько минут…'
@@ -1891,8 +1977,13 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         await rebuildBooksFtsFromContent({
           onProgress: ({ done, total }) => {
             indexState.currentArchive = `FTS: поиск ${done}/${total}…`;
+            indexState.phaseDone = done;
+            indexState.phaseTotal = total;
           }
         });
+        indexState.phase = '';
+        indexState.phaseDone = 0;
+        indexState.phaseTotal = 0;
         const ftsSec = ((Date.now() - ftsT0) / 1000).toFixed(1);
         console.log(`[index] FTS: готово за ${ftsSec} с`);
         logSystemEvent('info', 'index', 'INPX FTS full rebuild completed', { sourceId, seconds: Number(ftsSec) });
@@ -1920,9 +2011,9 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
       }
     }
-    if (ftsBulkMode) {
-      endFastSqliteImport();
-    }
+    // Always pair with the unconditional beginFastSqliteImport() above.
+    endFastSqliteImport();
+    endExclusiveOperation('indexing');
   }
 }
 
@@ -2087,6 +2178,50 @@ function buildGenreFilterSql(genre = '') {
   };
 }
 
+function buildLanguageFilterSql(lang = '') {
+  if (!lang || lang.length < 2) return null;
+  return { where: `active_books.lang = ?`, params: [lang.toLowerCase()] };
+}
+
+function buildFormatFilterSql(format = '') {
+  if (!format) return null;
+  return { where: `LOWER(active_books.ext) = ?`, params: [format.toLowerCase()] };
+}
+
+function buildYearFilterSql(year = 0) {
+  const y = Number(year);
+  if (!y || y < 1800 || y > 2100) return null;
+  return { where: `CAST(SUBSTR(active_books.date, 1, 4) AS INTEGER) = ?`, params: [y] };
+}
+
+const DISTINCT_CACHE_TTL = 60_000; // 60 seconds
+
+let _distinctLangsCache = null;
+let _distinctLangsCacheTime = 0;
+
+export function getDistinctLanguages() {
+  const now = Date.now();
+  if (_distinctLangsCache && now - _distinctLangsCacheTime < DISTINCT_CACHE_TTL) {
+    return _distinctLangsCache;
+  }
+  _distinctLangsCache = db.prepare(`SELECT DISTINCT lang FROM books WHERE lang != '' AND deleted = 0 ORDER BY lang`).all().map(r => r.lang);
+  _distinctLangsCacheTime = now;
+  return _distinctLangsCache;
+}
+
+let _distinctFormatsCache = null;
+let _distinctFormatsCacheTime = 0;
+
+export function getDistinctFormats() {
+  const now = Date.now();
+  if (_distinctFormatsCache && now - _distinctFormatsCacheTime < DISTINCT_CACHE_TTL) {
+    return _distinctFormatsCache;
+  }
+  _distinctFormatsCache = db.prepare(`SELECT DISTINCT ext FROM books WHERE ext != '' AND deleted = 0 ORDER BY ext`).all().map(r => r.ext);
+  _distinctFormatsCacheTime = now;
+  return _distinctFormatsCache;
+}
+
 function buildAuthorWhereForBooks(query) {
   const parsed = parseSearchOperator(query);
   const needleKey = createSortKey(parsed.value || query);
@@ -2175,10 +2310,14 @@ function buildCatalogSearchSql(column, query, { startsWith = false } = {}) {
   };
 }
 
-export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all', sort = 'recent', genre = '', letter = '' }) {
+export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all', sort = 'recent', genre = '', letter = '', lang = '', format = '', year = 0 }) {
   const offset = (page - 1) * pageSize;
   const orderBy = resolveSort(sort);
   const genreFilter = buildGenreFilterSql(genre);
+  const langFilter = buildLanguageFilterSql(lang);
+  const formatFilter = buildFormatFilterSql(format);
+  const yearFilter = buildYearFilterSql(year);
+  const extraFilters = [langFilter, formatFilter, yearFilter].filter(Boolean);
   const parsedQuery = parseSearchOperator(query);
   const letterNorm = String(letter || '').trim().toLowerCase();
   if (!query.trim()) {
@@ -2186,6 +2325,7 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
     const whereParams = [];
     if (genreFilter) { whereParts.push(genreFilter.where); whereParams.push(...genreFilter.params); }
     if (letterNorm) { whereParts.push('b.title_sort LIKE ?'); whereParams.push(`${letterNorm}%`); }
+    for (const ef of extraFilters) { whereParts.push(ef.where.replace(/active_books\./g, 'b.')); whereParams.push(...ef.params); }
     const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     const gfParams = whereParams;
     const listOrderBy =
@@ -2247,6 +2387,7 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
         fullWhereParts.push(genreFilter.where);
         fullWhereParams.push(...genreFilter.params);
       }
+      for (const ef of extraFilters) { fullWhereParts.push(ef.where); fullWhereParams.push(...ef.params); }
       const combinedWhere = fullWhereParts.map(p => `(${p})`).join(' AND ');
 
       const total = db.prepare(`
@@ -2298,7 +2439,10 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
     }
 
     if (parsedQuery.operator === '~') {
-      const REGEX_SCAN_LIMIT = 10000;
+      // Regex can't be pushed to SQLite, so we scan a limited window of rows
+      // and filter in JS. 5000 is an intentional trade-off between coverage
+      // and memory pressure — raising it increases peak RSS linearly.
+      const REGEX_SCAN_LIMIT = 5000;
       const items = db.prepare(`
         SELECT id, title, authors, genres, series, series_no AS seriesNo, ext, lang,
                archive_name AS archiveName, keywords,
@@ -2308,10 +2452,10 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
                genres_search AS genresSearch,
                keywords_search AS keywordsSearch
         FROM active_books
-        ${genreFilter ? `WHERE ${genreFilter.where}` : ''}
+        ${(() => { const parts = []; const params = []; if (genreFilter) { parts.push(genreFilter.where); params.push(...genreFilter.params); } for (const ef of extraFilters) { parts.push(ef.where); params.push(...ef.params); } return parts.length ? `WHERE ${parts.join(' AND ')}` : ''; })()}
         ORDER BY ${orderBy}
         LIMIT ${REGEX_SCAN_LIMIT}
-      `).all(...(genreFilter ? genreFilter.params : []))
+      `).all(...(() => { const params = []; if (genreFilter) params.push(...genreFilter.params); for (const ef of extraFilters) params.push(...ef.params); return params; })())
         .map(mapBookListRow)
         .filter((book) => matchesBookSearchField(book, field, query));
 
@@ -2338,21 +2482,25 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
 
   const prefix = columnMap[field] ? `${columnMap[field]}:` : '';
   const ftsQuery = `${prefix}${safeQuery}`;
-  const ftsWhere = genreFilter
-    ? `books_fts MATCH ? AND EXISTS (
+  const ftsWhereParts = ['books_fts MATCH ?'];
+  const ftsBaseParams = [ftsQuery];
+  if (genreFilter) {
+    ftsWhereParts.push(`EXISTS (
         SELECT 1
         FROM book_genres bg
         JOIN genres_catalog g ON g.id = bg.genre_id
         WHERE bg.book_id = b.id AND g.name = ?
-      )`
-    : 'books_fts MATCH ?';
-  const ftsStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
+      )`);
+    ftsBaseParams.push(...genreFilter.params);
+  }
+  for (const ef of extraFilters) { ftsWhereParts.push(ef.where.replace(/active_books\./g, 'b.')); ftsBaseParams.push(...ef.params); }
+  const ftsWhere = ftsWhereParts.join(' AND ');
   const total = db.prepare(`
     SELECT COUNT(*) AS count
     FROM books_fts f
     JOIN active_books b ON b.rowid = f.rowid
     WHERE ${ftsWhere}
-  `).get(...(genreFilter ? [ftsQuery, ...genreFilter.params] : [ftsQuery])).count;
+  `).get(...ftsBaseParams).count;
 
   const searchOrderBy = resolveBookAliasSort(sort, 'b');
   const items = db.prepare(`
@@ -2362,28 +2510,15 @@ export function searchBooks({ query = '', page = 1, pageSize = 24, field = 'all'
     WHERE ${ftsWhere}
     ORDER BY ${searchOrderBy}
     LIMIT ? OFFSET ?
-  `).all(...(genreFilter ? [ftsQuery, ...genreFilter.params, pageSize, offset] : [ftsQuery, pageSize, offset])).map(mapBookListRow);
-
-  if (PERF_LOG_ENABLED) {
-    perfLog('fts', 'searchBooks', {
-      ms: Date.now() - ftsStartedAt,
-      field,
-      sort,
-      queryLen: String(query || '').trim().length,
-      page,
-      pageSize,
-      total,
-      items: items.length
-    });
-  }
+  `).all(...ftsBaseParams, pageSize, offset).map(mapBookListRow);
 
   return { total, items };
 }
 
-export function searchCatalog({ query = '', page = 1, pageSize = 24, field = 'books', sort = 'recent', genre = '', letter = '' }) {
+export function searchCatalog({ query = '', page = 1, pageSize = 24, field = 'books', sort = 'recent', genre = '', letter = '', lang = '', format = '', year = 0 }) {
   const bookFields = new Set(['books', 'title', 'book-authors', 'book-series', 'genres', 'keywords']);
   const normalizedField = ['books', 'authors', 'series', 'title', 'book-authors', 'book-series', 'genres', 'keywords'].includes(field) ? field : 'books';
-  if (!String(query || '').trim() && !String(genre || '').trim() && !String(letter || '').trim()) {
+  if (!String(query || '').trim() && !String(genre || '').trim() && !String(letter || '').trim() && !lang && !format && !year) {
     return { total: 0, items: [], field: normalizedField };
   }
 
@@ -2413,13 +2548,17 @@ export function searchCatalog({ query = '', page = 1, pageSize = 24, field = 'bo
     field: bookFields.has(normalizedField) ? bookFieldMap[normalizedField] : 'all',
     sort,
     genre,
-    letter
+    letter,
+    lang,
+    format,
+    year
   });
   return { ...result, field: normalizedField };
 }
 
+let _stmtGetBookById = null;
 export function getBookById(id) {
-  const row = db.prepare(`
+  _stmtGetBookById ??= db.prepare(`
     SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.file_name AS fileName,
            b.archive_name AS archiveName, b.size, b.lib_id AS libId, b.ext, b.date, b.lang, b.keywords,
            b.source_id AS sourceId, b.imported_at AS importedAt,
@@ -2427,7 +2566,8 @@ export function getBookById(id) {
     FROM active_books b
     LEFT JOIN sources s ON s.id = b.source_id
     WHERE b.id = ?
-  `).get(id);
+  `);
+  const row = _stmtGetBookById.get(id);
   if (!row) return null;
   const sourceFlibusta = effectiveSourceFlibustaForBook(row);
   return mapBookListRow({ ...row, sourceFlibusta });
@@ -2567,19 +2707,22 @@ export function getBookDuplicateCandidates(_bookId, _limit = 8) {
 }
 
 // ─── Duplicate detection ─────────────────────────────────────────
+let _stmtDupTotal = null;
+let _stmtDupGroups = null;
 export function getDuplicateGroups({ page = 1, pageSize = 50 } = {}) {
   const offset = (page - 1) * pageSize;
-  const totalRow = db.prepare(`
+  _stmtDupTotal ??= db.prepare(`
     SELECT COUNT(*) AS count FROM (
       SELECT 1 FROM active_books
       WHERE title_sort IS NOT NULL AND title_sort != ''
       GROUP BY title_sort, authors
       HAVING COUNT(*) > 1
     )
-  `).get();
+  `);
+  const totalRow = _stmtDupTotal.get();
   const total = totalRow?.count || 0;
 
-  const groups = db.prepare(`
+  _stmtDupGroups ??= db.prepare(`
     WITH dup_keys AS (
       SELECT title_sort, authors
       FROM active_books
@@ -2594,7 +2737,8 @@ export function getDuplicateGroups({ page = 1, pageSize = 50 } = {}) {
     FROM active_books b
     JOIN dup_keys dk ON dk.title_sort = b.title_sort AND dk.authors = b.authors
     ORDER BY b.title_sort ASC, b.authors ASC, b.ext ASC, b.id ASC
-  `).all(pageSize, offset);
+  `);
+  const groups = _stmtDupGroups.all(pageSize, offset);
 
   // Group into arrays by (title_sort, authors)
   const grouped = [];
@@ -2946,15 +3090,16 @@ export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'count'
   return { total, items };
 }
 
+let _stmtGenresGrouped = null;
 export function listGenresGrouped() {
-  const all = db.prepare(`
+  _stmtGenresGrouped ??= db.prepare(`
     SELECT g.name, COALESCE(g.display_name, g.name) AS displayName,
            g.book_count AS bookCount
     FROM genres_catalog g
     WHERE g.book_count > 0
     ORDER BY g.book_count DESC
-  `).all();
-  return all;
+  `);
+  return _stmtGenresGrouped.all();
 }
 
 export function listGenres({ page = 1, pageSize = 50, query = '', sort = 'count', letter = '' }) {
@@ -3626,32 +3771,18 @@ export function getFacetSummary(facet, value) {
   return emptySummary;
 }
 
+let _stmtLibSections = null;
 export function getLibrarySections() {
   const POOL_SIZE = 200;
-  const DISPLAY_COUNT = 12;
-  const pool = db.prepare(`
+  _stmtLibSections ??= db.prepare(`
     SELECT id, title, authors, genres, series, series_no AS seriesNo, ext, lang, archive_name AS archiveName
     FROM active_books
-    ORDER BY imported_at DESC, id DESC
+    ORDER BY COALESCE(NULLIF(date, ''), imported_at) DESC, imported_at DESC, id DESC
     LIMIT ?
-  `).all(POOL_SIZE).map(mapBookListRow);
-
-  // Shuffle and pick DISPLAY_COUNT random items from the pool
-  let newest;
-  if (pool.length <= DISPLAY_COUNT) {
-    newest = pool;
-  } else {
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
-    newest = pool.slice(0, DISPLAY_COUNT);
-  }
-
-  // Для главной страницы сейчас нужен только блок «Новые поступления».
-  // Не считаем тяжёлые агрегаты (authors/series/genres/languages) на первом cold-load.
+  `);
+  const pool = _stmtLibSections.all(POOL_SIZE).map(mapBookListRow);
   return {
-    newest,
+    newest: pool,
     titles: [],
     authors: [],
     series: [],
@@ -3660,7 +3791,23 @@ export function getLibrarySections() {
   };
 }
 
-export function getLibraryView(view = 'recent', { page = 1, pageSize = 24, username = '' } = {}) {
+let _stmtHasContinue = null;
+/** Быстрая проверка наличия «продолжить чтение» без тяжёлого COUNT/JOIN. */
+export function hasContinueBooks(username) {
+  if (!username) return false;
+  _stmtHasContinue ??= db.prepare(
+    `SELECT 1 FROM reading_history rh JOIN active_books b ON b.id = rh.book_id WHERE rh.username = ? LIMIT 1`
+  );
+  return !!_stmtHasContinue.get(username);
+}
+
+let _stmtContinueCount = null;
+let _stmtContinueItems = null;
+let _stmtReadSeriesCount = null;
+let _stmtReadSeriesItems = null;
+let _stmtReadViewCount = null;
+let _stmtReadViewItems = null;
+export function getLibraryView(view = 'recent', { page = 1, pageSize = 24, username = '', type = '' } = {}) {
   const offset = (page - 1) * pageSize;
 
   if (view === 'continue') {
@@ -3669,14 +3816,15 @@ export function getLibraryView(view = 'recent', { page = 1, pageSize = 24, usern
       return { total: 0, items: [] };
     }
 
-    const total = db.prepare(`
+    _stmtContinueCount ??= db.prepare(`
       SELECT COUNT(DISTINCT rh.book_id) AS count
       FROM reading_history rh
       JOIN active_books b ON b.id = rh.book_id
       WHERE rh.username = ?
-    `).get(normalizedUsername).count;
+    `);
+    const total = _stmtContinueCount.get(normalizedUsername).count;
 
-    const items = db.prepare(`
+    _stmtContinueItems ??= db.prepare(`
       SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName,
              COALESCE(rp.progress, 0) AS readProgress
       FROM (
@@ -3689,7 +3837,8 @@ export function getLibraryView(view = 'recent', { page = 1, pageSize = 24, usern
       LEFT JOIN reading_positions rp ON rp.book_id = b.id AND rp.username = ?
       ORDER BY rh.last_opened_at DESC, rh.open_count DESC, b.id DESC
       LIMIT ? OFFSET ?
-    `).all(normalizedUsername, normalizedUsername, pageSize, offset).map(mapBookListRow);
+    `);
+    const items = _stmtContinueItems.all(normalizedUsername, normalizedUsername, pageSize, offset).map(mapBookListRow);
 
     return { total, items };
   }
@@ -3700,21 +3849,51 @@ export function getLibraryView(view = 'recent', { page = 1, pageSize = 24, usern
       return { total: 0, items: [] };
     }
 
-    const total = db.prepare(`
+    if (type === 'series') {
+      _stmtReadSeriesCount ??= db.prepare(`
+        SELECT COUNT(*) AS count FROM (
+          SELECT ab.series
+          FROM active_books ab
+          LEFT JOIN read_books rb ON rb.username = ? AND rb.book_id = ab.id
+          WHERE ab.series IS NOT NULL AND ab.series != ''
+          GROUP BY ab.series
+          HAVING COUNT(*) = COUNT(rb.book_id)
+        )
+      `);
+      const totalRow = _stmtReadSeriesCount.get(normalizedUsername);
+
+      _stmtReadSeriesItems ??= db.prepare(`
+        SELECT ab.series AS name, COUNT(*) AS bookCount
+        FROM active_books ab
+        LEFT JOIN read_books rb ON rb.username = ? AND rb.book_id = ab.id
+        WHERE ab.series IS NOT NULL AND ab.series != ''
+        GROUP BY ab.series
+        HAVING COUNT(*) = COUNT(rb.book_id)
+        ORDER BY ab.series COLLATE NOCASE
+        LIMIT ? OFFSET ?
+      `);
+      const items = _stmtReadSeriesItems.all(normalizedUsername, pageSize, offset);
+
+      return { total: totalRow.count, items, itemType: 'series' };
+    }
+
+    _stmtReadViewCount ??= db.prepare(`
       SELECT COUNT(*) AS count
       FROM read_books rb
       JOIN active_books b ON b.id = rb.book_id
       WHERE rb.username = ?
-    `).get(normalizedUsername).count;
+    `);
+    const total = _stmtReadViewCount.get(normalizedUsername).count;
 
-    const items = db.prepare(`
+    _stmtReadViewItems ??= db.prepare(`
       SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.archive_name AS archiveName
       FROM read_books rb
       JOIN active_books b ON b.id = rb.book_id
       WHERE rb.username = ?
       ORDER BY rb.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(normalizedUsername, pageSize, offset).map(mapBookListRow);
+    `);
+    const items = _stmtReadViewItems.all(normalizedUsername, pageSize, offset).map(mapBookListRow);
 
     return { total, items };
   }
@@ -3978,48 +4157,49 @@ export function getAuthorBooksOpds(authorName, genre = '') {
   return db.prepare(sql).all(...params);
 }
 
-/**
- * Books of a single author within a specific series, for OPDS drill-down from /opds/author.
- *
- * IMPORTANT: matches `b.series` (raw text from the books table), NOT the canonical
- * `series_catalog.name`. The author handler groups its entries on `b.series`, so using the
- * same column guarantees non-empty results regardless of how `series_catalog` normalizes
- * the value (whitespace, ё/е, etc). Fixes the "каталог пуст" bug after picking an author's
- * series in OPDS.
- */
-export function getAuthorSeriesBooksOpds(authorName, seriesText, genre = '') {
-  const params = [String(authorName || ''), String(seriesText || '')];
-  let genreJoin = '';
+export function getAuthorSeriesBooksOpds(authorName, seriesName, genre = '') {
+  const rankOrder = 'CAST(b.series_no AS INTEGER), b.title';
+  let sql;
+  let params;
   if (genre) {
-    const genreParams = genre.split(',').map((g) => g.trim()).filter(Boolean);
-    if (genreParams.length) {
-      genreJoin = `
-        JOIN book_genres bg ON bg.book_id = b.id
-        JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genreParams.map(() => '?').join(',')})`;
-      params.push(...genreParams);
-    }
+    const genreParams = genre.split(',').map((g) => g.trim());
+    sql = `
+      SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+             b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+             dc.annotation
+      FROM active_books b
+      JOIN book_authors ba ON ba.book_id = b.id
+      JOIN authors a ON a.id = ba.author_id AND a.name = ?
+      JOIN book_genres bg ON bg.book_id = b.id
+      JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genreParams.map(() => '?').join(',')})
+      LEFT JOIN sources s ON s.id = b.source_id
+      LEFT JOIN book_details_cache dc ON dc.book_id = b.id
+      WHERE b.series = ?
+      GROUP BY b.id
+      ORDER BY ${rankOrder}
+      LIMIT 500`;
+    params = [authorName, ...genreParams, seriesName];
+  } else {
+    sql = `
+      SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+             b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+             dc.annotation
+      FROM active_books b
+      JOIN book_authors ba ON ba.book_id = b.id
+      JOIN authors a ON a.id = ba.author_id AND a.name = ?
+      LEFT JOIN sources s ON s.id = b.source_id
+      LEFT JOIN book_details_cache dc ON dc.book_id = b.id
+      WHERE b.series = ?
+      ORDER BY ${rankOrder}
+      LIMIT 500`;
+    params = [authorName, seriesName];
   }
-  const sql = `
-    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
-           b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
-           dc.annotation
-    FROM active_books b
-    JOIN book_authors ba ON ba.book_id = b.id
-    JOIN authors a ON a.id = ba.author_id AND a.name = ?
-    ${genreJoin}
-    LEFT JOIN sources s ON s.id = b.source_id
-    LEFT JOIN book_details_cache dc ON dc.book_id = b.id
-    WHERE b.series = ?
-    GROUP BY b.id
-    ORDER BY CAST(b.series_no AS INTEGER), b.title
-    LIMIT 500`;
   return db.prepare(sql).all(...params);
 }
 
 export function getSeriesBooksOpds(seriesName) {
-  const raw = String(seriesName || '');
-  const name = resolveSeriesCatalogName(raw);
-  const rows = db
+  const name = resolveSeriesCatalogName(String(seriesName || ''));
+  return db
     .prepare(
       `
     SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
@@ -4035,43 +4215,30 @@ export function getSeriesBooksOpds(seriesName) {
   `
     )
     .all(name);
-  if (rows.length) return rows;
-  // Defensive fallback: when canonical resolution doesn't match (whitespace, ё/е, ambiguity),
-  // fall back to raw `b.series` text match so OPDS clients never get an empty "каталог пуст".
-  return db
-    .prepare(
-      `
-    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
-           b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
-           dc.annotation
-    FROM active_books b
-    LEFT JOIN sources s ON s.id = b.source_id
-    LEFT JOIN book_details_cache dc ON dc.book_id = b.id
-    WHERE b.series = ?
-    ORDER BY CAST(b.series_no AS INTEGER), b.title
-    LIMIT 500
-  `
-    )
-    .all(raw);
 }
 
+let _stmtRecordHistoryUser = null;
+let _stmtRecordHistoryUpsert = null;
 export function recordReadingHistory(username, bookId) {
-  db.prepare(`
+  _stmtRecordHistoryUser ??= db.prepare(`
     INSERT INTO users(username) VALUES(?)
     ON CONFLICT(username) DO NOTHING
-  `).run(username);
+  `);
+  _stmtRecordHistoryUser.run(username);
 
-  db.prepare(`
+  _stmtRecordHistoryUpsert ??= db.prepare(`
     INSERT INTO reading_history(username, book_id, last_opened_at, open_count)
     VALUES(?, ?, CURRENT_TIMESTAMP, 1)
     ON CONFLICT(username, book_id) DO UPDATE SET
       last_opened_at = CURRENT_TIMESTAMP,
       open_count = reading_history.open_count + 1
-  `).run(username, bookId);
+  `);
+  _stmtRecordHistoryUpsert.run(username, bookId);
 }
 
+let _stmtGetReadHistory = null;
 export function getReadingHistory(username, limit = 20) {
-  return db.prepare(`
+  _stmtGetReadHistory ??= db.prepare(`
     SELECT b.id, b.title, b.authors, b.ext, b.series, b.series_no AS seriesNo,
            rh.last_opened_at AS lastOpenedAt, rh.open_count AS openCount
     FROM reading_history rh
@@ -4079,7 +4246,8 @@ export function getReadingHistory(username, limit = 20) {
     WHERE rh.username = ?
     ORDER BY rh.last_opened_at DESC
     LIMIT ?
-  `).all(username, limit);
+  `);
+  return _stmtGetReadHistory.all(username, limit);
 }
 
 export function toggleFavoriteAuthor(username, authorName) {
@@ -4170,55 +4338,55 @@ export function getFavoriteSeries(username, limit = 20, sort = 'date') {
   `).all(username, limit);
 }
 
+let _stmtIsFavAuthor = null;
 export function isFavoriteAuthor(username, authorName) {
   const resolvedName = resolveAuthorName(authorName);
   if (!resolvedName) {
     return false;
   }
 
-  return Boolean(db.prepare(`
+  _stmtIsFavAuthor ??= db.prepare(`
     SELECT 1
     FROM favorite_authors fa
     JOIN authors a ON a.id = fa.author_id
     WHERE fa.username = ? AND a.name = ?
-  `).get(username, resolvedName));
+  `);
+  return Boolean(_stmtIsFavAuthor.get(username, resolvedName));
 }
 
+let _stmtIsFavSeries = null;
 export function isFavoriteSeries(username, seriesName) {
   const resolved = resolveSeriesCatalogName(String(seriesName || ''));
-  return Boolean(db.prepare(`
+  _stmtIsFavSeries ??= db.prepare(`
     SELECT 1
     FROM favorite_series fs
     JOIN series_catalog s ON s.id = fs.series_id
     WHERE fs.username = ? AND s.name = ?
-  `).get(username, resolved));
+  `);
+  return Boolean(_stmtIsFavSeries.get(username, resolved));
 }
 
-export function getBookmarks(username, sort = 'date', limit = 0) {
+export function getBookmarks(username, sort = 'date') {
   const orderMap = {
     title: 'b.title COLLATE NOCASE ASC',
     author: `COALESCE(b.authors, '') COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC`,
     date: 'bm.created_at DESC'
   };
   const orderBy = orderMap[sort] || orderMap.date;
-  const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
-  const sql = `
+  return db.prepare(`
     SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo,
            b.ext, b.archive_name AS archiveName
     FROM bookmarks bm
     JOIN active_books b ON b.id = bm.book_id
     WHERE bm.username = ?
     ORDER BY ${orderBy}
-    ${normalizedLimit ? 'LIMIT ?' : ''}
-  `;
-  const rows = normalizedLimit
-    ? db.prepare(sql).all(username, normalizedLimit)
-    : db.prepare(sql).all(username);
-  return rows.map(mapBookListRow);
+  `).all(username).map(mapBookListRow);
 }
 
+let _stmtIsBookmarked = null;
 export function isBookmarked(username, bookId) {
-  return Boolean(db.prepare('SELECT 1 FROM bookmarks WHERE username = ? AND book_id = ?').get(username, bookId));
+  _stmtIsBookmarked ??= db.prepare('SELECT 1 FROM bookmarks WHERE username = ? AND book_id = ?');
+  return Boolean(_stmtIsBookmarked.get(username, bookId));
 }
 
 let _stmtIsBookRead = null;
@@ -4235,8 +4403,15 @@ export function isSeriesFullyRead(username, seriesName) {
   if (!_stmtIsSeriesFullyRead) {
     _stmtIsSeriesFullyRead = db.prepare(`
       SELECT
-        (SELECT COUNT(*) FROM active_books WHERE series = ?) AS total,
-        (SELECT COUNT(*) FROM read_books rb JOIN active_books b ON b.id = rb.book_id WHERE rb.username = ? AND b.series = ?) AS readCount
+        (SELECT COUNT(*) FROM active_books ab
+         JOIN book_series bs ON bs.book_id = ab.id
+         JOIN series_catalog sc ON sc.id = bs.series_id
+         WHERE sc.name = ?) AS total,
+        (SELECT COUNT(*) FROM read_books rb
+         JOIN active_books ab ON ab.id = rb.book_id
+         JOIN book_series bs ON bs.book_id = ab.id
+         JOIN series_catalog sc ON sc.id = bs.series_id
+         WHERE rb.username = ? AND sc.name = ?) AS readCount
     `);
   }
   const row = _stmtIsSeriesFullyRead.get(seriesName, username, seriesName);
@@ -4323,27 +4498,28 @@ export function addReadBooksIfMissing(username, bookIds) {
   return { added, already, missing };
 }
 
-export function getReadBooks(username, sort = 'date', limit = 0) {
+export function getReadBooks(username, sort = 'date') {
   const orderMap = {
     title: 'b.title COLLATE NOCASE ASC',
     author: `COALESCE(b.authors, '') COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC`,
     date: 'rb.created_at DESC'
   };
   const orderBy = orderMap[sort] || orderMap.date;
-  const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
-  const sql = `
+  return db.prepare(`
     SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo,
            b.ext, b.archive_name AS archiveName
     FROM read_books rb
     JOIN active_books b ON b.id = rb.book_id
     WHERE rb.username = ?
     ORDER BY ${orderBy}
-    ${normalizedLimit ? 'LIMIT ?' : ''}
-  `;
-  const rows = normalizedLimit
-    ? db.prepare(sql).all(username, normalizedLimit)
-    : db.prepare(sql).all(username);
-  return rows.map(mapBookListRow);
+  `).all(username).map(mapBookListRow);
+}
+
+/** Лёгкий запрос — только ID прочитанных книг без JOIN и сортировки */
+export function getReadBookIds(username) {
+  return db.prepare('SELECT book_id AS id FROM read_books WHERE username = ?')
+    .all(username)
+    .map((r) => r.id);
 }
 
 export function getSuggestions(query, limit = 5) {
@@ -4352,36 +4528,14 @@ export function getSuggestions(query, limit = 5) {
   const key = createSortKey(raw);
   if (!key) return { books: [], authors: [], series: [] };
 
-  const booksPrefix = db.prepare(`
-    SELECT id, title, authors, series
-    FROM active_books
+  const books = db.prepare(`
+    SELECT id, title, authors, series FROM active_books
     WHERE title_sort LIKE ? OR author_sort LIKE ?
     ORDER BY CASE WHEN title_sort LIKE ? THEN 0 ELSE 1 END, title_sort ASC
     LIMIT ?
-  `).all(`${key}%`, `${key}%`, `${key}%`, limit);
-  const books = booksPrefix;
-  if (books.length < limit) {
-    const need = limit - books.length;
-    const seen = new Set(books.map((b) => String(b.id)));
-    const booksContains = db.prepare(`
-      SELECT id, title, authors, series
-      FROM active_books
-      WHERE (title_sort LIKE ? OR author_sort LIKE ?)
-        AND title_sort NOT LIKE ?
-        AND author_sort NOT LIKE ?
-      ORDER BY CASE WHEN title_sort LIKE ? THEN 0 ELSE 1 END, title_sort ASC
-      LIMIT ?
-    `).all(`%${key}%`, `%${key}%`, `${key}%`, `${key}%`, `${key}%`, need * 2);
-    for (const row of booksContains) {
-      const id = String(row.id);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      books.push(row);
-      if (books.length >= limit) break;
-    }
-  }
+  `).all(`%${key}%`, `%${key}%`, `${key}%`, limit).map(mapBookListRow);
 
-  const authorsPrefix = db.prepare(`
+  const authors = db.prepare(`
     SELECT a.name AS name, COALESCE(a.display_name, a.name) AS displayName,
            COUNT(ab.id) AS bookCount
     FROM authors a
@@ -4389,31 +4543,9 @@ export function getSuggestions(query, limit = 5) {
     JOIN active_books ab ON ab.id = ba.book_id
     WHERE COALESCE(a.search_name, '') LIKE ?
     GROUP BY a.id ORDER BY bookCount DESC LIMIT ?
-  `).all(`${key}%`, limit);
-  const authors = authorsPrefix;
-  if (authors.length < limit) {
-    const need = limit - authors.length;
-    const seen = new Set(authors.map((a) => String(a.name)));
-    const authorsContains = db.prepare(`
-      SELECT a.name AS name, COALESCE(a.display_name, a.name) AS displayName,
-             COUNT(ab.id) AS bookCount
-      FROM authors a
-      JOIN book_authors ba ON ba.author_id = a.id
-      JOIN active_books ab ON ab.id = ba.book_id
-      WHERE COALESCE(a.search_name, '') LIKE ?
-        AND COALESCE(a.search_name, '') NOT LIKE ?
-      GROUP BY a.id ORDER BY bookCount DESC LIMIT ?
-    `).all(`%${key}%`, `${key}%`, need * 2);
-    for (const row of authorsContains) {
-      const name = String(row.name);
-      if (seen.has(name)) continue;
-      seen.add(name);
-      authors.push(row);
-      if (authors.length >= limit) break;
-    }
-  }
+  `).all(`%${key}%`, limit);
 
-  const seriesPrefix = db.prepare(`
+  const seriesItems = db.prepare(`
     SELECT sc.name AS name, COALESCE(sc.display_name, sc.name) AS displayName,
            COUNT(ab.id) AS bookCount
     FROM series_catalog sc
@@ -4421,29 +4553,7 @@ export function getSuggestions(query, limit = 5) {
     JOIN active_books ab ON ab.id = bs.book_id
     WHERE COALESCE(sc.search_name, '') LIKE ?
     GROUP BY sc.id ORDER BY bookCount DESC LIMIT ?
-  `).all(`${key}%`, limit);
-  const seriesItems = seriesPrefix;
-  if (seriesItems.length < limit) {
-    const need = limit - seriesItems.length;
-    const seen = new Set(seriesItems.map((s) => String(s.name)));
-    const seriesContains = db.prepare(`
-      SELECT sc.name AS name, COALESCE(sc.display_name, sc.name) AS displayName,
-             COUNT(ab.id) AS bookCount
-      FROM series_catalog sc
-      JOIN book_series bs ON bs.series_id = sc.id
-      JOIN active_books ab ON ab.id = bs.book_id
-      WHERE COALESCE(sc.search_name, '') LIKE ?
-        AND COALESCE(sc.search_name, '') NOT LIKE ?
-      GROUP BY sc.id ORDER BY bookCount DESC LIMIT ?
-    `).all(`%${key}%`, `${key}%`, need * 2);
-    for (const row of seriesContains) {
-      const name = String(row.name);
-      if (seen.has(name)) continue;
-      seen.add(name);
-      seriesItems.push(row);
-      if (seriesItems.length >= limit) break;
-    }
-  }
+  `).all(`%${key}%`, limit);
 
-  return { books: books.map(mapBookListRow), authors, series: seriesItems };
+  return { books, authors, series: seriesItems };
 }

@@ -187,8 +187,12 @@ export function registerAuthRoutes(app, deps) {
     if (rawEmail && !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(rawEmail)) {
       return res.status(400).send(renderProfile(buildProfileData(req.user, t('profile.invalidEmail'), req.csrfToken || '')));
     }
-    setEreaderEmail(req.user.username, rawEmail);
-    res.send(renderProfile(buildProfileData(req.user, t('profile.emailSaved'), req.csrfToken || '')));
+    try {
+      setEreaderEmail(req.user.username, rawEmail);
+      res.send(renderProfile(buildProfileData(req.user, t('profile.emailSaved'), req.csrfToken || '')));
+    } catch (error) {
+      res.status(500).send(renderProfile(buildProfileData(req.user, translateKnownErrorMessage(error.message), req.csrfToken || '')));
+    }
   });
 
   app.post('/profile/password', requireWebAuth, (req, res) => {

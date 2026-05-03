@@ -14,7 +14,6 @@ import { safePage } from '../utils/safe-int.js';
 import {
   DETAILS_CACHE_MAX,
   HOME_SECTIONS_CACHE_TTL_MS,
-  HOME_USER_SNAPSHOT_CACHE_TTL_MS,
   PAGE_CACHE_TTL_MS
 } from '../constants.js';
 import { getUserShelves, getShelfById, getShelfBooks, getSetting, setBookRating, removeBookRating, getBookRating, getBookAverageRating, getReadBookIdSet, getFullyReadSeriesNames } from '../db.js';
@@ -34,7 +33,6 @@ import {
   getLibrarySections,
   getLibraryView,
   updateBookMetadata,
-  getReadingHistory,
   getReadBooks,
   isBookmarked,
   isBookRead,
@@ -42,11 +40,11 @@ import {
   isFavoriteAuthor,
   isFavoriteSeries,
   listAuthors,
-  listAuthorsByGenre,
   listGenres,
+  listAuthorsByGenre,
+  listSeriesByGenre,
   listLanguages,
   listSeries,
-  listSeriesByGenre,
   resolveAuthorName,
   resolveSeriesCatalogName,
   recordReadingHistory,
@@ -54,8 +52,10 @@ import {
   getSourceRoot,
   effectiveSourceFlibustaForBook,
   splitAuthorValues,
-  listGenresGrouped
+  listGenresGrouped,
+  hasContinueBooks
 } from '../inpx.js';
+import { getDistinctLanguages, getDistinctFormats } from '../inpx.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover } from '../fb2.js';
 import {
   readFlibustaCover,
@@ -66,6 +66,30 @@ import {
   readFlibustaAuthorBioHtml
 } from '../flibusta-sidecar.js';
 import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup, getGenreGroups } from '../genre-map.js';
+import { clearCardHtmlCache } from '../templates/shared.js';
+
+// --- Sharp concurrency limiter ---
+
+const SHARP_CONCURRENCY_LIMIT = 6;
+let _sharpActiveCount = 0;
+const _sharpQueue = [];
+
+function acquireSharpSlot() {
+  if (_sharpActiveCount < SHARP_CONCURRENCY_LIMIT) {
+    _sharpActiveCount++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => _sharpQueue.push(resolve));
+}
+
+function releaseSharpSlot() {
+  if (_sharpQueue.length > 0) {
+    const next = _sharpQueue.shift();
+    next();
+  } else {
+    _sharpActiveCount--;
+  }
+}
 
 // --- Cover thumbnail caching ---
 
@@ -121,6 +145,7 @@ async function normalizeBookImageForClient(img) {
   if (ALLOWED_BOOK_IMAGE_TYPES.has(sourceType)) {
     return { contentType: sourceType, data: img.data };
   }
+  await acquireSharpSlot();
   try {
     const converted = await sharp(img.data, { failOn: 'none' })
       .webp({ quality: getCoverQuality(), effort: 4 })
@@ -131,6 +156,8 @@ async function normalizeBookImageForClient(img) {
       return { contentType: sourceType, data: img.data };
     }
     return null;
+  } finally {
+    releaseSharpSlot();
   }
 }
 
@@ -357,44 +384,6 @@ function safeRecordReadingHistory(username, bookId) {
   }
 }
 
-// --- Cover thumb prewarm (used at startup to make home page covers instant) ---
-
-/**
- * Build a cover thumbnail and store it in both in-memory and disk caches.
- * Safe to call even when caches already contain the value (it will short-circuit).
- * Returns true if a thumb is now available, false otherwise.
- */
-export async function precomputeCoverThumb(book) {
-  if (!book?.id) return false;
-  if (getCachedCoverThumb(book.id)) return true;
-  const onDisk = await getDiskCachedCoverThumb(book.id);
-  if (onDisk?.data?.length) {
-    setCachedCoverThumb(book.id, onDisk.contentType, onDisk.data);
-    return true;
-  }
-  try {
-    const details = await resolveBestCoverDetails(book);
-    const mime = detectImageMimeFromBuffer(details?.cover?.data);
-    if (!mime || !ALLOWED_BOOK_IMAGE_TYPES.has(mime)) return false;
-    let outBuf = details.cover.data;
-    let outType = 'image/webp';
-    try {
-      outBuf = await sharp(details.cover.data, { failOn: 'none' })
-        .resize({ width: getCoverWidth(), height: getCoverHeight(), fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 62, effort: 2 })
-        .toBuffer();
-    } catch {
-      outType = mime;
-      outBuf = details.cover.data;
-    }
-    setCachedCoverThumb(book.id, outType, outBuf);
-    setDiskCachedCoverThumb(book.id, outType, outBuf);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // --- Exported accessors for other modules ---
 
 export { detailsCache, getDetailsFull, clearBookDetailsCache, bookFlibustaSidecarEffective };
@@ -417,43 +406,31 @@ export function registerLibraryRoutes(app, deps) {
     const user = req.user || null;
     const username = user?.username || '';
     const indexStatus = getIndexStatus();
-    const emptyUserSnap = { history: [], favoriteAuthors: [], favoriteSeries: [], continueBooks: [] };
-    const userSnap = username
-      ? getStaleOrSchedule(
-          `home:userSnap:${username}`,
-          () => ({
-            history: getReadingHistory(username, 4),
-            favoriteAuthors: getFavoriteAuthors(username, 4),
-            favoriteSeries: getFavoriteSeries(username, 4),
-            continueBooks: getLibraryView('continue', { page: 1, pageSize: 6, username }).items
-          }),
-          HOME_USER_SNAPSHOT_CACHE_TTL_MS,
-          emptyUserSnap
-        )
-      : emptyUserSnap;
-    const { history, favoriteAuthors, favoriteSeries, continueBooks } = userSnap;
-    const sections = getStaleOrSchedule(
-      'home:sections',
-      () => getLibrarySections(),
-      HOME_SECTIONS_CACHE_TTL_MS,
-      { newest: [], titles: [], authors: [], series: [], genres: [], languages: [] }
-    );
-    const readBookIds = username
-      ? getStaleOrSchedule(
-          `home:readIds:${username}`,
-          () => getReadBookIdSet(username),
-          HOME_USER_SNAPSHOT_CACHE_TTL_MS,
-          new Set()
-        )
-      : null;
-    const recommendations = getHomeRecommendations({ username });
+    const sections = getStaleOrSchedule('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS, { newest: [], titles: [], authors: [], series: [], genres: [], languages: [] });
+    // Случайная выборка из пула — каждый рендер показывает разные книги
+    const DISPLAY_COUNT = 12;
+    let displayNewest = sections.newest;
+    if (displayNewest.length > DISPLAY_COUNT) {
+      const shuffled = displayNewest.slice();
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      displayNewest = shuffled.slice(0, DISPLAY_COUNT);
+    }
+    const displaySections = { ...sections, newest: displayNewest };
+    const hasContinueData = username ? hasContinueBooks(username) : false;
     const canUseAnonymousHomeHtmlCache = !user && !indexStatus?.active && !indexStatus?.error;
     const csrfToken = req.csrfToken || '';
     const homeSubtitle = getSetting('home_subtitle') || '';
     const html = canUseAnonymousHomeHtmlCache
-      ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken: '' }), PAGE_CACHE_TTL_MS)
-      : renderHome({ user, stats, indexStatus, history, favoriteAuthors, favoriteSeries, sections, recommendations, continueBooks, homeSubtitle, csrfToken, readBookIds });
+      ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken: '', hasContinueData: false }), 1000 * 60 * 2)
+      : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData });
     res.send(html);
+    // Фоновый прогрев per-user кэшей для последующих переходов
+    if (username) {
+      setImmediate(() => { try { getReadBookIdSet(username); } catch {} });
+    }
   });
 
   // --- Catalog search ---
@@ -461,17 +438,22 @@ export function registerLibraryRoutes(app, deps) {
     const query = String(req.query.q || '');
     const genre = String(req.query.genre || '').trim();
     const letter = String(req.query.letter || '').trim().slice(0, 2);
+    const lang = String(req.query.lang || '').trim();
+    const format = String(req.query.format || '').trim();
+    const year = Number(req.query.year) || 0;
     const field = ['books', 'authors', 'series'].includes(String(req.query.field || '')) ? String(req.query.field) : 'books';
     const isBookField = field === 'books';
     const sort = String(req.query.sort || (isBookField ? 'recent' : 'count'));
     const page = safePage(req.query.page);
     const pageSize = 24;
     const stats = getCachedStats();
-    const cacheKey = `catalog:${field}:${sort}:${genre}:${letter}:${query}:p${page}`;
-    const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, genre, letter }));
+    const cacheKey = `catalog:${field}:${sort}:${genre}:${letter}:${lang}:${format}:${year}:${query}:p${page}`;
+    const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, genre, letter, lang, format, year }));
     const user = req.user || null;
     const readBookIds = user ? getReadBookIdSet(user.username) : null;
-    res.send(renderCatalog({ ...result, page, pageSize, query, field, sort, genre, letter, user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds }));
+    const langs = getDistinctLanguages();
+    const formats = getDistinctFormats();
+    res.send(renderCatalog({ ...result, page, pageSize, query, field, sort, genre, letter, lang, format, year, langs, formats, user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds }));
   });
 
   // --- Library views ---
@@ -479,6 +461,7 @@ export function registerLibraryRoutes(app, deps) {
     const view = String(req.params.view || 'recent');
     const page = safePage(req.query.page);
     const pageSize = 24;
+    const type = String(req.query.type || '').trim();
     const user = req.user || null;
     const stats = getCachedStats();
     const titles = {
@@ -495,11 +478,12 @@ export function registerLibraryRoutes(app, deps) {
     };
     const canUseSharedCache = view === 'recent';
     const result = canUseSharedCache
-      ? getCachedPageData(`library:${view}:page:${page}:size:${pageSize}`, () => getLibraryView(view, { page, pageSize }), PAGE_CACHE_TTL_MS)
+      ? getStaleOrSchedule(`library:${view}:page:${page}:size:${pageSize}`, () => getLibraryView(view, { page, pageSize }), PAGE_CACHE_TTL_MS, { total: 0, items: [] })
       : view === 'recommended'
         ? getRecommendedLibraryView({ page, pageSize, username: user?.username || '' })
-        : getLibraryView(view, { page, pageSize, username: user?.username || '' });
+        : getLibraryView(view, { page, pageSize, username: user?.username || '', type });
     const readBookIds = user ? getReadBookIdSet(user.username) : null;
+    const readSeriesNames = user ? getFullyReadSeriesNames(user.username) : null;
     res.send(renderLibraryView({
       view,
       title: titles[view] || t('library.titleFallback'),
@@ -507,11 +491,13 @@ export function registerLibraryRoutes(app, deps) {
       ...result,
       page,
       pageSize,
+      type,
       user,
       stats,
       indexStatus: getIndexStatus(),
       csrfToken: req.csrfToken || '',
-      readBookIds
+      readBookIds,
+      readSeriesNames
     }));
   });
 
@@ -525,7 +511,7 @@ export function registerLibraryRoutes(app, deps) {
     const startsWith = query.length <= 2;
     const stats = getCachedStats();
     const cacheKey = `browse:authors:${page}:${sort}:${letter}:${query}`;
-    const result = getCachedPageData(cacheKey, () => listAuthors({ query, page, pageSize, sort, startsWith, letter }));
+    const result = getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, startsWith, letter }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.authors'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
@@ -542,7 +528,7 @@ export function registerLibraryRoutes(app, deps) {
     const pageSize = 50;
     const stats = getCachedStats();
     const cacheKey = `browse:series:${page}:${sort}:${letter}:${query}`;
-    const result = getCachedPageData(cacheKey, () => listSeries({ query, page, pageSize, sort, letter }));
+    const result = getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, letter }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     const username = req.user?.username || '';
     res.send(renderBrowsePage({
       title: t('nav.series'),
@@ -564,7 +550,7 @@ export function registerLibraryRoutes(app, deps) {
 
     // Grouped view when no search/letter filter and first page
     if (!query && !letter && page === 1 && sort === 'count') {
-      const allGenres = getCachedPageData('browse:genres:grouped', () => listGenresGrouped());
+      const allGenres = getStaleOrSchedule('browse:genres:grouped', () => listGenresGrouped(), PAGE_CACHE_TTL_MS, []);
       const groups = getGenreGroups();
       const grouped = [];
       for (const [groupName, codes] of Object.entries(groups)) {
@@ -589,7 +575,7 @@ export function registerLibraryRoutes(app, deps) {
     }
 
     const cacheKey = `browse:genres:${page}:${sort}:${letter}:${query}`;
-    const result = getCachedPageData(cacheKey, () => listGenres({ query, page, pageSize, sort, letter }));
+    const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, letter }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.genres'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
@@ -605,7 +591,7 @@ export function registerLibraryRoutes(app, deps) {
     const pageSize = 50;
     const stats = getCachedStats();
     const cacheKey = `browse:languages:${page}:${sort}:${query}`;
-    const result = getCachedPageData(cacheKey, () => listLanguages({ query, page, pageSize, sort }));
+    const result = getStaleOrSchedule(cacheKey, () => listLanguages({ query, page, pageSize, sort }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.languages'),
       ...result, page, pageSize, user: req.user || null, stats, query,
@@ -843,6 +829,7 @@ export function registerLibraryRoutes(app, deps) {
       });
       detailsCache.delete(bookId);
       clearPageDataCache();
+      clearCardHtmlCache();
       logSystemEvent('info', 'operations', 'book metadata edited', { actor: req.user.username, bookId });
       const msg = ok ? t('book.edit.saved') : t('book.edit.notFound');
       res.redirect(`/book/${encodeURIComponent(bookId)}?flash=` + encodeURIComponent(msg));
@@ -1031,6 +1018,7 @@ export function registerLibraryRoutes(app, deps) {
 
       let outBuf = coverBuffer;
       let outType = 'image/webp';
+      await acquireSharpSlot();
       try {
         outBuf = await sharp(coverBuffer, { failOn: 'none' })
           .resize({
@@ -1044,6 +1032,8 @@ export function registerLibraryRoutes(app, deps) {
       } catch {
         outType = coverMime;
         outBuf = coverBuffer;
+      } finally {
+        releaseSharpSlot();
       }
 
       setCachedCoverThumb(book.id, outType, outBuf);
@@ -1192,7 +1182,11 @@ export function registerLibraryRoutes(app, deps) {
           const encodingMatch = xml.match(/encoding=["']([^"']+)["']/i);
           const declaredEncoding = encodingMatch ? encodingMatch[1].toLowerCase() : '';
           if (declaredEncoding && declaredEncoding !== 'utf-8' && declaredEncoding !== 'utf8') {
-            xml = iconv.decode(buffer, declaredEncoding);
+            try {
+              xml = iconv.decode(buffer, declaredEncoding);
+            } catch {
+              xml = buffer.toString('utf-8');
+            }
             xml = xml.replace(/encoding=["'][^"']+["']/i, 'encoding="utf-8"');
           } else if (!encodingMatch && xml.includes('\uFFFD')) {
             xml = iconv.decode(buffer, 'win1251');

@@ -131,14 +131,17 @@ export function renderOpdsSectionFeed(baseUrl, { id, title, selfPath, entries })
   return renderOpdsNavigation(baseUrl, { id, title, selfPath, entries });
 }
 
-export function renderOpdsBooksFeed(baseUrl, { id, title, selfPath, items }) {
+export function renderOpdsBooksFeed(baseUrl, { id, title, selfPath, items, nextHref = '' }) {
   const now = new Date().toISOString().substring(0, 19) + 'Z';
+  const nextLink = nextHref
+    ? `\n  <link href="${escapeHtml(nextHref)}" rel="next" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>`
+    : '';
   return `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
   <updated>${now}</updated>
   <id>${escapeHtml(String(id))}</id>
   <title>${escapeHtml(title)}</title>
-  ${renderOpdsBaseLinks(baseUrl, selfPath, { acquisition: true })}
+  ${renderOpdsBaseLinks(baseUrl, selfPath, { acquisition: true })}${nextLink}
   ${renderOpdsBookEntries(baseUrl, items)}
 </feed>`;
 }

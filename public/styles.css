@@ -421,6 +421,19 @@ html[data-theme="light"] .topbar-admin {
   display: flex; align-items: center; gap: 6px;
   cursor: pointer; font-size: 13px;
 }
+
+/* --- Unsaved-changes indicator --- */
+form.is-dirty button[type="submit"] {
+  box-shadow: 0 0 0 2px var(--accent, #4a90d9);
+  position: relative;
+}
+form.is-dirty button[type="submit"]::after {
+  content: '*';
+  color: var(--accent, #4a90d9);
+  margin-left: 4px;
+  font-weight: bold;
+}
+
 .admin-section-label {
   font-size: 12px; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;
@@ -977,6 +990,50 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
     18px 32px 28px rgba(0,0,0,0.3),
     24px 44px 44px rgba(0,0,0,0.2);
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s ease;
+  /* Long-press on the cover toggles "read" — suppress native callout/selection/drag
+     so iOS/Android Chrome don't hijack the gesture with image preview menus. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cover img {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Indeterminate progress bar for indexing phases without measurable progress
+   (e.g., post-index ANALYZE / cache warmup). Slides a translucent highlight
+   across the filled bar so users see the pipeline is still working. */
+@keyframes indexBarIndeterminate {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.progress-indeterminate {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.55) 50%,
+    transparent 100%
+  );
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: indexBarIndeterminate 1.4s linear infinite;
+}
+
+/* Long-press visual feedback — replaces unreliable Android haptics with a guaranteed
+   visual cue at the moment the "mark as read" toggle fires. */
+@keyframes coverLongPressFlash {
+  0%   { transform: scale(1);    filter: brightness(1); }
+  35%  { transform: scale(0.93); filter: brightness(1.45); }
+  100% { transform: scale(1);    filter: brightness(1); }
+}
+.cover.cover-longpress-flash {
+  animation: coverLongPressFlash 280ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cover.cover-longpress-flash { animation: none; }
 }
 
 html[data-theme="light"] .cover {
@@ -1810,6 +1867,9 @@ button.download-format-link {
 .table-row-link {
   color: inherit;
   text-decoration: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   transition: transform 0.15s ease, background 0.12s, border-color 0.15s;
   display: block;
 }

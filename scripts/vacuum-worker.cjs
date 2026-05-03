@@ -17,7 +17,15 @@ try {
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 30000');
-  db.pragma('wal_checkpoint(TRUNCATE)');
+
+  // Use PASSIVE instead of TRUNCATE to avoid blocking readers
+  const checkpointInfo = db.pragma('wal_checkpoint(PASSIVE)');
+  const info = checkpointInfo[0] || checkpointInfo;
+  if (info.busy > 0) {
+    console.log(`[vacuum] checkpoint: ${info.busy} busy pages (concurrent readers active)`);
+  }
+  console.log(`[vacuum] checkpoint: ${info.log} log frames, ${info.checkpointed} checkpointed`);
+
   db.exec('VACUUM');
   db.close();
   process.stdout.write('OK\n');

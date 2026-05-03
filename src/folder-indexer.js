@@ -17,6 +17,8 @@ import {
   rebuildBooksFtsFromContent,
   beginFastSqliteImport,
   endFastSqliteImport,
+  beginExclusiveOperation,
+  endExclusiveOperation,
   getSourceById,
   getSuppressedBookIds
 } from './db.js';
@@ -59,17 +61,26 @@ export async function warmupBookDetailsCache(sourceId, { limit = 200 } = {}) {
     
     console.log(`[cache-warmup] Preloading details for ${books.length} books from source ${sourceId}`);
     
-    let processed = 0;
+    // Group books by archive so the same archive is opened once
+    const booksByArchive = new Map();
     for (const book of books) {
-      try {
-        await getOrExtractBookDetails(book);
-        processed++;
-        // Уступаем event loop каждые 10 книг
-        if (processed % 10 === 0) {
-          await yieldEventLoop();
-        }
-      } catch (err) {
-        console.warn(`[cache-warmup] Failed to extract details for book ${book.id}:`, err.message);
+      const key = book.archiveName || '__flat__';
+      if (!booksByArchive.has(key)) booksByArchive.set(key, []);
+      booksByArchive.get(key).push(book);
+    }
+
+    let processed = 0;
+    const WARMUP_BATCH = 20;
+    for (const [, archiveBooks] of booksByArchive) {
+      for (let i = 0; i < archiveBooks.length; i += WARMUP_BATCH) {
+        const batch = archiveBooks.slice(i, i + WARMUP_BATCH);
+        await Promise.all(batch.map(book =>
+          getOrExtractBookDetails(book).catch(err => {
+            console.warn(`[cache-warmup] Failed to extract details for book ${book.id}:`, err.message);
+          })
+        ));
+        processed += batch.length;
+        await yieldEventLoop();
       }
     }
     console.log(`[cache-warmup] Completed: ${processed}/${books.length} books cached for source ${sourceId}`);
@@ -139,13 +150,19 @@ async function scanDirectory(rootPath, onScanTick = null, control = null) {
   };
   const results = [];
   const containerArchives = [];
-  const stack = [rootPath];
+  const MAX_WALK_DEPTH = 100;
+  const visitedInodes = new Set();
+  const stack = [{ path: rootPath, depth: 0 }];
   let hadReadErrors = false;
   let dirsVisited = 0;
   while (stack.length) {
     throwIfCancelled();
     await waitIfPaused();
-    const dir = stack.pop();
+    const { path: dir, depth } = stack.pop();
+    if (depth > MAX_WALK_DEPTH) {
+      console.warn(`[folder-indexer] max depth exceeded at ${dir}, skipping`);
+      continue;
+    }
     dirsVisited += 1;
     if (dirsVisited % SCAN_YIELD_EVERY_DIRS === 0) {
       await yieldEventLoop();
@@ -168,7 +185,15 @@ async function scanDirectory(rootPath, onScanTick = null, control = null) {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        stack.push(fullPath);
+        try {
+          const st = fs.statSync(fullPath);
+          if (st.ino && visitedInodes.has(st.ino)) {
+            console.warn(`[folder-indexer] symlink loop detected at ${fullPath}, skipping`);
+            continue;
+          }
+          if (st.ino) visitedInodes.add(st.ino);
+        } catch { /* stat failed, will fail on readdir later */ }
+        stack.push({ path: fullPath, depth: depth + 1 });
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).slice(1).toLowerCase();
         if (SUPPORTED_EXTENSIONS.has(ext)) {
@@ -660,8 +685,13 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
   const ftsBulkMode = !incremental;
   let completedSuccessfully = false;
   try {
+  beginExclusiveOperation('indexing');
+  // Fast-import mode (synchronous=OFF + longer busy_timeout) is now used for
+  // incremental indexing too: per-chunk fsync was the dominant cost on slow
+  // disks. Safety: indexAllSources/indexSingleSource take a DB backup before
+  // calling us, so a power loss can be recovered.
+  beginFastSqliteImport();
   if (ftsBulkMode) {
-    beginFastSqliteImport();
     setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
   }
   if (!incremental) {
@@ -1022,8 +1052,8 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
       ensureBooksFtsTriggers();
       setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
     }
-    if (ftsBulkMode) {
-      endFastSqliteImport();
-    }
+    // Always pair with the unconditional beginFastSqliteImport() above.
+    endFastSqliteImport();
+    endExclusiveOperation('indexing');
   }
 }

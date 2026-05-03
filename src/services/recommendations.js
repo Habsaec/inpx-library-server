@@ -8,22 +8,13 @@ import {
   getFavoriteAuthors,
   getFavoriteSeries,
   getBookmarks,
-  getReadBooks
+  getReadBooks,
+  getReadBookIds
 } from '../inpx.js';
-import { getReadBookIdSet } from '../db.js';
 import { t } from '../i18n.js';
 
-const RECS_CACHE_TTL_MS = 30_000;
+const RECS_CACHE_TTL_MS = 10 * 60_000; // 10 мин (инвалидируется при действиях юзера)
 const recommendedViewCache = new Map();
-
-export function invalidateRecommendationsCache(username = '') {
-  const normalizedUsername = String(username || '').trim();
-  if (!normalizedUsername) {
-    recommendedViewCache.clear();
-    return;
-  }
-  recommendedViewCache.delete(normalizedUsername);
-}
 
 function pickFirstAuthor(authors = '') {
   return String(authors).split(':').map((s) => s.trim()).filter(Boolean)[0] || '';
@@ -72,10 +63,13 @@ function createFacetFetchMemo() {
   };
 }
 
-function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, history, bookmarks, readBooks = [], readBookIds = new Set(), getFacetBooks, limit = 48 }) {
+function collectWeightedRecommendations({ favoriteAuthors, favoriteSeries, history, bookmarks, readBooks = [], allExcludeIds = [], getFacetBooks, limit = 48 }) {
   const scored = new Map();
-  const excludeIds = new Set(readBookIds);
-  for (const item of history) excludeIds.add(item.id);
+  /* Для исключения используем полный набор ID (переданный извне), а не срез readBooks */
+  const excludeIds = new Set([
+    ...history.map((h) => h.id),
+    ...allExcludeIds
+  ]);
 
   const addItems = (items, weight) => {
     for (const item of items) {
@@ -124,32 +118,27 @@ function buildRecommendations(username, limit = 48) {
   const history = getReadingHistory(username, 24);
   const favoriteAuthors = getFavoriteAuthors(username, 12);
   const favoriteSeries = getFavoriteSeries(username, 12);
-  const bookmarkItems = getBookmarks(username, 'date', 24);
-  const readBooks = getReadBooks(username, 'date', 24);
-  const readBookIds = getReadBookIdSet(username);
+  /* Для взвешивания достаточно небольшого среза — алгоритм использует max 10/12 */
+  const bookmarkItems = getBookmarks(username).slice(0, 50);
+  const readBooks = getReadBooks(username).slice(0, 50);
+  /* Полный список ID прочитанных — лёгкий запрос без JOIN, нужен для корректной дедупликации */
+  const readBookIds = getReadBookIds(username);
   const getFacetBooks = createFacetFetchMemo();
   const weighted = collectWeightedRecommendations({
-    favoriteAuthors, favoriteSeries, history, bookmarks: bookmarkItems, readBooks, readBookIds, getFacetBooks, limit
+    favoriteAuthors, favoriteSeries, history, bookmarks: bookmarkItems, readBooks,
+    allExcludeIds: readBookIds, getFacetBooks, limit
   });
-  const allExcludeIds = [...history.map((h) => h.id), ...readBookIds];
-  return dedupeBooks(weighted, allExcludeIds);
+  const dedupExcludeIds = [...history.map((h) => h.id), ...readBookIds];
+  return dedupeBooks(weighted, dedupExcludeIds);
 }
 
-const recommendationsBuilding = new Set();
+export function invalidateRecommendationsCache(username) {
+  const key = String(username || '').trim();
+  if (key) recommendedViewCache.delete(key);
+}
 
-function scheduleRecommendationsBuild(username) {
-  if (recommendationsBuilding.has(username)) return;
-  recommendationsBuilding.add(username);
-  setImmediate(() => {
-    try {
-      const recommended = buildRecommendations(username, 72);
-      writeTimedCache(recommendedViewCache, username, recommended);
-    } catch (error) {
-      console.error('Failed to build recommendations', error);
-    } finally {
-      recommendationsBuilding.delete(username);
-    }
-  });
+export function invalidateAllRecommendations() {
+  recommendedViewCache.clear();
 }
 
 export function getRecommendedLibraryView({ username = '', page = 1, pageSize = 24 }) {
@@ -169,11 +158,9 @@ export function getRecommendedLibraryView({ username = '', page = 1, pageSize = 
 export function getHomeRecommendations({ username = '' }) {
   const normalizedUsername = String(username || '').trim();
   if (!normalizedUsername) return [];
-  // Home shelf: stale-while-revalidate — never block page render on first miss.
-  const cached = readTimedCache(recommendedViewCache, normalizedUsername);
-  if (cached) return cached.slice(0, 8);
-  scheduleRecommendationsBuild(normalizedUsername);
-  return [];
+  // Reuse the same full view — take top 8 from page 1
+  const view = getRecommendedLibraryView({ username: normalizedUsername, page: 1, pageSize: 8 });
+  return view.items;
 }
 
 export function buildSimilarBooks(book) {

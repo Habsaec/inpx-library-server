@@ -3,6 +3,8 @@ services:
     build: .
     container_name: inpx-library
     restart: unless-stopped
+    # Лимит памяти контейнера (рекомендуется 2g для embedded, 4g для больших библиотек)
+    mem_limit: 2g
     ports:
       - "3000:3000"
     volumes:

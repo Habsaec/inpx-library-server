@@ -178,6 +178,9 @@
   "catalog.emptyTitle": "Ничего не найдено",
   "catalog.emptyText": "Попробуйте убрать часть запроса, сменить режим поиска или открыть каталог вручную.",
   "catalog.resetSearch": "Сбросить поиск",
+  "catalog.allLanguages": "Все языки",
+  "catalog.allFormats": "Все форматы",
+  "catalog.year": "Год",
   "library.empty.recent.title": "Новинок пока нет",
   "library.empty.recent.text": "После индексации здесь будут отображаться последние поступления библиотеки.",
   "library.empty.titles.title": "Книги не найдены",
@@ -538,5 +541,7 @@
   "readerJs.dayModeBtn": "Дневной режим (D)",
   "readerJs.nightModeBtn": "Ночной режим (D)",
   "readerJs.fullscreenExit": "Выйти из полноэкранного (F)",
-  "readerJs.fullscreenEnter": "Во весь экран (F)"
+  "readerJs.fullscreenEnter": "Во весь экран (F)",
+  "admin.duplicates.description": "Поиск дубликатов по названию и авторам. Может занять некоторое время на больших библиотеках.",
+  "admin.duplicates.startSearch": "Найти дубликаты"
 }

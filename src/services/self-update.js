@@ -15,6 +15,7 @@ import {
   MAX_UNCOMPRESSED_TOTAL, MAX_SINGLE_FILE
 } from '../constants.js';
 import { logSystemEvent } from './system-events.js';
+import { rotateIfNeeded } from '../utils/log-rotate.js';
 
 const UPDATE_LOG_PATH = path.join(config.dataDir, 'update.log');
 const UPDATABLE_DIRS = ['src', 'public', 'scripts'];
@@ -37,6 +38,7 @@ export function readUpdateLog() {
 }
 
 export function appendUpdateLog(line) {
+  rotateIfNeeded(UPDATE_LOG_PATH);
   fs.appendFileSync(UPDATE_LOG_PATH, line + '\n', 'utf8');
 }
 

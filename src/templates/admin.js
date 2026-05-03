@@ -98,7 +98,7 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
       </div>
 
       <div class="admin-card">
-        <form action="/admin/settings/site-name" method="post">
+        <form action="/admin/settings/site-name" method="post" data-track-dirty>
           ${csrfHiddenField(csrfToken)}
           <div class="admin-field-group">
             <label for="admin-site-name">${escapeHtml(t('admin.siteName'))}</label>
@@ -285,7 +285,7 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
     ${flash ? renderAlert('success', escapeHtml(flash)) : ''}
 
     <div class="admin-card">
-      <form method="post" action="/admin/settings/anonymous-access" class="admin-action-item">
+      <form method="post" action="/admin/settings/anonymous-access" class="admin-action-item" data-track-dirty>
         ${csrfHiddenField(csrfToken)}
         <div class="admin-action-item-info">
           <strong>${escapeHtml(t('admin.users.anonymous'))}</strong>
@@ -334,7 +334,7 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
       <details class="admin-recaptcha-disclosure">
         <summary class="admin-recaptcha-disclosure-summary">${escapeHtml(t('admin.users.keys'))}</summary>
         <div class="admin-recaptcha-disclosure-body">
-          <form method="post" action="/admin/settings/recaptcha">
+          <form method="post" action="/admin/settings/recaptcha" data-track-dirty>
             ${csrfHiddenField(csrfToken)}
             <div class="admin-form-grid admin-form-grid--align-start">
               <div class="admin-field-group">
@@ -689,11 +689,11 @@ export function renderAdminDuplicates({ user, stats, indexStatus, flash = '', cs
   const content = `
     ${flash ? renderAlert('success', escapeHtml(flash)) : ''}
     <div data-duplicates-page data-page="1">
-      <div class="admin-card" style="text-align:center;padding:48px 24px;">
-        <div class="spinner" style="margin:0 auto 16px;"></div>
-        <div style="font-size:1.05em;font-weight:500;">${escapeHtml(t('admin.duplicates.searching'))}</div>
-        <div class="muted" style="margin-top:6px;font-size:.9em;">${escapeHtml(t('admin.duplicates.searchingHint'))}</div>
+      <div id="dup-start-container" class="admin-card" style="text-align:center;padding:48px 24px;">
+        <p style="margin-bottom:1rem;color:var(--muted);">${escapeHtml(t('admin.duplicates.description'))}</p>
+        <button class="btn" id="dup-start-btn">${escapeHtml(t('admin.duplicates.startSearch'))}</button>
       </div>
+      <div id="dup-results" style="display:none;"></div>
     </div>
   `;
   return pageShell({ title: t('admin.nav.duplicates'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('admin.nav.duplicates') }], mode: 'admin', currentPath: '/admin/duplicates', csrfToken });
@@ -772,7 +772,7 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
         </div>
       </form>
       <hr class="admin-divider">
-      <form action="/admin/settings/scan-interval" method="post">
+      <form action="/admin/settings/scan-interval" method="post" data-track-dirty>
         ${csrfHiddenField(csrfToken)}
         <div class="admin-action-item">
           <div class="admin-action-item-info">
@@ -787,7 +787,7 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
         </div>
       </form>
       <hr class="admin-divider">
-      <form action="/admin/settings/covers" method="post">
+      <form action="/admin/settings/covers" method="post" data-track-dirty>
         ${csrfHiddenField(csrfToken)}
         <div class="admin-action-item">
           <div class="admin-action-item-info">
@@ -815,7 +815,7 @@ export function renderAdminSmtp({ user, stats, indexStatus, smtp = {}, flash = '
     <div class="admin-card">
       <div class="admin-card-title">${escapeHtml(t('admin.smtp.cardTitle'))}</div>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.smtp.cardSubtitle'))}</div>
-      <form method="POST" action="/admin/smtp">
+      <form method="POST" action="/admin/smtp" data-track-dirty>
         ${csrfHiddenField(csrfToken)}
         <div class="admin-field-group">
           <label>${escapeHtml(t('admin.smtp.host'))}</label>

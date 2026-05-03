@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,6 +54,15 @@ async function main() {
 
   await Promise.all(jobs.map((cfg) => esbuild.build(cfg)));
   console.log('[assets] built public/app.min.js and public/styles.min.css');
+
+  // Обновляем CACHE_NAME в sw.js хешем от собранного app.min.js
+  const swPath = path.join(publicDir, 'sw.js');
+  const appContent = readFileSync(path.join(publicDir, 'app.min.js'), 'utf8');
+  const hash = createHash('md5').update(appContent).digest('hex').slice(0, 8);
+  let sw = readFileSync(swPath, 'utf8');
+  sw = sw.replace(/const CACHE_NAME = '[^']*'/, `const CACHE_NAME = 'inpx-v1-${hash}'`);
+  writeFileSync(swPath, sw, 'utf8');
+  console.log(`[assets] sw.js CACHE_NAME → inpx-v1-${hash}`);
 }
 
 main().catch((error) => {
