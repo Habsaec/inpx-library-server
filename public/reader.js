@@ -1977,6 +1977,37 @@ import {
       '<a href="/book/' + encodeURIComponent(bookId) + '" class="tb-btn" style="margin-top:12px;">' + esc(rt('readerJs.back')) + '</a></div>';
   }
 
+  /* ===== Reader ext classifier (kept in sync with server utils/book-format.js) ===== */
+  function classifyExt(ext) {
+    const e = String(ext || '').toLowerCase().replace(/^\./, '');
+    if (e === 'pdf') return 'pdf';
+    if (e === 'djvu' || e === 'djv') return 'djvu';
+    if (e === 'fb2' || e === 'fbz' || e === 'epub' || e === 'mobi' || e === 'azw3' || e === 'kf8' || e === 'cbz') return 'foliate';
+    return 'unsupported';
+  }
+
+  /**
+   * PDF/DJVU are not supported by foliate-js. For PDF we fall back to the
+   * browser's native PDF viewer (same-origin iframe, which Chrome/Edge/Firefox
+   * render via their built-in viewer). For DJVU — no browser has a native
+   * renderer, so we show a clear "download to read" banner instead of the
+   * cryptic "Failed to load container file" message from foliate-js.
+   */
+  function showUnsupportedBanner(kind) {
+    bookPagesEl?.classList.add('is-hidden');
+    const downloadHref = '/download/' + encodeURIComponent(bookId);
+    const title = kind === 'djvu' ? rt('readerJs.djvuUnsupportedTitle') : rt('readerJs.unsupportedTitle');
+    const text = kind === 'djvu' ? rt('readerJs.djvuUnsupportedText') : rt('readerJs.unsupportedText');
+    readerBody.innerHTML =
+      '<div class="reader-error">' +
+      '<div class="reader-error-title">' + esc(title) + '</div>' +
+      '<div class="reader-error-text">' + esc(text) + '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">' +
+      '<a href="' + downloadHref + '" class="tb-btn" download>' + esc(rt('readerJs.download')) + '</a>' +
+      '<a href="/book/' + encodeURIComponent(bookId) + '" class="tb-btn">' + esc(rt('readerJs.back')) + '</a>' +
+      '</div></div>';
+  }
+
   /* ===== Main ===== */
   async function loadBook() {
     stopReaderTts();
@@ -1985,7 +2016,25 @@ import {
     closeReaderFootnote();
     footnoteHandler = null;
 
+    // Branch on book type: foliate-js doesn't handle PDF/DJVU. For PDF we let
+    // the browser's native PDF viewer render the file; for DJVU we surface a
+    // clear download prompt (no browser has a native DJVU renderer).
+    const kind = classifyExt(bookExt);
     const url = '/api/books/' + encodeURIComponent(bookId) + '/content/book.' + bookExt.toLowerCase();
+
+    if (kind === 'pdf') {
+      readerBody.innerHTML = '<iframe class="reader-pdf-frame" src="' + url + '" title="PDF"></iframe>';
+      return;
+    }
+    if (kind === 'djvu') {
+      showUnsupportedBanner('djvu');
+      return;
+    }
+    if (kind === 'unsupported') {
+      showUnsupportedBanner('generic');
+      return;
+    }
+
     const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(rtp('readerJs.loadError', { status: res.status }));
     const file = new File([await res.blob()], 'book.' + bookExt.toLowerCase());

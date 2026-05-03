@@ -29,10 +29,45 @@ export const STATIC_ASSET_VERSION = String(Date.now());
 
 const APP_MIN_PATH = path.join(config.publicDir, 'app.min.js');
 const CSS_MIN_PATH = path.join(config.publicDir, 'styles.min.css');
-const USE_MINIFIED_ASSETS =
-  String(process.env.NODE_ENV || '').toLowerCase() === 'production' &&
-  fs.existsSync(APP_MIN_PATH) &&
-  fs.existsSync(CSS_MIN_PATH);
+const APP_SRC_PATH = path.join(config.publicDir, 'app.js');
+const CSS_SRC_PATH = path.join(config.publicDir, 'styles.css');
+
+/**
+ * Returns true only if the minified bundle is at least as new as its source.
+ * Guards against a deployment where `public/app.js` was updated but someone
+ * forgot to run `npm run build:assets` — otherwise the server would silently
+ * serve stale minified JS/CSS and break home page "Continue reading" etc.
+ */
+function isMinifiedFresh(minPath, srcPath) {
+  try {
+    return fs.statSync(minPath).mtimeMs >= fs.statSync(srcPath).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+const _isProdEnv = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+const _hasMinifiedFiles = fs.existsSync(APP_MIN_PATH) && fs.existsSync(CSS_MIN_PATH);
+const _minifiedFresh =
+  _hasMinifiedFiles &&
+  isMinifiedFresh(APP_MIN_PATH, APP_SRC_PATH) &&
+  isMinifiedFresh(CSS_MIN_PATH, CSS_SRC_PATH);
+
+const USE_MINIFIED_ASSETS = _isProdEnv && _minifiedFresh;
+
+if (_isProdEnv && _hasMinifiedFiles && !_minifiedFresh) {
+  console.warn(
+    '[assets] ВНИМАНИЕ: public/app.min.js или public/styles.min.css старше исходников.\n' +
+    '          Сервер временно отдаёт НЕминифицированные версии, чтобы не сломать клиент.\n' +
+    '          Пересоберите ассеты командой: npm run build:assets'
+  );
+} else if (_isProdEnv && !_hasMinifiedFiles) {
+  console.warn(
+    '[assets] ВНИМАНИЕ: public/app.min.js и/или public/styles.min.css отсутствуют.\n' +
+    '          Сервер отдаёт НЕминифицированные версии. Запустите: npm run build:assets'
+  );
+}
+
 const APP_ASSET_FILE = USE_MINIFIED_ASSETS ? 'app.min.js' : 'app.js';
 const CSS_ASSET_FILE = USE_MINIFIED_ASSETS ? 'styles.min.css' : 'styles.css';
 

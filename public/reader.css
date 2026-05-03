@@ -177,6 +177,11 @@ foliate-view{
 .reader-error-title{font-size:16px;font-weight:600}
 .reader-error-text{opacity:.45;font-size:13px;max-width:340px;text-align:center;line-height:1.5}
 
+/* Native browser PDF viewer used as a fallback for PDF books (foliate-js has no PDF support). */
+.reader-pdf-frame{
+  position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--r-bg);
+}
+
 /* ================================================================
    FOOTER BAR — seekbar + progress
    ================================================================ */

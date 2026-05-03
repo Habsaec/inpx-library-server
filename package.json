@@ -1,6 +1,6 @@
 {
   "name": "inpx-library-server",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "Self-hosted web server for INPX/FB2 book libraries with search, online reader, OPDS catalog and e-reader delivery",
   "private": true,
   "type": "module",
@@ -9,6 +9,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
+    "prestart": "node scripts/build-assets.js --if-stale",
     "start": "node src/server-entry.js",
     "test": "node --test test/",
     "dev": "node --watch src/server-entry.js",

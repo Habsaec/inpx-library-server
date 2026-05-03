@@ -1173,6 +1173,9 @@ export function registerLibraryRoutes(app, deps) {
       const { readBookBufferForDelivery } = await import('../fb2.js');
       const buffer = await readBookBufferForDelivery(book);
       const ext = String(book.ext || 'fb2').toLowerCase();
+
+      // Fast path for FB2: we need to normalize encoding to UTF-8 for foliate-js.
+      // Keep this before the generic format detector to preserve existing behaviour.
       if (ext === 'fb2') {
         if (bookFlibustaSidecarEffective(book)) {
           res.type('application/xml; charset=utf-8');
@@ -1194,13 +1197,19 @@ export function registerLibraryRoutes(app, deps) {
           res.type('application/xml; charset=utf-8');
           res.send(xml);
         }
-      } else if (ext === 'epub') {
-        res.type('application/epub+zip');
-        res.send(buffer);
-      } else {
-        res.type('application/octet-stream');
-        res.send(buffer);
+        return;
       }
+
+      // Everything else (epub, pdf, djvu, zip-wrapped pdf, etc.): detect the
+      // real format from the bytes and auto-unwrap nested archives (common
+      // Flibusta "PDF inside ZIP" case). This makes /api/books/:id/content
+      // always return a file the browser can handle directly (PDF natively,
+      // EPUB/FB2/MOBI/CBZ through foliate-js) instead of a confusing
+      // "Failed to load container file" error from foliate.
+      const { detectBookFormat } = await import('../utils/book-format.js');
+      const detected = await detectBookFormat(buffer, ext);
+      res.type(detected.contentType);
+      res.send(detected.buffer);
     } catch (error) {
       next(error);
     }
