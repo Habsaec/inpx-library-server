@@ -1,6 +1,6 @@
 {
   "name": "inpx-library-server",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "Self-hosted web server for INPX/FB2 book libraries with search, online reader, OPDS catalog and e-reader delivery",
   "private": true,
   "type": "module",

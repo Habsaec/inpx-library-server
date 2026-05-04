@@ -280,9 +280,8 @@ export function renderBook({
     <section class="book-detail-shell">
       <div class="book-detail-main card-detail-panel">
         <div class="book-detail-cover">
-          <div class="cover ${hasRealCover ? '' : 'cover-fallback-active'}">
-            <img class="cover-image is-loaded" src="/api/books/${encodeURIComponent(book.id)}/cover" alt="${escapeHtml(book.title)}">
-            <span class="cover-fallback" ${hasRealCover ? 'hidden' : ''} aria-hidden="${hasRealCover ? 'true' : 'false'}">
+          <div class="cover">
+            <span class="cover-fallback">
               <img class="cover-fallback-image" src="/book-fallback.png" alt="">
               <span class="cover-fallback-overlay"></span>
               <span class="cover-fallback-copy">
@@ -290,6 +289,7 @@ export function renderBook({
                 <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
               </span>
             </span>
+            ${hasRealCover ? `<img class="cover-image" src="/api/books/${encodeURIComponent(book.id)}/cover" alt="${escapeHtml(book.title)}">` : ''}
           </div>
         </div>
         <div class="book-detail-content">
@@ -656,7 +656,7 @@ export function renderAuthorFacetPage({
     : '';
 
   const heroPortrait = authorPortraitUrl
-    ? `<img class="cover-image is-loaded author-facet-portrait" src="${escapeHtml(authorPortraitUrl)}" alt="" loading="lazy">`
+    ? `<img class="cover-image author-facet-portrait" src="${escapeHtml(authorPortraitUrl)}" alt="" loading="lazy">`
     : '';
   const heroFallback = authorPortraitUrl
     ? ''
@@ -676,9 +676,9 @@ export function renderAuthorFacetPage({
     <section class="book-detail-shell author-facet-hero">
       <div class="book-detail-main card-detail-panel">
         <div class="book-detail-cover">
-          <div class="cover ${authorPortraitUrl ? '' : 'cover-fallback-active'}">
-            ${heroPortrait}
+          <div class="cover">
             ${heroFallback}
+            ${heroPortrait}
           </div>
         </div>
         <div class="book-detail-content">
@@ -870,8 +870,7 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
           <article class="card" data-book-id="${escapeHtml(book.id)}">
             ${shelfBatch ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} data-batch-book-id="${escapeHtml(book.id)}" aria-label="${escapeHtml(t('batch.selectAria'))}"></label>` : ''}
             <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-              <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
-              <span class="cover-fallback" hidden>
+              <span class="cover-fallback">
                 <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
                 <span class="cover-fallback-overlay"></span>
                 <span class="cover-fallback-copy">
@@ -879,6 +878,7 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
                   <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
                 </span>
               </span>
+              <img class="cover-image" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
             ${readBookIds && readBookIds.has(book.id) ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : ''}
             </a>
             <div class="meta">

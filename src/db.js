@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { config } from './config.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { hashPassword } from './auth.js';
+import { runMigrations } from './services/migrations.js';
 
 function deriveEncKey() {
   return crypto.scryptSync(config.sessionSecret, 'smtp-enc-salt', 32);
@@ -537,13 +538,7 @@ export function beginFastSqliteImport() {
   if (fastSqliteImportDepth === 0) {
     const cur = db.pragma('synchronous', { simple: true });
     savedSynchronousLevel = typeof cur === 'number' ? cur : 1;
-    // Matches the documented intent above: OFF disables fsync on every commit.
-    // Safe here because destructive callers (indexing, deleteSourceProgressive)
-    // create a DB backup beforehand and FTS is recovered via books_fts_dirty
-    // flag on next startup. With NORMAL, this function was a no-op (startup
-    // already sets NORMAL), forcing an fsync per chunk commit and making
-    // mass indexing/deletion dramatically slower on spinning/network disks.
-    db.pragma('synchronous = OFF');
+    db.pragma('synchronous = NORMAL');
 
     const bt = db.pragma('busy_timeout', { simple: true });
     savedBusyTimeoutMs = typeof bt === 'number' ? bt : 5000;
@@ -1036,39 +1031,25 @@ WHERE rp.progress >= 99
 
   seedDefaultAdmin();
   migrateInpxToSources();
+
+  // Formal versioned migrations (PRAGMA user_version). Idempotent: applies only pending versions.
+  runMigrations(db);
 }
 
 // --- Sources CRUD ---
-// Sources change very rarely (add/remove/toggle/reindex) but are read on every
-// HTTP request (admin pages, health, flibusta sidecar, library rendering).
-// Small in-memory cache avoids re-prepared statements and lock contention with
-// the writer during indexing/deletion. Invalidated explicitly on any mutation
-// via invalidateSourcesCache() below.
-let _sourcesCacheAll = null;
-let _sourcesCacheEnabled = null;
-const _sourcesCacheById = new Map();
-
-export function invalidateSourcesCache() {
-  _sourcesCacheAll = null;
-  _sourcesCacheEnabled = null;
-  _sourcesCacheById.clear();
-}
 
 export function getSources() {
-  if (_sourcesCacheAll) return _sourcesCacheAll;
-  _sourcesCacheAll = db.prepare(`
+  return db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
            flibusta_sidecar AS flibustaSidecar
     FROM sources
     ORDER BY created_at ASC
   `).all();
-  return _sourcesCacheAll;
 }
 
 export function getEnabledSources() {
-  if (_sourcesCacheEnabled) return _sourcesCacheEnabled;
-  _sourcesCacheEnabled = db.prepare(`
+  return db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
            flibusta_sidecar AS flibustaSidecar
@@ -1076,22 +1057,16 @@ export function getEnabledSources() {
     WHERE enabled = 1
     ORDER BY created_at ASC
   `).all();
-  return _sourcesCacheEnabled;
 }
 
 export function getSourceById(id) {
-  const key = Number(id);
-  if (!Number.isFinite(key)) return null;
-  if (_sourcesCacheById.has(key)) return _sourcesCacheById.get(key);
-  const row = db.prepare(`
+  return db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
            flibusta_sidecar AS flibustaSidecar
     FROM sources
     WHERE id = ?
-  `).get(key) || null;
-  _sourcesCacheById.set(key, row);
-  return row;
+  `).get(id) || null;
 }
 
 export function getSourceByPath(sourcePath) {
@@ -1115,7 +1090,6 @@ export function addSource({ name, type, path: sourcePath }) {
   const result = db.prepare(`
     INSERT INTO sources(name, type, path) VALUES(?, ?, ?)
   `).run(trimmedName, normalizedType, trimmedPath);
-  invalidateSourcesCache();
   return getSourceById(result.lastInsertRowid);
 }
 
@@ -1135,7 +1109,6 @@ export function updateSource(id, { name, enabled }) {
   if (!parts.length) return getSourceById(id);
   params.push(id);
   db.prepare(`UPDATE sources SET ${parts.join(', ')} WHERE id = ?`).run(...params);
-  invalidateSourcesCache();
   return getSourceById(id);
 }
 
@@ -1175,6 +1148,12 @@ export async function deleteSourceProgressive(
   }
   const safeChunk = Math.max(100, Math.min(2000, Math.floor(Number(chunkSize) || DELETE_SOURCE_BOOKS_CHUNK)));
 
+  // Backup database before destructive deletion
+  try {
+    await createDatabaseBackup('delete-source');
+  } catch (err) {
+    console.warn('[db] Pre-deletion backup failed (proceeding anyway):', err.message);
+  }
 
   try {
     beginExclusiveOperation('deleting');
@@ -1241,7 +1220,6 @@ export async function deleteSourceProgressive(
     const sourceDeleted = deleteSourceRow
       ? db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes
       : 0;
-    invalidateSourcesCache();
 
     onProgress?.({ deleted, total, stage: 'catalogs' });
     try { await cleanupOrphanedCatalogs(); } catch {}
@@ -1323,9 +1301,7 @@ export function detachSource(id) {
   if (!Number.isFinite(sid)) {
     throw new Error('Некорректный id источника');
   }
-  const changes = db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes;
-  invalidateSourcesCache();
-  return changes;
+  return db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes;
 }
 
 /**
@@ -1363,7 +1339,6 @@ export function forceDetachSourceRowUnsafe(id) {
   try {
     db.pragma('foreign_keys = OFF');
     const result = db.prepare('DELETE FROM sources WHERE id = ?').run(sid).changes;
-    invalidateSourcesCache();
     try { rebuildBooksFtsFromContentSync(); } catch {}
     return result;
   } finally {
@@ -1374,18 +1349,15 @@ export function forceDetachSourceRowUnsafe(id) {
 export function updateSourceBookCount(id) {
   const count = db.prepare('SELECT COUNT(*) AS cnt FROM books WHERE source_id = ?').get(id)?.cnt || 0;
   db.prepare('UPDATE sources SET book_count = ? WHERE id = ?').run(count, id);
-  invalidateSourcesCache();
   return count;
 }
 
 export function updateSourceIndexedAt(id) {
   db.prepare('UPDATE sources SET last_indexed_at = ? WHERE id = ?').run(new Date().toISOString(), id);
-  invalidateSourcesCache();
 }
 
 export function updateSourceFlibustaSidecar(id, enabled) {
   db.prepare('UPDATE sources SET flibusta_sidecar = ? WHERE id = ?').run(enabled ? 1 : 0, id);
-  invalidateSourcesCache();
 }
 
 /** Запись отзыва: legacy body и/или указатель на 7z (как в FLibrary). */
@@ -1522,7 +1494,6 @@ export function migrateInpxToSources() {
   db.prepare('UPDATE books SET source_id = ? WHERE source_id IS NULL').run(sourceId);
   const count = db.prepare('SELECT COUNT(*) AS cnt FROM books WHERE source_id = ?').get(sourceId)?.cnt || 0;
   db.prepare('UPDATE sources SET book_count = ? WHERE id = ?').run(count, sourceId);
-  invalidateSourcesCache();
 }
 
 export function getMeta(key) {
@@ -1810,10 +1781,6 @@ db.exec(`CREATE TABLE IF NOT EXISTS reader_bookmarks (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_reader_bookmarks_user_book ON reader_bookmarks(username, book_id)`);
-// Speeds up source deletion: DELETE ... WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)
-// would otherwise do a full table scan because the primary/unique keys are on (username, book_id).
-db.exec(`CREATE INDEX IF NOT EXISTS idx_reading_positions_book_id ON reading_positions(book_id)`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_reader_bookmarks_book_id ON reader_bookmarks(book_id)`);
 
 let _stmtGetReadPos = null;
 export function getReadingPosition(username, bookId) {
@@ -1897,12 +1864,12 @@ export function setEreaderEmail(username, email) {
 }
 
 export function getReadBooks(username, sort = 'date') {
-  const orderMap = {
+  const orderMap = Object.freeze({
     title: 'b.title COLLATE NOCASE ASC',
     author: `COALESCE(b.authors, '') COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC`,
     date: 'rb.created_at DESC'
-  };
-  const orderBy = orderMap[sort] || orderMap.date;
+  });
+  const orderBy = Object.prototype.hasOwnProperty.call(orderMap, sort) ? orderMap[sort] : orderMap.date;
   return db.prepare(`
     SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo,
            b.ext, b.archive_name AS archiveName
@@ -2184,3 +2151,38 @@ export function getBookAverageRating(bookId) {
   return { average: row?.avg ? Math.round(row.avg * 10) / 10 : 0, count: row?.cnt || 0 };
 }
 
+/**
+ * Атомарная резервная копия БД перед опасными операциями.
+ * Использует SQLite backup API (better-sqlite3 db.backup()).
+ * Ротация: хранит последние 5 бэкапов.
+ * @param {string} reason - Краткая метка бэкапа (например 'delete-source', 'force-reindex')
+ * @returns {Promise<string>} Путь к созданному файлу бэкапа
+ */
+export async function createDatabaseBackup(reason = 'manual') {
+  const backupDir = path.join(config.dataDir, 'backups');
+  await fs.promises.mkdir(backupDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const backupName = `library-${timestamp}-${reason}.db`;
+  const destPath = path.join(backupDir, backupName);
+
+  // db.backup() — атомарная резервная копия через SQLite backup API
+  await db.backup(destPath);
+
+  // Ротация: оставить последние 5 бэкапов
+  try {
+    const files = await fs.promises.readdir(backupDir);
+    const backups = files.filter(f => f.startsWith('library-') && f.endsWith('.db')).sort().reverse();
+    for (const old of backups.slice(5)) {
+      await fs.promises.unlink(path.join(backupDir, old)).catch(() => {});
+      // Удалить -wal/-shm спутники от старых бэкапов (обратная совместимость)
+      await fs.promises.unlink(path.join(backupDir, old + '-wal')).catch(() => {});
+      await fs.promises.unlink(path.join(backupDir, old + '-shm')).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[db] Backup rotation failed:', err.message);
+  }
+
+  console.log(`[db] Backup created: ${destPath}`);
+  return destPath;
+}

@@ -98,10 +98,14 @@ async function inspectZipBuffer(buf) {
     } catch { /* fall through */ }
   }
 
-  // If exactly one relevant entry inside → treat as a wrapper archive and unwrap.
+  // If exactly one *content* entry inside → treat as a wrapper archive and unwrap.
+  // Flibusta `pdf.zip` packs include a `.fbd` descriptor (FB2 metadata sidecar)
+  // alongside the actual book; we must skip it when picking the payload.
   const relevant = files.filter((f) => !/^__macosx\//i.test(f.path) && !/\.ds_store$/i.test(f.path));
-  if (relevant.length === 1) {
-    const entry = relevant[0];
+  const auxiliary = (p) => /\.fbd$/i.test(p) || /\.opf$/i.test(p) || /\.txt$/i.test(p);
+  const contentEntries = relevant.filter((f) => !auxiliary(f.path));
+  if (contentEntries.length === 1) {
+    const entry = contentEntries[0];
     const lower = entry.path.toLowerCase();
     let inner = null;
     try { inner = await entry.buffer(); } catch { /* ignore */ }
@@ -184,7 +188,12 @@ export async function detectBookFormat(buffer, declaredExt = '') {
  * still happens server-side on the content endpoint.
  */
 export function classifyReaderExt(ext) {
-  const e = String(ext || '').toLowerCase().replace(/^\./, '');
+  // Strip trailing `.zip` so composite extensions like `pdf.zip` / `djvu.zip`
+  // (Flibusta wrapper packs with an inner book + `.fbd` descriptor) classify
+  // as their underlying format. The content endpoint unwraps the inner file
+  // server-side via detectBookFormat().
+  const raw = String(ext || '').toLowerCase().replace(/^\./, '');
+  const e = raw.replace(/\.zip$/, '');
   if (e === 'pdf') return 'pdf';
   if (e === 'djvu' || e === 'djv') return 'djvu';
   if (e === 'fb2' || e === 'fbz' || e === 'epub' || e === 'mobi' || e === 'azw3' || e === 'kf8' || e === 'cbz') {

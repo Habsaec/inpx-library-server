@@ -23,6 +23,7 @@ import {
   suppressBook,
   getSuppressedBookIds,
   invalidateReadCache,
+  createDatabaseBackup,
   onViewRebuild
 } from './db.js';
 import { config } from './config.js';
@@ -1015,22 +1016,23 @@ export function startBackgroundIndexing(force = false, incremental = true) {
     sourceNames: enabledList.map((s) => s.name).slice(0, 24)
   });
   indexAllSources(force, useIncremental)
-    .then(() => {
-      // Flip status to 'ready' immediately so the UI shows completion.
-      // Heavy housekeeping (catalog book counts) runs in background.
-      indexState.ready = true;
-      indexState.active = false;
-      indexState.finishedAt = new Date().toISOString();
-      resetIndexControlState();
-      setImmediate(async () => {
-        try {
-          await refreshCatalogBookCounts();
-          invalidateAllRecommendations();
-        } catch (err) {
-          logSystemEvent('warn', 'index', 'global index post-processing (background) failed', { error: err.message });
-          console.error('[index] background post-processing failed:', err);
-        }
-      });
+    .then(async () => {
+      try {
+        indexState.ready = true;
+        indexState.active = false;
+        indexState.finishedAt = new Date().toISOString();
+        await refreshCatalogBookCounts();
+        invalidateAllRecommendations();
+        resetIndexControlState();
+      } catch (err) {
+        indexState.active = false;
+        indexState.ready = false;
+        indexState.error = err.message;
+        indexState.finishedAt = new Date().toISOString();
+        resetIndexControlState();
+        logSystemEvent('error', 'index', 'global index post-processing failed', { error: err.message });
+        console.error(err);
+      }
     })
     .catch((error) => {
       indexState.active = false;
@@ -1077,24 +1079,25 @@ export function startSourceIndexing(sourceId, force = false) {
     type: srcRow?.type || ''
   });
   indexSingleSource(sourceId, force)
-    .then(() => {
-      // Flip status to 'ready' immediately so the UI shows completion.
-      // Heavy housekeeping (catalog book counts) runs in background.
-      indexState.ready = true;
-      indexState.active = false;
-      indexState.finishedAt = new Date().toISOString();
-      resetIndexControlState();
-      setImmediate(async () => {
-        try {
-          await refreshCatalogBookCounts();
-          invalidateAllRecommendations();
-        } catch (err) {
-          logSystemEvent('warn', 'index', 'single source index post-processing (background) failed', {
-            sourceId, name: srcRow?.name || '', error: err.message
-          });
-          console.error('[index] background post-processing failed:', err);
-        }
-      });
+    .then(async () => {
+      try {
+        indexState.ready = true;
+        indexState.active = false;
+        indexState.finishedAt = new Date().toISOString();
+        await refreshCatalogBookCounts();
+        invalidateAllRecommendations();
+        resetIndexControlState();
+      } catch (err) {
+        indexState.active = false;
+        indexState.ready = false;
+        indexState.error = err.message;
+        indexState.finishedAt = new Date().toISOString();
+        resetIndexControlState();
+        logSystemEvent('error', 'index', 'single source index post-processing failed', {
+          sourceId, name: srcRow?.name || '', error: err.message
+        });
+        console.error(err);
+      }
     })
     .catch((error) => {
       indexState.active = false;
@@ -1152,6 +1155,15 @@ async function indexSingleSource(sourceId, force = false) {
 
 async function indexAllSources(force = false, incremental = true) {
   await checkIndexControlPoint();
+
+  // Backup database before force reindex (destructive operation)
+  if (force) {
+    try {
+      await createDatabaseBackup('force-reindex');
+    } catch (err) {
+      console.warn('[inpx] Pre-reindex backup failed (proceeding anyway):', err.message);
+    }
+  }
 
   const sources = getEnabledSources();
 
@@ -1487,12 +1499,8 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
 
   try {
   beginExclusiveOperation('indexing');
-  // Fast-import mode (synchronous=OFF + longer busy_timeout) is now used for
-  // incremental indexing too: per-chunk fsync was the dominant cost on slow
-  // disks. Safety: indexAllSources/indexSingleSource take a DB backup before
-  // calling us, so a power loss can be recovered.
-  beginFastSqliteImport();
   if (ftsBulkMode) {
+    beginFastSqliteImport();
     setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
   }
   if (!incremental) {
@@ -1858,23 +1866,18 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         continue;
       }
       batch.push(line);
+      // Adaptive heap pressure: reduce batch size when memory is high
+      const heapInfo = process.memoryUsage();
+      const heapRatio = heapInfo.heapUsed / (heapInfo.heapTotal || 1);
+      if (heapRatio > HEAP_PRESSURE_THRESHOLD && adaptiveImportEnabled) {
+        const prev = adaptiveChunkTarget;
+        adaptiveChunkTarget = Math.max(minChunkTarget, Math.floor(adaptiveChunkTarget / 2));
+        if (adaptiveChunkTarget !== prev) {
+          console.warn(`[index] heap pressure ${(heapRatio * 100).toFixed(0)}%, reducing batch ${prev} -> ${adaptiveChunkTarget}`);
+        }
+      }
       const targetChunkSize = adaptiveImportEnabled ? adaptiveChunkTarget : inpxImportChunkTarget();
       if (batch.length >= targetChunkSize) {
-        // Adaptive heap pressure: check once per chunk flush, NOT per row.
-        // process.memoryUsage() is a syscall that walks all V8 arenas; on Windows
-        // it costs tens of microseconds. Per-row checks turned a 10-20 min index
-        // into 1+ hour on multi-million book libraries.
-        if (adaptiveImportEnabled) {
-          const heapInfo = process.memoryUsage();
-          const heapRatio = heapInfo.heapUsed / (heapInfo.heapTotal || 1);
-          if (heapRatio > HEAP_PRESSURE_THRESHOLD) {
-            const prev = adaptiveChunkTarget;
-            adaptiveChunkTarget = Math.max(minChunkTarget, Math.floor(adaptiveChunkTarget / 2));
-            if (adaptiveChunkTarget !== prev) {
-              console.warn(`[index] heap pressure ${(heapRatio * 100).toFixed(0)}%, reducing batch ${prev} -> ${adaptiveChunkTarget}`);
-            }
-          }
-        }
         flush();
         if (chunkSeq % UI_LINE_PROGRESS_EVERY === 0) {
           indexState.currentArchive = `${archiveName} … импорт ~${lineCount} строк (чанк ${chunkSeq}, архив ${ei + 1}/${entriesToProcess.length})`;
@@ -2011,8 +2014,9 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         setMeta(BOOKS_FTS_DIRTY_META_KEY, '1');
       }
     }
-    // Always pair with the unconditional beginFastSqliteImport() above.
-    endFastSqliteImport();
+    if (ftsBulkMode) {
+      endFastSqliteImport();
+    }
     endExclusiveOperation('indexing');
   }
 }

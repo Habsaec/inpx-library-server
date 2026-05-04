@@ -14,6 +14,7 @@ import {
 import { getRecommendedLibraryView } from '../services/recommendations.js';
 import { requireBrowseAuth } from '../middleware/auth.js';
 import { t } from '../i18n.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 /**
  * @param {import('express').Application} app
@@ -63,21 +64,17 @@ export function registerBrowseApiRoutes(app) {
     res.json({ items: result.items, total: result.total, page, pageSize, field: result.field });
   });
 
-  app.get('/api/facet-books', requireBrowseAuth, async (req, res, next) => {
-    try {
-      const facet = String(req.query.facet || '').trim();
-      const value = String(req.query.value ?? '').trim();
-      const sort = String(req.query.sort || 'recent').trim();
-      const page = safePage(req.query.page);
-      const pageSize = 24;
-      const allowed = new Set(['authors', 'series', 'genres', 'languages']);
-      if (!allowed.has(facet) || !value) {
-        return apiFail(res, 400, ApiErrorCode.FACET_INVALID, t('api.facet.invalid'), { items: [], total: 0, page, pageSize });
-      }
-      const result = await getBooksByFacetCoalesced({ facet, value, page, pageSize, sort });
-      res.json({ items: result.items, total: result.total, page, pageSize });
-    } catch (error) {
-      next(error);
+  app.get('/api/facet-books', requireBrowseAuth, asyncHandler(async (req, res) => {
+    const facet = String(req.query.facet || '').trim();
+    const value = String(req.query.value ?? '').trim();
+    const sort = String(req.query.sort || 'recent').trim();
+    const page = safePage(req.query.page);
+    const pageSize = 24;
+    const allowed = new Set(['authors', 'series', 'genres', 'languages']);
+    if (!allowed.has(facet) || !value) {
+      return apiFail(res, 400, ApiErrorCode.FACET_INVALID, t('api.facet.invalid'), { items: [], total: 0, page, pageSize });
     }
-  });
+    const result = await getBooksByFacetCoalesced({ facet, value, page, pageSize, sort });
+    res.json({ items: result.items, total: result.total, page, pageSize });
+  }));
 }

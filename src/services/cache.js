@@ -107,18 +107,6 @@ export function invalidateHomeUserSnapshot(username) {
   if (!u) return;
   pageDataCache.delete(`home:userSnap:${u}`);
   pageDataCache.delete(`home:readIds:${u}`);
-  // Also drop per-user paged caches for the 'continue' and 'read' library views
-  // (keys like `library:continue:${u}:p1:s6`). Without this, opening a new book
-  // in the reader does NOT refresh the "Продолжить чтение" block on the home
-  // page until PAGE_CACHE_TTL_MS (15 min) expires — the cached empty result
-  // from the first visit kept the block empty forever.
-  const continuePrefix = `library:continue:${u}:`;
-  const readPrefix = `library:read:${u}:`;
-  for (const key of pageDataCache.keys()) {
-    if (key.startsWith(continuePrefix) || key.startsWith(readPrefix)) {
-      pageDataCache.delete(key);
-    }
-  }
 }
 
 /**

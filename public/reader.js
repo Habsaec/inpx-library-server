@@ -1979,7 +1979,10 @@ import {
 
   /* ===== Reader ext classifier (kept in sync with server utils/book-format.js) ===== */
   function classifyExt(ext) {
-    const e = String(ext || '').toLowerCase().replace(/^\./, '');
+    // Strip trailing `.zip` so composite exts like `pdf.zip` / `djvu.zip`
+    // (Flibusta wrapper packs) classify as their underlying format.
+    const raw = String(ext || '').toLowerCase().replace(/^\./, '');
+    const e = raw.replace(/\.zip$/, '');
     if (e === 'pdf') return 'pdf';
     if (e === 'djvu' || e === 'djv') return 'djvu';
     if (e === 'fb2' || e === 'fbz' || e === 'epub' || e === 'mobi' || e === 'azw3' || e === 'kf8' || e === 'cbz') return 'foliate';

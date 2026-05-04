@@ -348,14 +348,16 @@ export function firstAuthorValue(value = '') {
     .filter(Boolean)[0] || '';
 }
 
-export function renderSkeletonGrid(count = 8) {
-  const cards = Array.from({ length: count }, () => `
-    <div class="skeleton-card">
-      <div class="skeleton-cover"></div>
-      <div class="skeleton-line"></div>
-      <div class="skeleton-line skeleton-line-short"></div>
-    </div>`).join('');
-  return `<div class="grid skeleton-grid" data-skeleton-grid>${cards}</div>`;
+/**
+ * Контейнер для AJAX-секций (рекомендации, "продолжить читать" и т.п.).
+ * Намеренно пустой — никаких скелетонов. Карточки рендерятся при подгрузке
+ * данных и сразу показывают текстовый fallback, поверх которого затем
+ * появляется настоящая картинка. Это уменьшает количество промежуточных
+ * визуальных состояний с 4 (skeleton → пустота → fallback → image) до 2
+ * (fallback → image).
+ */
+export function renderSkeletonGrid(_count = 8) {
+  return `<div class="grid skeleton-grid" data-skeleton-grid></div>`;
 }
 
 export function renderEmptyState({ title, text, actionHref = '', actionLabel = '' }) {
@@ -554,8 +556,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
         <article class="card" data-book-id="${escapeHtml(book.id)}">
           ${batchCb(book)}
           <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-            <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
-            <span class="cover-fallback" hidden>
+            <span class="cover-fallback">
               <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
               <span class="cover-fallback-overlay"></span>
               <span class="cover-fallback-copy">
@@ -563,6 +564,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
                 <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
               </span>
             </span>
+            <img class="cover-image" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
             ${readBadge(book)}
           </a>
           <div class="meta">
@@ -592,8 +594,7 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
         <article class="card" data-book-id="${escapeHtml(book.id)}">
           ${batchCb(book)}
           <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-            <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
-            <span class="cover-fallback" hidden>
+            <span class="cover-fallback">
               <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
               <span class="cover-fallback-overlay"></span>
               <span class="cover-fallback-copy">
@@ -601,6 +602,7 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
                 <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
               </span>
             </span>
+            <img class="cover-image" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${escapeHtml(book.title)}">
             ${readBadge(book)}
           </a>
           <div class="meta">

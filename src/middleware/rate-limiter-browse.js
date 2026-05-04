@@ -3,11 +3,15 @@
  * Защищает от спам-запросов поиском и каталогом, которые блокируют event loop.
  */
 import { getClientKey } from '../services/rate-limiter.js';
+import {
+  BROWSE_WINDOW_MS,
+  BROWSE_MAX_HITS_DEFAULT,
+  BROWSE_MAX_TRACKED,
+  BROWSE_PRUNE_INTERVAL_MS
+} from '../constants.js';
 
-const BROWSE_WINDOW_MS = 60_000; // 1 минута
 const envLimit = Number(process.env.BROWSE_RATE_LIMIT);
-const BROWSE_MAX_HITS = Number.isFinite(envLimit) && envLimit > 0 ? Math.floor(envLimit) : 120; // запросов / мин
-const MAX_TRACKED = 20_000;
+const BROWSE_MAX_HITS = Number.isFinite(envLimit) && envLimit > 0 ? Math.floor(envLimit) : BROWSE_MAX_HITS_DEFAULT;
 const STALE_RECORD_MS = BROWSE_WINDOW_MS * 2;
 const TOKENS_PER_MS = BROWSE_MAX_HITS / BROWSE_WINDOW_MS;
 
@@ -30,7 +34,7 @@ function refillTokens(record, now) {
 }
 
 // Чистка каждые 2 минуты
-setInterval(pruneOldHits, 2 * 60_000).unref();
+setInterval(pruneOldHits, BROWSE_PRUNE_INTERVAL_MS).unref();
 
 export function browseLimiter(req, res, next) {
   if (EXEMPT_PATHS.has(req.path)) return next();
@@ -39,8 +43,8 @@ export function browseLimiter(req, res, next) {
 
   let record = hits.get(key);
   if (!record) {
-    if (hits.size >= MAX_TRACKED) pruneOldHits();
-    if (hits.size >= MAX_TRACKED) {
+    if (hits.size >= BROWSE_MAX_TRACKED) pruneOldHits();
+    if (hits.size >= BROWSE_MAX_TRACKED) {
       const oldest = hits.keys().next().value;
       if (oldest !== undefined) hits.delete(oldest);
     }

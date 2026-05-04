@@ -361,50 +361,24 @@ function attachRatingWidgets() {
   });
 }
 
-function setCoverFallbackState(rootNode, showFallback) {
-  const root = rootNode instanceof Element ? rootNode : null;
-  if (!root) return;
-  const cover = root.matches('.cover') ? root : root.querySelector('.cover');
-  if (!cover) return;
-  const fallback = cover.querySelector('.cover-fallback');
-  if (showFallback) {
-    cover.classList.add('cover-fallback-active');
-    if (fallback) {
-      fallback.hidden = false;
-      fallback.setAttribute('aria-hidden', 'false');
-    }
-  } else {
-    cover.classList.remove('cover-fallback-active');
-    if (fallback) {
-      fallback.hidden = true;
-      fallback.setAttribute('aria-hidden', 'true');
-    }
-  }
-}
-
-/** Декоративная обложка в разметке; при error /cover-thumb (404 без обложки) и при coverAvailable=false не подменяем заглушкой с API. */
+/**
+ * Two-state cover model:
+ *   1. Текстовый fallback всегда отрендерен (z-index:1, виден сразу).
+ *   2. .cover-image имеет opacity:0 по умолчанию; на успешный load добавляем
+ *      класс .is-loaded → она появляется поверх fallback с короткой fade-in.
+ *   На error / 404 ничего не делаем — fallback просто остаётся видимым.
+ */
 function attachCoverErrorFallback(scope = document) {
   const root = scope && scope.querySelectorAll ? scope : document;
   const imgs = root.querySelectorAll('.cover .cover-image');
   for (const img of imgs) {
     if (img.dataset.coverErrBound === '1') continue;
     img.dataset.coverErrBound = '1';
-    const host = img.closest('.card, .book-detail-main, .cover');
-    const showFallbackSoonTimer = window.setTimeout(() => {
-      setCoverFallbackState(host, true);
-    }, 2000);
-    const clearSlowTimer = () => window.clearTimeout(showFallbackSoonTimer);
-    img.addEventListener('load', () => {
-      clearSlowTimer();
-      setCoverFallbackState(host, false);
-    }, { once: true });
-    img.addEventListener('error', () => {
-      clearSlowTimer();
-      setCoverFallbackState(host, true);
-    }, { once: true });
-    if (img.complete) {
-      clearSlowTimer();
-      setCoverFallbackState(host, !(img.naturalWidth > 0));
+    const markLoaded = () => img.classList.add('is-loaded');
+    img.addEventListener('load', markLoaded, { once: true });
+    // на error — оставить класс is-loaded НЕ добавленным; fallback продолжит показываться
+    if (img.complete && img.naturalWidth > 0) {
+      markLoaded();
     }
   }
 }
@@ -424,14 +398,17 @@ function applyCardDetailsForId(id, details) {
   for (const card of cards) {
     card.dataset.coverAvailable = details.coverAvailable ? 'true' : 'false';
     const img = card.querySelector('.cover .cover-image');
-    if (details.coverAvailable && img) {
+    if (!img) continue;
+    if (details.coverAvailable) {
       const targetSrc = String(img.dataset.coverSrc || '').trim();
       if (targetSrc && img.getAttribute('src') !== targetSrc) {
         img.setAttribute('src', targetSrc);
       }
+    } else {
+      // Нет настоящей обложки — убираем img совсем, чтобы не было запроса.
+      // Fallback и так виден (z-index:1).
+      img.remove();
     }
-    const hasRenderedImage = Boolean(img && img.complete && img.naturalWidth > 0);
-    setCoverFallbackState(card, !details.coverAvailable && !hasRenderedImage);
   }
 }
 
@@ -2464,12 +2441,12 @@ function renderCardHtml(book, { batchSelect = false } = {}) {
   return `<article class="card" data-book-id="${id}">
     ${batchCb}
     <a class="cover" href="/book/${encodeURIComponent(book.id)}" data-role="cover">
-      <img class="cover-image is-loaded" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${title}">
-      <span class="cover-fallback" hidden>
+      <span class="cover-fallback">
         <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
         <span class="cover-fallback-overlay"></span>
         <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${authors || escapeHtml(uiT('book.authorUnknown'))}</span></span>
       </span>
+      <img class="cover-image" loading="lazy" draggable="false" src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" data-cover-src="/api/books/${encodeURIComponent(book.id)}/cover-thumb" alt="${title}">
       ${getReadBookIdSet().has(book.id) ? `<span class="read-badge">${READ_BADGE_SVG}</span>` : ''}
     </a>
     <div class="meta">
