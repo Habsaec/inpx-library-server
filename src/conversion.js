@@ -12,6 +12,7 @@ import {
   getAvailableDownloadFormats
 } from './download-formats.js';
 import { buildDownloadBaseName } from './download-filename.js';
+import { getFb2WebpMode, convertFb2WebpBinariesToPng } from './fb2-webp-images.js';
 const MIME_TYPES = {
   fb2: 'application/octet-stream',
   epub: 'application/epub+zip',
@@ -198,10 +199,16 @@ function getBookCacheKey(book, format) {
         String(book.size ?? ''),
         String(book.date ?? ''),
         String(book.importedAt ?? ''),
-        'sidecar-images-v1'
+        'sidecar-images-v1',
+        ...(getFb2WebpMode() === 'png' ? ['webp-png'] : [])
       ].join(':')
     )
     .digest('hex');
+}
+
+/** Админка → Контент: WebP-иллюстрации в FB2 отдавать как есть или перекодировать в PNG. */
+async function applyFb2WebpMode(buffer) {
+  return getFb2WebpMode() === 'png' ? convertFb2WebpBinariesToPng(buffer) : buffer;
 }
 
 function getFormatCachePath(book, format) {
@@ -303,7 +310,7 @@ async function convertFb2Book(book, format) {
         const sourcePath = path.join(sessionDir, 'source.fb2');
         const outputDir = path.join(sessionDir, 'out');
         ensureDir(outputDir);
-        const rawBuffer = await readBookBufferForDelivery(book);
+        const rawBuffer = await applyFb2WebpMode(await readBookBufferForDelivery(book));
         await fs.promises.writeFile(sourcePath, rawBuffer);
         const convertArgs = ['convert', '--to', format, '--ow', '--nd'];
         if (format === 'kfx' || format === 'azw8') {
@@ -370,9 +377,11 @@ export async function resolveDownload(book, requestedFormat, options = {}) {
     };
   }
   if (format === 'fb2') {
-    const content = skipFb2DeliveryProcessing
-      ? await readBookBuffer(book)
-      : await readBookBufferForDelivery(book);
+    const content = await applyFb2WebpMode(
+      skipFb2DeliveryProcessing
+        ? await readBookBuffer(book)
+        : await readBookBufferForDelivery(book)
+    );
     return {
       format,
       fileName: getBookFormatFileName(book, 'fb2'),

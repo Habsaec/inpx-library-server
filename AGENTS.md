@@ -13,6 +13,7 @@
 | Additive API | Prefer backward-compatible response changes; Android and OPDS depend on stable contracts |
 | INPX DEL=1 | Indexed with `deleted=1` (not purged). Hidden by default via `active_books`; admin **Content → Show deleted books** (`show_deleted_books`) reveals them. Soft-deleted duplicates (`suppressed_books`) stay hidden. Book payloads may include additive `deleted: 0\|1` |
 | Android-only reader | `inpx-book-reader` targets **Android APK only** — do not design API or UX for iOS/desktop/web client |
+| Compressed libraries | Flibusta + Librusec «96 GB» builds: ZIP entries use **PPMd** (`unzipper` can't inflate → `archives.js` falls back to 7z for non Store/Deflate methods) and FB2 images are **WebP** (often inside `content-type="image/jpeg"`). Admin **Content → WebP images in FB2** (`fb2_webp_images`: `keep`\|`png`) recodes WebP `<binary>` to PNG on download / fb2cng input (`src/fb2-webp-images.js`); `/api/books/:id/content` (web reader, Android) is never converted |
 
 Key endpoints for reader:
 - `GET /api/books/:id/meta` (`seriesList` from index)

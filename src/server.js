@@ -24,6 +24,7 @@ import { registerReaderRoutes } from './routes/reader.js';
 import { registerUserApiRoutes } from './routes/user-api.js';
 import { setDisabledDownloadFormats } from './download-formats.js';
 import { setDownloadFilenameStyle } from './download-filename.js';
+import { setFb2WebpMode } from './fb2-webp-images.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerLibraryRoutes, detailsCache, getDetailsFull, bookFlibustaSidecarEffective } from './routes/library.js';
 import { registerLiteRoutes } from './routes/lite.js';
@@ -400,6 +401,7 @@ function buildPublicSettingsExport() {
       allowAnonymousOpds: getSetting('allow_anonymous_opds') === '1',
       disabledDownloadFormats: getSetting('disabled_download_formats') || '',
       downloadFilenameStyle: getSetting('download_filename_style') || '',
+      fb2WebpImages: getSetting('fb2_webp_images') || '',
       recaptchaSiteKey: getSetting('recaptcha_site_key') || '',
       recaptchaSecretConfigured: Boolean(recaptchaSecretStored)
     },
@@ -1142,6 +1144,7 @@ async function bootstrap() {
   setAllowAnonymousDownload(getSetting('allow_anonymous_download') === '1');
   setDisabledDownloadFormats(getSetting('disabled_download_formats') || '');
   setDownloadFilenameStyle(getSetting('download_filename_style'));
+  setFb2WebpMode(getSetting('fb2_webp_images'));
   setDefaultLocale(getSetting('default_locale'));
 
   /* Проверка путей источников при старте — предупреждение, если не найдены */

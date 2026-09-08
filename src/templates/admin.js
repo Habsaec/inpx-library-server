@@ -16,6 +16,7 @@ import {
   setDisabledDownloadFormats
 } from '../download-formats.js';
 import { DOWNLOAD_FILENAME_STYLES } from '../download-filename.js';
+import { FB2_WEBP_MODES } from '../fb2-webp-images.js';
 import {
   TELEGRAM_DEFAULT_PROFILE_DESCRIPTION,
   TELEGRAM_DEFAULT_PROFILE_SHORT,
@@ -785,6 +786,7 @@ export function renderAdminContent({
   excludedGenreSet = new Set(),
   disabledDownloadFormatSet = new Set(),
   downloadFilenameStyle = 'translit-full',
+  fb2WebpMode = 'keep',
   showDeletedBooks = false,
   flash = '',
   csrfToken = ''
@@ -965,6 +967,18 @@ export function renderAdminContent({
           <select id="download-filename-style" name="download_filename_style" style="max-width:420px">
             ${DOWNLOAD_FILENAME_STYLES.map((style) => `
               <option value="${escapeHtml(style)}" ${downloadFilenameStyle === style ? 'selected' : ''}>${escapeHtml(t(`admin.content.filename.${style}`))}</option>
+            `).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="admin-card" style="margin-bottom:16px">
+        <div class="admin-card-title">${escapeHtml(t('admin.content.webpSection'))}</div>
+        <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.webpHint'))}</p>
+        <div class="admin-field-group">
+          <label for="fb2-webp-images">${escapeHtml(t('admin.content.webpLabel'))}</label>
+          <select id="fb2-webp-images" name="fb2_webp_images" style="max-width:420px">
+            ${FB2_WEBP_MODES.map((mode) => `
+              <option value="${escapeHtml(mode)}" ${fb2WebpMode === mode ? 'selected' : ''}>${escapeHtml(t(`admin.content.webp.${mode}`))}</option>
             `).join('')}
           </select>
         </div>

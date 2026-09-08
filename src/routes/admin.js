@@ -14,6 +14,7 @@ function normalizeNewBooksAnnounceTemplate(template = '') {
 }
 import { getConfiguredDownloadFormats, setDisabledDownloadFormats } from '../download-formats.js';
 import { normalizeDownloadFilenameStyle, setDownloadFilenameStyle } from '../download-filename.js';
+import { normalizeFb2WebpMode, setFb2WebpMode } from '../fb2-webp-images.js';
 import { runWithLocaleLang, resolveLocale, t, tp, countLabel, translateKnownErrorMessage, setDefaultLocale } from '../i18n.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireAdminWeb, requireAdminApi, invalidateSessionUserCache } from '../middleware/auth.js';
@@ -1965,6 +1966,7 @@ export function registerAdminRoutes(app, deps) {
       genres: allGenres, excludedGenreSet,
       disabledDownloadFormatSet,
       downloadFilenameStyle: normalizeDownloadFilenameStyle(getSetting('download_filename_style')),
+      fb2WebpMode: normalizeFb2WebpMode(getSetting('fb2_webp_images')),
       showDeletedBooks: getSetting('show_deleted_books') === '1',
       flash: String(req.query.flash || ''), csrfToken: req.csrfToken || ''
     }));
@@ -1980,6 +1982,9 @@ export function registerAdminRoutes(app, deps) {
     const filenameStyle = normalizeDownloadFilenameStyle(req.body.download_filename_style);
     setSetting('download_filename_style', filenameStyle);
     setDownloadFilenameStyle(filenameStyle);
+    const fb2WebpMode = normalizeFb2WebpMode(req.body.fb2_webp_images);
+    setSetting('fb2_webp_images', fb2WebpMode);
+    setFb2WebpMode(fb2WebpMode);
 
     // Пока идёт индексация, не трогаем excluded_* и не делаем DROP/CREATE VIEW:
     // SQLite может заблокировать или оставить active_books в полусогласованном состоянии.
@@ -1988,7 +1993,8 @@ export function registerAdminRoutes(app, deps) {
       logSystemEvent('info', 'admin', 'download formats updated during indexing', {
         admin: req.user.username,
         disabledFormats: disabledFmt.join(','),
-        downloadFilenameStyle: filenameStyle
+        downloadFilenameStyle: filenameStyle,
+        fb2WebpMode
       });
       return res.redirect('/admin/content?flash=' + encodeURIComponent(
         t('admin.content.savedFormatsDuringIndexing')
@@ -2028,7 +2034,8 @@ export function registerAdminRoutes(app, deps) {
         excludedGenres: excludedGenre.join(','),
         showDeletedBooks: getSetting('show_deleted_books') === '1',
         disabledFormats: disabledFmt.join(','),
-        downloadFilenameStyle: filenameStyle
+        downloadFilenameStyle: filenameStyle,
+        fb2WebpMode
       });
       res.redirect('/admin/content?flash=' + encodeURIComponent(t('admin.content.saved')));
     } catch (error) {

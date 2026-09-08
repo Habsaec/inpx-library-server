@@ -20,6 +20,18 @@ const SEVEN_ZIP_LIST_CACHE_MAX = Math.max(
   Number.parseInt(String(process.env.SEVEN_ZIP_LIST_CACHE_MAX || ''), 10) || 48
 );
 
+/**
+ * Методы сжатия ZIP, которые распаковывает unzipper (0 = Store, 8 = Deflate).
+ * Остальные (PPMd = 98, LZMA = 14, bzip2 = 12, zstd = 93) — через 7z: например,
+ * сжатые сборки Flibusta + Librusec (96 ГБ) упакованы PPMd.
+ */
+const UNZIPPER_METHODS = new Set([0, 8]);
+
+function zipEntryNeedsSevenZip(entry) {
+  const method = Number(entry?.compressionMethod);
+  return Number.isFinite(method) && !UNZIPPER_METHODS.has(method);
+}
+
 const zipDirectoryCache = new Map();
 const zipDirectoryInflight = new Map();
 const sevenZipListCache = new Map();
@@ -221,6 +233,13 @@ export async function readArchiveEntryBuffer(archivePath, entryPath) {
   }
   const uc = Number(entry.uncompressedSize) || 0;
   const bufMs = Math.min(600_000, 60_000 + Math.floor(uc / 25_000));
+  if (zipEntryNeedsSevenZip(entry)) {
+    return promiseWithTimeout(
+      readSevenZipEntry(archivePath, normalizeEntryKey(entry.path), config.sevenZipPath),
+      bufMs,
+      `7z zip entry ${normalized}`
+    );
+  }
   return promiseWithTimeout(entry.buffer(), bufMs, `zip entry ${normalized}`);
 }
 
