@@ -3402,7 +3402,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
       ${showSeries ? `<div class="card-series">${uiRenderSeriesLinks(book.seriesList, `ajax-s-${book.id}`, authorKey)}</div>` : ''}
       ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
       ${readActions
-        ? `<div class="card-actions card-actions-read"><a class="button button-primary download-menu-trigger-compact" href="${readPagePath(book.id)}">${escapeHtml(uiT('home.heroReadBook'))}</a><a class="button button-secondary download-menu-trigger-compact" href="${bookPagePath(book.id)}">${escapeHtml(uiT('home.heroAboutBook'))}</a></div>`
+        ? `<div class="card-actions card-actions-read"><a class="button button-primary download-menu-trigger-compact" href="${readPagePath(book.id)}">${escapeHtml(uiT('home.heroReadBook'))}</a></div>`
         : downloadMenu ? `<div class="card-actions">${downloadMenu}</div>` : ''}
     </div>
   </article>`;

@@ -2200,6 +2200,12 @@ import {
   /* ===== TOC ===== */
   function updateTocHighlight() { document.querySelectorAll('.toc-item').forEach(el => el.classList.toggle('is-active', !!currentTocHref && el.dataset.tocHref === currentTocHref)); }
   function getTocIdx() { return tocData.findIndex(i => i.href === currentTocHref); }
+  /* Докрутить оглавление к текущей главе — после того как панель стала видимой (scrollIntoView в скрытом контейнере не работает). */
+  function scrollTocToCurrent() {
+    const el = $('toc-content')?.querySelector('.toc-item.is-active');
+    if (!el) return;
+    requestAnimationFrame(() => { try { el.scrollIntoView({ block: 'center' }); } catch { /* */ } });
+  }
   function updateTocBtnState() { const i = getTocIdx(); if (tocPrevBtn) tocPrevBtn.disabled = i <= 0; if (tocNextBtn) tocNextBtn.disabled = i === -1 || i >= tocData.length - 1; }
   function goTocIdx(i) { const item = tocData[i]; if (!item || !view) return; view.goTo(item.href).catch(console.error); if (panelOverlay.classList.contains('is-open') && activePanelTab === 'toc') closePanel(); }
 
@@ -2219,6 +2225,7 @@ import {
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
     });
     updateTocHighlight(); updateTocBtnState();
+    if (!q && panelOverlay.classList.contains('is-open') && activePanelTab === 'toc') scrollTocToCurrent();
   }
 
   /* ===== Panel ===== */
@@ -2285,6 +2292,7 @@ import {
       });
     }
     if (tab === 'notes') renderNotesTab();
+    if (tab === 'toc') scrollTocToCurrent();
     if (tab === 'search') {
       const inp = $('book-search-input');
       if (inp) setTimeout(() => { try { inp.focus(); } catch { /* */ } }, 60);

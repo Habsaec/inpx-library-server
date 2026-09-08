@@ -2453,7 +2453,8 @@ textarea:focus-visible {
 }
 
 .premium-hero-card .button-primary,
-.card-actions-read .button-primary {
+.card-actions-read .button-primary,
+.actions-primary .button-primary {
   background: var(--link);
   border-color: var(--link);
   color: #1a1612;
@@ -2461,31 +2462,32 @@ textarea:focus-visible {
 }
 
 .premium-hero-card .button-primary:hover,
-.card-actions-read .button-primary:hover {
+.card-actions-read .button-primary:hover,
+.actions-primary .button-primary:hover {
   background: var(--link-hover);
   border-color: var(--link-hover);
   color: #1a1612;
 }
 
 html[data-theme="light"] .premium-hero-card .button-primary,
-html[data-theme="light"] .card-actions-read .button-primary {
+html[data-theme="light"] .card-actions-read .button-primary,
+html[data-theme="light"] .actions-primary .button-primary {
   color: #fffdf8;
 }
 
 html[data-theme="light"] .premium-hero-card .button-primary:hover,
-html[data-theme="light"] .card-actions-read .button-primary:hover {
+html[data-theme="light"] .card-actions-read .button-primary:hover,
+html[data-theme="light"] .actions-primary .button-primary:hover {
   color: #fffdf8;
 }
 
-.premium-hero-card .button-secondary,
-.card-actions-read .button-secondary {
+.premium-hero-card .button-secondary {
   background: transparent;
   border-color: var(--border);
   color: var(--text);
 }
 
-.premium-hero-card .button-secondary:hover,
-.card-actions-read .button-secondary:hover {
+.premium-hero-card .button-secondary:hover {
   background: var(--ui-glass-active-bg, var(--button-bg-hover));
   border-color: var(--button-border-hover);
 }
@@ -3523,7 +3525,6 @@ html[data-theme="light"] .cover-fallback-overlay {
 
 .card-actions-read {
   gap: 6px;
-  flex-wrap: wrap;
 }
 
 .card-remove-favorite-action {
@@ -3981,6 +3982,16 @@ body:has(.bottom-nav) .batch-fab {
 
 .actions-primary {
   margin-top: 10px;
+  align-items: stretch;
+}
+
+.actions-primary .button,
+.actions-primary .download-menu-trigger {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  line-height: 1;
+  box-sizing: border-box;
 }
 
 .actions-secondary {

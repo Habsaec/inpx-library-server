@@ -1,0 +1,185 @@
+[CENTER][SIZE=5][B]INPX — домашняя библиотека[/B][/SIZE]
+[SIZE=2]сервер + Android-читалка · одна экосистема · MIT[/SIZE]
+
+[URL=https://github.com/Habsaec/inpx-library-server]Сервер (GitHub)[/URL] · [URL=https://github.com/Habsaec/inpx-book-reader]Ридер (GitHub)[/URL]
+[/CENTER]
+
+[B]INPX Library Server[/B] — каталог INPX/FB2 на ПК или NAS: поиск, веб-читалка, OPDS, конвертация, отправка на Kindle/Kobo.
+[B]INPX Book Reader[/B] — Android APK: каталог с сервера, офлайн-чтение FB2/EPUB, sync позиции / закладок / заметок.
+
+Без сервера ридер почти бесполезен (нет каталога, скачивания и sync). Без ридера сервер всё равно полезен: браузер, OPDS, почта на устройство.
+
+[CENTER][B]Скачать[/B]
+Сервер [SIZE=2]v2.2.0[/SIZE]: [URL=https://github.com/Habsaec/inpx-library-server/releases/download/v2.2.0/inpx-library-server-2.2.0.zip]inpx-library-server-2.2.0.zip[/URL]
+Ридер [SIZE=2]v1.1[/SIZE]: [URL=https://github.com/Habsaec/inpx-book-reader/releases/download/v1.1.0/inpx-book-reader_1.1.apk]inpx-book-reader_1.1.apk[/URL]
+[/CENTER]
+
+[SIZE=4][B]Как это связано[/B][/SIZE]
+[CODE]Android APK  ←── REST /api/* ──→  INPX Library Server
+     │
+     └── скачивание → локальные FB2/EPUB → Foliate (офлайн)[/CODE]
+[LIST]
+[*]Каталог, поиск, полки, профиль, избранное — с сервера
+[*]Текст книги — только из файла на телефоне
+[*]Позиция, закладки, заметки — sync по bookId между вебом и Android
+[*]iOS / Desktop / PWA ридера [B]нет[/B] — только Android APK
+[/LIST]
+
+[SIZE=4][B]Типовой сценарий[/B][/SIZE]
+[LIST=1]
+[*]Поставить и запустить [B]сервер[/B] (ПК / NAS), добавить источник книг, дождаться индексации
+[*]С телефона в той же Wi‑Fi поставить [B]APK[/B]
+[*]В onboarding указать URL сервера вида [B]http://192.168.x.x:3000[/B] (не localhost!), логин/пароль
+[*]Выбрать папку хранения → скачать книгу → читать офлайн
+[/LIST]
+[SIZE=1]HTTP в домашней сети разрешён. Если нет связи: IP ПК вместо 127.0.0.1, файрвол Windows на порт 3000.[/SIZE]
+
+━━━━━━━━━━━━━━━━━━━━
+
+[CENTER][SIZE=4][B]1. INPX Library Server 2.2.0[/B][/SIZE][/CENTER]
+
+Self-hosted веб-сервер для электронных библиотек. ПК, NAS, Raspberry Pi, Synology, Docker.
+
+[SPOILER="Возможности сервера"]
+[LIST]
+[*][B]Каталог[/B] — поиск (в т.ч. unified hub: книги / авторы / серии), жанры, фильтры, карточка с обложкой
+[*][B]Форматы[/B] — FB2, EPUB, MOBI, AZW3 · ZIP/7z · несколько источников
+[*][B]Веб-читалка[/B] — FB2/EPUB, темы, закладки, позиция, TTS, «Продолжить»
+[*][B]Персональное[/B] — избранное, полки, рекомендации
+[*][B]Выдача[/B] — ZIP, конвертация fb2cng, email на ридер
+[*][B]OPDS[/B] — /opds для KOReader, Moon+, Librera, FBReader
+[*][B]Sidecar[/B] — обложки Flibusta/FLibrary (JXL), рецензии, биографии
+[*][B]Админка[/B] — источники, пользователи, SMTP, Telegram-бот, OIDC/SSO, дубликаты, бэкап, обновление из ZIP
+[*][B]Безопасность[/B] — сессии, CSRF, rate limit, шифрование SMTP-пароля
+[/LIST]
+Интерфейс [B]RU · EN[/B]. Health: /health, /ready.
+[/SPOILER]
+
+[SPOILER="Установка сервера — Windows"]
+[LIST=1]
+[*]Скачайте ZIP релиза и распакуйте
+[*]Запустите [B]install.cmd[/B] (портативный Node + зависимости + конвертер)
+[*]При необходимости .env из .env.example:
+[CODE]LIBRARY_ROOT=D:\Books[/CODE]
+[*][B]start-server.cmd[/B] → [URL=http://localhost:3000]http://localhost:3000[/URL]
+[/LIST]
+Остановка: stop-server.cmd · перезапуск: restart-server.cmd
+Первый вход: [B]admin / admin[/B] — сразу смените пароль.
+[/SPOILER]
+
+[SPOILER="Установка сервера — Linux / macOS"]
+[CODE]git clone https://github.com/Habsaec/inpx-library-server.git
+cd inpx-library-server
+chmod +x install.sh start.sh stop.sh restart.sh
+sudo ./install.sh
+./start.sh[/CODE]
+Откройте http://localhost:3000 → admin / admin.
+На macOS нужны Command Line Tools и Node.
+[/SPOILER]
+
+[SPOILER="Установка сервера — Docker"]
+[CODE]docker pull habsaec/inpx-library-server:latest
+
+docker run -d \
+  --name inpx-library \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v inpx-app:/app \
+  -v inpx-data:/app/data \
+  -v /path/to/library:/library:ro \
+  -e LIBRARY_ROOT=/library \
+  habsaec/inpx-library-server:latest[/CODE]
+Доп. источники: [CODE]-v /path/to/epub:/sources/epub:ro[/CODE]
+→ админка: Источники → Папка → /sources/epub
+
+Compose / Synology: порт [B]3000[/B], данные в /app/data. Подробности — README на GitHub.
+[/SPOILER]
+
+[SPOILER="После установки сервера"]
+[LIST=1]
+[*]Сменить пароль admin
+[*]Добавить источник (.inpx/архивы или папка книг)
+[*]Дождаться индексации
+[*]Опционально: SMTP, OPDS, Telegram-бот
+[*]Бэкап: админка → Операции → «Скачать бэкап» (или data/library.db)
+[/LIST]
+HTTPS / прокси: TRUST_PROXY=true и SESSION_SECURE_COOKIE=true.
+Обновление: Админка → Обновление → ZIP (data/, node_modules/, converter/, runtime/, .env не трогает).
+[/SPOILER]
+
+[SPOILER="OPDS и API"]
+OPDS: [B]/opds[/B], Basic Auth. KOReader, Moon+, Librera, FBReader.
+Анонимный OPDS — админка → Пользователи.
+
+API для ридера: /api/books/:id/meta, позиция (CAS revision), sync закладок/заметок, /api/search, /api/catalog, /api/favorites.
+[/SPOILER]
+
+[SPOILER="Неполадки сервера"]
+[LIST]
+[*]curl -sS http://127.0.0.1:3000/health → "ok":true
+[*]Порт занят → PORT в .env
+[*]Нет книг → источник + индексация
+[*]Windows, пусто → LIBRARY_ROOT в .env
+[*]Сброс admin → reset-admin.cmd / ./reset-admin.sh
+[/LIST]
+[/SPOILER]
+
+Ссылки сервера: [URL=https://github.com/Habsaec/inpx-library-server]репозиторий[/URL] · [URL=https://github.com/Habsaec/inpx-library-server/releases]релизы[/URL] · [URL=https://hub.docker.com/r/habsaec/inpx-library-server]Docker Hub[/URL]
+
+━━━━━━━━━━━━━━━━━━━━
+
+[CENTER][SIZE=4][B]2. INPX Book Reader 1.1 (Android)[/B][/SIZE][/CENTER]
+
+Мобильный клиент [B]только для Android[/B]. Каталог и sync — с сервера; чтение — из скачанного файла (Foliate).
+
+[SPOILER="Возможности ридера"]
+[LIST]
+[*]Onboarding: сервер → папка хранения
+[*]Каталог: авторы / серии / жанры, поиск с totals, фильтры
+[*]Главная и «Мои книги»: полки, сетка обложек
+[*]Скачивание FB2/EPUB, офлайн-чтение
+[*]Sync позиции, закладок, заметок по bookId
+[*]После книги — предложение следующей части серии
+[*]Режим e-ink (auto/on/off), поддержка Onyx (подсветка, EPD refresh)
+[*]Профиль, избранное, история — с API сервера
+[/LIST]
+[/SPOILER]
+
+[SPOILER="Установка APK (проще всего)"]
+[LIST=1]
+[*]Скачайте [URL=https://github.com/Habsaec/inpx-book-reader/releases/download/v1.1.0/inpx-book-reader_1.1.apk]inpx-book-reader_1.1.apk[/URL]
+[*]Разрешите установку из неизвестных источников (если спросит)
+[*]Установите APK
+[*]Запустите → укажите URL сервера [B]http://IP-ПК-или-NAS:3000[/B], логин и пароль
+[*]Выберите папку для книг → готово
+[/LIST]
+Позже то же: Настройки → Сервер.
+[/SPOILER]
+
+[SPOILER="Сборка APK самостоятельно (Windows)"]
+Нужны: Node.js 20+, Android Studio (SDK API 34+), JDK 17.
+[CODE]git clone https://github.com/Habsaec/inpx-book-reader.git
+cd inpx-book-reader
+npm install
+npm run build:android[/CODE]
+APK: android/app/build/outputs/apk/debug/app-debug.apk
+[CODE]adb install android\app\build\outputs\apk\debug\app-debug.apk[/CODE]
+Или: npm run android:open → Build APK / Run в Android Studio.
+Подробности: docs/ANDROID.md в репозитории ридера.
+[/SPOILER]
+
+[SPOILER="Важно про сеть"]
+[LIST]
+[*]Телефон и сервер — в [B]одной Wi‑Fi[/B]
+[*]В APK адрес сервера — [B]IP[/B] (192.168.…), не localhost и не 127.0.0.1
+[*]Файрвол Windows должен пропускать порт 3000
+[*]Браузерный npm run dev на :3100 — только отладка, не целевая платформа
+[/LIST]
+[/SPOILER]
+
+Ссылки ридера: [URL=https://github.com/Habsaec/inpx-book-reader]репозиторий[/URL] · [URL=https://github.com/Habsaec/inpx-book-reader/releases]релизы / APK[/URL]
+
+━━━━━━━━━━━━━━━━━━━━
+
+[CENTER][SIZE=2]Лицензия обоих проектов: [B]MIT[/B]
+Вопросы по установке — в тред; баги удобнее на GitHub Issues соответствующего репо.[/SIZE][/CENTER]

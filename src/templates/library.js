@@ -717,7 +717,7 @@ export function renderBook({
               : ''
           }
           <div class="actions actions-primary">
-            <a href="${readPagePath(book.id)}" class="button" target="_blank" rel="noopener noreferrer">${escapeHtml(t('book.read'))}</a>
+            <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer">${escapeHtml(t('home.heroReadBook'))}</a>
             ${renderDownloadMenu(book, { accent: true, user })}
             ${isAuthenticated && canSendToEmailInUi(user) ? `<button class="button" type="button" ${bookIdDataAttr(book.id)} data-send-to-ereader="1">${escapeHtml(t('book.toEmail'))}</button>` : ''}
           </div>

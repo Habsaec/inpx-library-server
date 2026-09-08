@@ -285,9 +285,9 @@ test('renderBook returns book detail page', async () => {
   assert.ok(html.includes('Test Author'));
   const actionsStart = html.indexOf('class="actions actions-primary"');
   const actions = actionsStart >= 0 ? html.slice(actionsStart, actionsStart + 2500) : '';
-  const readAt = actions.search(/class="button"[^>]*>[^<]*(Читать|Read)/);
+  const readAt = actions.search(/class="button button-primary"[^>]*>[^<]*(Читать книгу|Read book)/);
   const downloadAt = actions.indexOf('download-menu-trigger');
-  assert.ok(readAt >= 0 && downloadAt >= 0 && readAt < downloadAt, 'Read should come before Download');
+  assert.ok(readAt >= 0 && downloadAt >= 0 && readAt < downloadAt, 'Read book should come before Download');
 });
 
 test('renderFacetBooks: genre page renders view tabs', async () => {

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "skills": {
+    "accessibility-auditing": {
+      "source": "spencerpauly/awesome-cursor-skills",
+      "sourceType": "github",
+      "skillPath": "resources/accessibility-auditing/SKILL.md",
+      "computedHash": "ab8a774ca462d011e6abe23d6f424020dbfbb7ad8c62c93f3b18011852650553"
+    },
+    "find-bugs": {
+      "source": "getsentry/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-bugs/SKILL.md",
+      "computedHash": "58b6a1bdc071068e031e6bb7e48a3ece07ba427b117e3bd50858a62c217e397c"
+    },
+    "parallel-code-review": {
+      "source": "spencerpauly/awesome-cursor-skills",
+      "sourceType": "github",
+      "skillPath": "resources/parallel-code-review/SKILL.md",
+      "computedHash": "bd7a7059a8db86fe4cbb312ad0753158cbdba7e0a840522f619792de7c2e8f81"
+    },
+    "systematic-debugging": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/systematic-debugging/SKILL.md",
+      "computedHash": "a2750dfbaed1690da73b120254892c4f926b4576cb82eb16fc877783941fe39b"
+    },
+    "verification-before-completion": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/verification-before-completion/SKILL.md",
+      "computedHash": "b529822bdac4b197b180fe12225cff86b930b65910435103c10622df7f041651"
+    },
+    "visual-qa-testing": {
+      "source": "spencerpauly/awesome-cursor-skills",
+      "sourceType": "github",
+      "skillPath": "resources/visual-qa-testing/SKILL.md",
+      "computedHash": "fdac81ef9adb898cfacf5251da637f2986b4f09300dc43c708cc611cb09c7685"
+    }
+  }
+}
