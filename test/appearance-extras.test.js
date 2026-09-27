@@ -36,8 +36,8 @@ test('customRadiusToCssVars scales from a base pixel value', () => {
 test('fontSizeToCssVars applies a heading scale to xl/2xl only', () => {
   const base = fontSizeToCssVars(14, 100);
   const scaled = fontSizeToCssVars(14, 150);
-  assert.ok(base.includes('--font-size-base:14px'));
-  assert.ok(scaled.includes('--font-size-base:14px'));
+  assert.ok(base.includes('--font-size-base:0.875rem'));
+  assert.ok(scaled.includes('--font-size-base:0.875rem'));
   const baseXl = base.find((v) => v.startsWith('--font-size-2xl:'));
   const scaledXl = scaled.find((v) => v.startsWith('--font-size-2xl:'));
   assert.notEqual(baseXl, scaledXl);

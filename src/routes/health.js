@@ -3,6 +3,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+
+const pkgVersion = createRequire(import.meta.url)('../../package.json').version || '';
 import { ApiErrorCode } from '../api-errors.js';
 import { validateArchiveIntegrity } from '../archives.js';
 import { config } from '../config.js';
@@ -22,7 +25,13 @@ export function registerHealthRoutes(app, deps) {
       res.json({ ok: true });
       return;
     }
-    res.json({ ok: true, service: 'inpx-library', time: new Date().toISOString(), port: config.port });
+    res.json({
+      ok: true,
+      service: 'inpx-library',
+      version: pkgVersion,
+      time: new Date().toISOString(),
+      port: config.port,
+    });
   });
 
   app.get('/api/index-status', (req, res) => {

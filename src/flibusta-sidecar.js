@@ -44,6 +44,8 @@ const SIDECAR_COVER_CACHE_MAX_BYTES = Math.max(
   Number.parseInt(String(process.env.SIDECAR_COVER_CACHE_MAX_BYTES || ''), 10) || 256 * 1024 * 1024
 );
 const sidecarCoverCache = new Map();
+const sidecarCoverNegativeCache = new Map();
+const SIDECAR_COVER_NEGATIVE_MAX = 400;
 let sidecarCoverCacheBytes = 0;
 let _coverCacheHits = 0;
 let _coverCacheMisses = 0;
@@ -62,6 +64,11 @@ export function sidecarArchiveEntryKey(book) {
   return m ? m[2] : id;
 }
 
+function isTransientSidecarError(err) {
+  const m = String(err?.message || err || '');
+  return /timeout|таймаут|очередь 7z|queue|переполнен|EAGAIN|EBUSY|sharp queue/i.test(m);
+}
+
 function deleteSidecarCoverCacheEntry(cacheKey) {
   const prev = sidecarCoverCache.get(cacheKey);
   if (!prev) return;
@@ -70,15 +77,24 @@ function deleteSidecarCoverCacheEntry(cacheKey) {
 }
 
 function getSidecarCoverCache(cacheKey) {
+  const now = Date.now();
+  const neg = sidecarCoverNegativeCache.get(cacheKey);
+  if (neg) {
+    if (now - neg.at > SIDECAR_COVER_NEGATIVE_TTL_MS) {
+      sidecarCoverNegativeCache.delete(cacheKey);
+    } else {
+      _coverCacheHits++;
+      _logCoverCacheMetrics();
+      return null;
+    }
+  }
   const item = sidecarCoverCache.get(cacheKey);
   if (!item) {
     _coverCacheMisses++;
     _logCoverCacheMetrics();
     return undefined;
   }
-  const now = Date.now();
-  const ttl = item.value ? SIDECAR_COVER_CACHE_TTL_MS : SIDECAR_COVER_NEGATIVE_TTL_MS;
-  if (ttl > 0 && now - item.at > ttl) {
+  if (SIDECAR_COVER_CACHE_TTL_MS > 0 && now - item.at > SIDECAR_COVER_CACHE_TTL_MS) {
     deleteSidecarCoverCacheEntry(cacheKey);
     _coverCacheMisses++;
     _logCoverCacheMetrics();
@@ -95,11 +111,21 @@ function _logCoverCacheMetrics() {
   const total = _coverCacheHits + _coverCacheMisses;
   if (total > 0 && total % 1000 === 0) {
     const ratio = total > 0 ? (_coverCacheHits / total * 100).toFixed(1) : '0.0';
-    console.log(`[sidecar-cache] hits=${_coverCacheHits} misses=${_coverCacheMisses} ratio=${ratio}% entries=${sidecarCoverCache.size} bytes=${(sidecarCoverCacheBytes / (1024 * 1024)).toFixed(1)}MB`);
+    console.log(`[sidecar-cache] hits=${_coverCacheHits} misses=${_coverCacheMisses} ratio=${ratio}% entries=${sidecarCoverCache.size} neg=${sidecarCoverNegativeCache.size} bytes=${(sidecarCoverCacheBytes / (1024 * 1024)).toFixed(1)}MB`);
   }
 }
 
 function setSidecarCoverCache(cacheKey, value) {
+  sidecarCoverNegativeCache.delete(cacheKey);
+  if (value == null) {
+    sidecarCoverNegativeCache.set(cacheKey, { at: Date.now() });
+    while (sidecarCoverNegativeCache.size > SIDECAR_COVER_NEGATIVE_MAX) {
+      const oldest = sidecarCoverNegativeCache.keys().next().value;
+      if (oldest == null) break;
+      sidecarCoverNegativeCache.delete(oldest);
+    }
+    return;
+  }
   deleteSidecarCoverCacheEntry(cacheKey);
   const bytes = value?.data?.length || 0;
   sidecarCoverCache.set(cacheKey, {
@@ -120,6 +146,7 @@ function setSidecarCoverCache(cacheKey, value) {
 
 function clearSidecarCoverCache() {
   sidecarCoverCache.clear();
+  sidecarCoverNegativeCache.clear();
   sidecarCoverCacheBytes = 0;
   _coverCacheHits = 0;
   _coverCacheMisses = 0;
@@ -909,15 +936,17 @@ export async function readFlibustaCover(libraryRoot, archiveName, libIdOrKeys) {
 
   const coverArchivePath = resolveSidecarArchivePath(root, 'covers', norm);
   if (coverArchivePath && entriesTry.length) {
+    let transient = false;
     for (const entryName of entriesTry) {
       try {
-        const buf = await readArchiveEntryBuffer(coverArchivePath, entryName);
+        const buf = await readArchiveEntryBuffer(coverArchivePath, entryName, { listFallback: false });
         const out = await acceptBuffer(buf);
         if (out) return out;
-      } catch {
-        /* try next */
+      } catch (err) {
+        if (isTransientSidecarError(err)) transient = true;
       }
     }
+    if (transient) return null;
   }
   setSidecarCoverCache(cacheKey, null);
   return null;
@@ -999,7 +1028,7 @@ export async function readFlibustaIllustration(libraryRoot, archiveName, libId, 
   const archivePath = resolveSidecarArchivePath(root, 'images', norm);
   if (!archivePath) return null;
   try {
-    const buf = await readArchiveEntryBuffer(archivePath, item.pathInZip);
+    const buf = await readArchiveEntryBuffer(archivePath, item.pathInZip, { listFallback: false });
     return normalizeSidecarImageBuffer(buf);
   } catch {
     return null;
@@ -1271,7 +1300,7 @@ export async function readFlibustaAuthorPortraitBuffer(authorKey, libraryRoot) {
   const zipPath = path.join(root, AUTHOR_PICTURES_DIR, row.zip_name);
   if (!fs.existsSync(zipPath)) return null;
   try {
-    const buf = await readArchiveEntryBuffer(zipPath, row.entry_path.replace(/\\/g, '/'));
+    const buf = await readArchiveEntryBuffer(zipPath, row.entry_path.replace(/\\/g, '/'), { listFallback: false });
     if (buf?.length) return normalizeSidecarImageBuffer(buf);
   } catch {
     /* нет в архиве или битый zip — после индексации путь должен совпадать */
@@ -1595,7 +1624,7 @@ export async function readFlibustaAuthorBioHtml(authorName, libraryRoot, sourceI
     const ap = path.join(root, AUTHORS_DIR, row.shard_name);
     if (!fs.existsSync(ap)) continue;
     try {
-      const buf = await readArchiveEntryBuffer(ap, String(row.entry_path).replace(/\\/g, '/'));
+      const buf = await readArchiveEntryBuffer(ap, String(row.entry_path).replace(/\\/g, '/'), { listFallback: false });
       let raw = buf.toString('utf8').trim();
       if (!raw.length && buf.length) {
         try {

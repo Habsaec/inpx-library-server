@@ -29,11 +29,16 @@ function silenceSkippedViewTransitions() {
 }
 
 async function loadHomeRecommendationsProgressively(attempt = 0) {
-  const mount = document.querySelector('[data-home-recommendations]');
-  if (!mount || mount.dataset.loaded === '1') return;
+  const section = document.querySelector('[data-home-recommendations]');
+  if (!section || section.dataset.loaded === '1') return;
+  const gridMount = section.querySelector('[data-home-recommendations-grid]');
+  if (!gridMount) return;
   try {
-    const r = await fetch('/api/library/recommended?page=1&pageSize=24', { credentials: 'same-origin' });
-    if (!r.ok) return;
+    const r = await fetch('/api/library/recommended?page=1&pageSize=8', { credentials: 'same-origin' });
+    if (!r.ok) {
+      section.remove();
+      return;
+    }
     const data = await r.json();
     if (data.computing) {
       if (attempt < 10) {
@@ -48,36 +53,8 @@ async function loadHomeRecommendationsProgressively(attempt = 0) {
       return;
     }
     const items = Array.isArray(data?.items) ? data.items : [];
-    if (!items.length) return;
-    const total = Number(data?.total) || items.length;
-    const heroTmp = document.createElement('div');
-    heroTmp.innerHTML = renderPremiumHeroCarouselHtml(items, total);
-    const heroCard = heroTmp.firstElementChild;
-    if (!heroCard) return;
-    mount.dataset.loaded = '1';
-    heroCard.classList.add('home-reveal');
-    mount.replaceWith(heroCard);
-    attachCoverErrorFallback(heroCard);
-    if (items.length > 1) initHeroCarousel(heroCard, items);
-    else applyHeroBookAnnotation(items[0], heroCard);
-    revealHomeBlock(heroCard);
-  } catch { /* keep the welcome quote */ }
-}
-
-async function loadHomeContinueProgressively() {
-  const section = document.querySelector('[data-home-continue]');
-  if (!section || section.dataset.loaded === '1') return;
-  const gridMount = section.querySelector('[data-home-continue-grid]');
-  if (!gridMount) return;
-  try {
-    const r = await fetch('/api/library/continue?page=1&pageSize=8', { credentials: 'same-origin' });
-    if (!r.ok) {
-      section.remove();
-      return;
-    }
-    const data = await r.json();
-    const items = Array.isArray(data?.items) ? data.items : [];
     if (!items.length) {
+      gridMount.innerHTML = '';
       section.remove();
       return;
     }
@@ -85,7 +62,7 @@ async function loadHomeContinueProgressively() {
     const tmp = document.createElement('div');
     tmp.innerHTML = listMode
       ? `<div class="author-flibusta-list catalog-book-list home-reveal"><section class="author-flibusta-group catalog-book-list-group"><ul class="author-flibusta-books catalog-book-list-ul">${items.map((b) => renderListRowHtml(b)).join('')}</ul></section></div>`
-      : `<div class="grid home-reveal">${items.map((b) => renderCardHtml(b, { readActions: true })).join('')}</div>`;
+      : `<div class="grid home-reveal">${items.map((b) => renderCardHtml(b)).join('')}</div>`;
     const grid = tmp.firstElementChild;
     if (!grid) return;
     gridMount.replaceWith(grid);
@@ -98,6 +75,29 @@ async function loadHomeContinueProgressively() {
   } catch {
     section.remove();
   }
+}
+
+async function loadHomeContinueProgressively() {
+  const mount = document.querySelector('[data-home-continue]');
+  if (!mount || mount.dataset.loaded === '1') return;
+  try {
+    const r = await fetch('/api/library/continue?page=1&pageSize=24', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) return;
+    const total = Number(data?.total) || items.length;
+    const heroTmp = document.createElement('div');
+    heroTmp.innerHTML = renderPremiumHeroCarouselHtml(items, total);
+    const heroCard = heroTmp.firstElementChild;
+    if (!heroCard) return;
+    heroCard.classList.add('home-reveal');
+    mount.replaceWith(heroCard);
+    attachCoverErrorFallback(heroCard);
+    if (items.length > 1) initHeroCarousel(heroCard, items);
+    else applyHeroBookAnnotation(items[0], heroCard);
+    revealHomeBlock(heroCard);
+  } catch { /* keep the welcome quote */ }
 }
 
 function revealHomeBlock(el) {
@@ -128,12 +128,6 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
   const kicker = showKicker
     ? `<div class="hero-card-kicker">${escapeHtml(uiT('home.heroKicker'))}</div>`
     : '';
-  const progressHtml = progress > 0
-    ? `<div class="hero-card-progress">
-        <div class="hero-card-progress-bar" role="progressbar" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100"><div class="hero-card-progress-fill" style="width:${progress}%"></div></div>
-        <span class="hero-card-progress-label">${escapeHtml(uiTp('home.heroProgress', { pct: progress }))}</span>
-      </div>`
-    : '';
   return `
     <div class="hero-card-cover-side">
       <a class="hero-cover-link cover" href="${bookPagePath(book.id)}">
@@ -141,7 +135,7 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
         <span class="cover-fallback hero-cover-fallback" hidden>
           <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
           <span class="cover-fallback-overlay"></span>
-          <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${escapeHtml(book.authors || uiT('book.authorUnknown'))}</span></span>
+          <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${escapeHtml(uiFormatAuthorsLabel(book.authorsList, book.authors) || uiT('book.authorUnknown'))}</span></span>
         </span>
         ${coverRating}
       </a>
@@ -151,9 +145,12 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
       <${headingTag} class="hero-card-title">${title}</${headingTag}>
       <div class="hero-card-author">${book.authors ? uiRenderAuthorLinks(book.authorsList, book.authors, `hero-a-${safeDomIdPart(book.id)}`) : escapeHtml(uiT('book.authorUnknown'))}</div>
       <p class="hero-card-annotation" data-hero-annotation hidden></p>
-      ${progressHtml}
+      <div class="hero-card-progress">
+        <div class="hero-card-progress-bar" role="progressbar" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100"><div class="hero-card-progress-fill" style="width:${progress}%"></div></div>
+        <span class="hero-card-progress-label">${escapeHtml(uiTp('home.heroProgress', { pct: progress }))}</span>
+      </div>
       <div class="hero-card-actions">
-        <a class="button button-primary hero-read-btn" href="${readPagePath(book.id)}">${escapeHtml(uiT('home.heroReadBook'))}</a>
+        <a class="button button-primary hero-read-btn" href="${readPagePath(book.id)}">${READ_BOOK_ICON_SVG}${escapeHtml(uiT('home.heroReadBook'))}</a>
         <a class="button button-secondary hero-about-btn" href="${bookPagePath(book.id)}">${escapeHtml(uiT('home.heroAboutBook'))}</a>
       </div>
     </div>`;
@@ -175,9 +172,9 @@ function renderPremiumHeroCarouselHtml(books, total) {
   const dots = books.map((_, index) => `
     <button type="button" class="hero-carousel-dot${index === 0 ? ' is-active' : ''}" data-hero-dot="${index}" aria-label="${escapeHtml(uiTp('home.heroGoTo', { n: index + 1 }))}" ${index === 0 ? 'aria-current="true"' : ''}></button>`).join('');
   const more = total > books.length
-    ? `<a class="hero-carousel-all" href="/library/recommended">${escapeHtml(uiT('home.showAll'))}</a>`
+    ? `<a class="hero-carousel-all" href="/library/continue">${escapeHtml(uiT('home.showAll'))}</a>`
     : '';
-  return `<section class="premium-hero-card hero-carousel" data-hero-carousel aria-roledescription="carousel" aria-label="${escapeHtml(uiT('home.shelfRecommended'))}">
+  return `<section class="premium-hero-card hero-carousel" data-hero-carousel aria-roledescription="carousel" aria-label="${escapeHtml(uiT('home.shelfContinue'))}">
     <div class="hero-carousel-head">
       <div class="hero-card-kicker">${escapeHtml(uiT('home.heroKicker'))}</div>
       <p class="hero-carousel-status" data-hero-status aria-live="polite">${escapeHtml(uiTp('home.heroSlide', { current: 1, total: books.length }))}</p>
@@ -314,6 +311,16 @@ function initHeroCarousel(root, books) {
     pointerActive = false;
     startAuto();
   });
+  let wheelLock = false;
+  viewport?.addEventListener('wheel', (event) => {
+    if (Math.abs(event.deltaY) < 10 && Math.abs(event.deltaX) < 10) return;
+    event.preventDefault();
+    if (wheelLock) return;
+    wheelLock = true;
+    window.setTimeout(() => { wheelLock = false; }, 380);
+    if (event.deltaY > 0 || event.deltaX > 0) go(index + 1);
+    else go(index - 1);
+  }, { passive: false });
   root.addEventListener('mouseenter', stopAuto);
   root.addEventListener('mouseleave', startAuto);
   root.addEventListener('focusin', stopAuto);
@@ -2329,7 +2336,7 @@ async function pollOperationsDashboard() {
   const renderSparkline = (field, values) => {
     const svg = document.querySelector(`[data-operations-field="${field}"]`);
     if (!svg) return;
-    const LINES_COUNT = 4;
+    const LINES_COUNT = 2;
     /* Фактические размеры SVG кэшируются; ResizeObserver обновляет при resize. */
     let size = _sparklineSizes.get(svg);
     if (!size) {
@@ -2344,8 +2351,10 @@ async function pollOperationsDashboard() {
     }
     const H = size.h;
     const TOTAL_W = size.w;
-    const PAD = 28;
+    const PAD = 34;
+    const Y_INSET = 8;
     const GRAPH_W = Math.max(50, TOTAL_W - PAD);
+    const plotH = Math.max(16, H - Y_INSET * 2);
     if (!values || values.length < 2) {
       svg.setAttribute('viewBox', `0 0 ${TOTAL_W} ${H}`);
       svg.innerHTML = '';
@@ -2357,24 +2366,25 @@ async function pollOperationsDashboard() {
       if (values[i] > maxVal) maxVal = values[i];
     }
     const currentMaxY = Math.max(10, Math.ceil(maxVal / 5) * 5);
-    /* Шкала + сетка внутри SVG: текст слева, линии справа. */
+    /* 3 отметки (max / mid / 0) с inset, чтобы 100% и 0% не резались об край. */
     const grid = [];
     for (let i = 0; i <= LINES_COUNT; i++) {
-      const y = (H / LINES_COUNT) * i;
+      const y = Y_INSET + (plotH / LINES_COUNT) * i;
       const pct = Math.round(currentMaxY - (i * (currentMaxY / LINES_COUNT)));
-      grid.push(`<text class="spark-label" x="${PAD - 3}" y="${y}" dy="0.35em">${pct}%</text>`);
+      grid.push(`<text class="spark-label" x="${PAD - 4}" y="${y}" dy="0.35em">${pct}%</text>`);
       grid.push(`<line class="spark-grid" x1="${PAD}" y1="${y}" x2="${TOTAL_W}" y2="${y}"/>`);
     }
     /* Разделительная линия между шкалой и графиком. */
-    grid.push(`<line class="spark-axis" x1="${PAD}" y1="0" x2="${PAD}" y2="${H}"/>`);
+    const plotBottom = Y_INSET + plotH;
+    grid.push(`<line class="spark-axis" x1="${PAD}" y1="${Y_INSET}" x2="${PAD}" y2="${plotBottom}"/>`);
     const stepX = GRAPH_W / (SPARK_HISTORY_POINTS - 1);
     const points = values.map((v, i) => {
       const x = PAD + i * stepX;
-      const y = H - (v / currentMaxY) * H;
+      const y = plotBottom - (v / currentMaxY) * plotH;
       return `${x.toFixed(2)} ${y.toFixed(2)}`;
     });
     const linePath = `M ${points.join(' L ')}`;
-    const fillPath = `${linePath} L ${TOTAL_W} ${H} L ${PAD} ${H} Z`;
+    const fillPath = `${linePath} L ${TOTAL_W} ${plotBottom} L ${PAD} ${plotBottom} Z`;
     svg.setAttribute('viewBox', `0 0 ${TOTAL_W} ${H}`);
     svg.innerHTML = `${grid.join('')}<path class="spark-fill" d="${fillPath}"></path><path class="spark-line" d="${linePath}"></path>`;
   };
@@ -2493,7 +2503,7 @@ async function pollOperationsDashboard() {
             : `${dbMb.toLocaleString(loc, { maximumFractionDigits: 1, minimumFractionDigits: 1 })} ${uiT('common.unitMB')}`)
           : uiT('common.dash'),
         /* monitorDisk теперь обновляется отдельным блоком ниже (Used/Free/Total). */
-        monitorUptime: `${uiT('admin.monitor.uptime')}: ${upText}`,
+        uptime: uiTp('admin.uptime', { s: upText }),
         monitorUsers: `${uiT('admin.monitor.users')}: ${uiTp('admin.monitor.usersFmt', {
           total: (Number(operations.totalUsers) || 0).toLocaleString(loc),
           online: (Number(operations.onlineUsers) || 0).toLocaleString(loc)
@@ -2512,7 +2522,7 @@ async function pollOperationsDashboard() {
         if (field === 'ftsStatus') {
           node.title = ftsTip;
           node.dataset.ftsStatus = ftsSt;
-          node.classList.toggle('admin-chip--warn', ftsSt === 'ok' && ftsSt !== 'empty' && Boolean(ftsSt));
+          node.classList.toggle('admin-chip--warn', ftsSt === 'dirty' || ftsSt === 'desynced' || ftsSt === 'rebuilding' || Boolean(operations.ftsRebuildRunning));
         }
       }
 
@@ -3262,6 +3272,7 @@ function isPageEmailSendAllowed() {
 }
 
 const READ_BADGE_SVG = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+const READ_BOOK_ICON_SVG = '<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
 let _readBookIdSet = null;
 function getReadBookIdSet() {
   if (_readBookIdSet) return _readBookIdSet;
@@ -3294,8 +3305,23 @@ function uiFormatSingleAuthorName(value = '') {
   const raw = uiNormalizeAuthorToken(value);
   if (!raw) return '';
   const parts = raw.split(',').map((item) => uiNormalizeAuthorToken(item)).filter(Boolean);
-  if (!parts.length) return raw;
-  return parts.join(' ');
+  const src = parts.length ? parts : [raw];
+  return src.map((part) => part
+    .split(/([\s-])/g)
+    .map((seg) => {
+      if (!seg || /^[\s-]$/.test(seg)) return seg;
+      return seg.charAt(0).toLocaleUpperCase('ru-RU') + seg.slice(1).toLocaleLowerCase('ru-RU');
+    })
+    .join('')
+  ).join(' ');
+}
+
+/* Читаемая подпись авторов для fallback-обложек: «Насута Екатерина», а не сырое «Насута,Екатерина,:». */
+function uiFormatAuthorsLabel(authorsList, bookAuthors, limit = 2) {
+  const list = (authorsList?.length) ? authorsList : uiSplitAuthorValues(bookAuthors);
+  if (!list.length) return '';
+  const names = list.slice(0, limit).map((author) => uiFormatSingleAuthorName(author) || author);
+  return names.join(', ') + (list.length > limit ? '…' : '');
 }
 
 function uiRenderAuthorLinks(authorsList, bookAuthors, popoverId) {
@@ -3341,7 +3367,6 @@ function uiRenderSeriesLinks(seriesList, popoverId, firstAuthor) {
 
 function renderCardHtml(book, { batchSelect = false, seriesContext = null, readActions = false } = {}) {
   const id = escapeHtml(book.id);
-  const authors = escapeHtml(book.authors || '');
   const authorKey = book.authorsList?.[0] || book.authors?.split(',')[0]?.trim() || '';
   const seriesInfo = seriesContext
     ? (book.seriesList?.find((s) => s.name === seriesContext) || null)
@@ -3390,7 +3415,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
       <span class="cover-fallback" hidden>
         <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
         <span class="cover-fallback-overlay"></span>
-        <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${authors || escapeHtml(uiT('book.authorUnknown'))}</span></span>
+        <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${escapeHtml(uiFormatAuthorsLabel(book.authorsList, book.authors) || uiT('book.authorUnknown'))}</span></span>
       </span>
       ${getReadBookIdSet().has(book.id) ? `<span class="read-badge">${READ_BADGE_SVG}</span>` : ''}
       ${coverRating}
@@ -3402,7 +3427,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
       ${showSeries ? `<div class="card-series">${uiRenderSeriesLinks(book.seriesList, `ajax-s-${book.id}`, authorKey)}</div>` : ''}
       ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
       ${readActions
-        ? `<div class="card-actions card-actions-read"><a class="button button-primary download-menu-trigger-compact" href="${readPagePath(book.id)}">${escapeHtml(uiT('home.heroReadBook'))}</a></div>`
+        ? `<div class="card-actions card-actions-read"><a class="button button-primary download-menu-trigger-compact" href="${readPagePath(book.id)}">${READ_BOOK_ICON_SVG}${escapeHtml(uiT('home.heroReadBook'))}</a></div>`
         : downloadMenu ? `<div class="card-actions">${downloadMenu}</div>` : ''}
     </div>
   </article>`;
@@ -4765,6 +4790,90 @@ function attachSendBatchToEreader() {
     } catch {
       showToast(uiT('app.networkError'), 'error');
     }
+  });
+}
+
+function attachUsersImport() {
+  const form = document.querySelector('[data-users-import]');
+  const fileInput = document.getElementById('users-import-input');
+  const nameSpan = document.getElementById('users-import-name');
+  const submitBtn = document.getElementById('users-import-btn');
+  if (!form || !fileInput || !submitBtn) return;
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (file) {
+      if (nameSpan) nameSpan.textContent = file.name;
+      submitBtn.disabled = false;
+    } else {
+      if (nameSpan) nameSpan.textContent = '';
+      submitBtn.disabled = true;
+    }
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const file = fileInput.files[0];
+    if (!file) return;
+    submitBtn.disabled = true;
+    const previousText = submitBtn.textContent;
+    submitBtn.textContent = uiT('app.running');
+    try {
+      const text = await file.text();
+      let payload;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        showToast(uiT('admin.update.importUsersInvalid'), 'error');
+        return;
+      }
+      const response = await fetch('/api/operations/users-import', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast(data.error || uiT('admin.update.importUsersInvalid'), 'error');
+        return;
+      }
+      showToast(
+        `${uiT('admin.update.importUsersDone')}. ${uiTp('admin.update.importUsersResult', {
+          created: data.created || 0,
+          skipped: data.skipped || 0,
+          favorites: data.favorites || 0
+        })}`,
+        'success'
+      );
+    } catch {
+      showToast(uiT('app.networkError'), 'error');
+    } finally {
+      submitBtn.disabled = !fileInput.files[0];
+      submitBtn.textContent = previousText;
+    }
+  });
+}
+
+function attachAdminCollapsePersistence() {
+  const prefix = 'inpx-admin-collapse:';
+  document.querySelectorAll('[data-admin-collapse]').forEach((el) => {
+    const id = el.dataset.adminCollapse;
+    if (!id) return;
+    try {
+      const saved = localStorage.getItem(prefix + id);
+      if (saved === '1') el.open = true;
+      else if (saved === '0') el.open = false;
+    } catch {
+      /* ignore */
+    }
+    el.addEventListener('toggle', () => {
+      try {
+        localStorage.setItem(prefix + id, el.open ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+    });
   });
 }
 
@@ -6682,6 +6791,8 @@ attachAddToShelfButtons();
 attachSendToEreader();
 attachSendBatchToEreader();
 attachUpdateUpload();
+attachUsersImport();
+attachAdminCollapsePersistence();
 attachUiAppearanceUpload();
 attachProfileRemoveActions();
 attachAccountNavSelect();
@@ -6960,11 +7071,133 @@ function attachAdminUserFormAutofillGuard() {
   let firstLoadDup = true; // первая загрузка рисует крупный индикатор, далее — мягкий
   let firstLoadSupp = true;
 
+  let cleanElapsedTimer = 0;
+  let cleanClientStartedAt = 0;
+  let cleanPolling = false;
+
   function fmtSize(bytes) {
     const n = Number(bytes) || 0;
     if (n < 1024) return n + ' B';
     if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
     return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function fmtDupElapsed(ms) {
+    const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    if (m <= 0) return r + ' с';
+    return m + ':' + String(r).padStart(2, '0');
+  }
+
+  function dupStageLabel(stage) {
+    const key = {
+      prepare: 'admin.duplicates.stagePrepare',
+      rank: 'admin.duplicates.stageRank',
+      hide: 'admin.duplicates.stageHide',
+      suppress: 'admin.duplicates.stageSuppress',
+      restore: 'admin.duplicates.stageRestore',
+      clear: 'admin.duplicates.stageClear',
+      catalog_authors: 'admin.duplicates.stageCatalogAuthors',
+      catalog_series: 'admin.duplicates.stageCatalogSeries',
+      catalog_genres: 'admin.duplicates.stageCatalogGenres',
+      done: 'admin.duplicates.stageDone',
+      error: 'admin.duplicates.stageError'
+    }[stage];
+    return key ? uiT(key) : String(stage || '');
+  }
+
+  function startCleanElapsedTicker(startedAt) {
+    cleanClientStartedAt = Number(startedAt) || Date.now();
+    if (cleanElapsedTimer) clearInterval(cleanElapsedTimer);
+    cleanElapsedTimer = setInterval(function() {
+      const el = resultsWrap.querySelector('[data-dup-clean-elapsed]');
+      if (!el) return;
+      el.textContent = uiTp('admin.duplicates.elapsed', { t: fmtDupElapsed(Date.now() - cleanClientStartedAt) });
+    }, 1000);
+  }
+
+  function stopCleanElapsedTicker() {
+    if (cleanElapsedTimer) {
+      clearInterval(cleanElapsedTimer);
+      cleanElapsedTimer = 0;
+    }
+  }
+
+  function renderCleanProgress(p) {
+    const isRestore = p && p.mode === 'restore';
+    const stage = (p && p.stage) || 'prepare';
+    const percent = Math.max(0, Math.min(100, Number(p && p.percent) || 0));
+    const pulse = stage === 'prepare' || stage === 'rank' || stage === 'hide'
+      || stage === 'suppress' || stage === 'restore' || stage === 'clear'
+      || String(stage).indexOf('catalog_') === 0;
+    const started = Number((p && p.startedAt) || cleanClientStartedAt || 0);
+    const elapsed = started ? Date.now() - started : Number(p && p.elapsedMs) || 0;
+    let detail = dupStageLabel(stage);
+    const count = isRestore ? Number(p && (p.restored || p.deleted) || 0) : Number(p && p.deleted || 0);
+    const total = Number(p && p.total || 0);
+    if (total > 0 && (stage === 'hide' || stage === 'suppress' || stage === 'restore' || stage === 'clear' || stage === 'done')) {
+      detail += ' · ' + count.toLocaleString() + ' / ' + total.toLocaleString();
+    }
+    const title = uiT(isRestore ? 'admin.duplicates.restoreTitle' : 'admin.duplicates.autoCleanTitle');
+    const hint = uiT(isRestore ? 'admin.duplicates.restoreProgressHint' : 'admin.duplicates.autoCleanProgressHint');
+    const barClass = pulse ? 'progress-indeterminate' : '';
+    const barWidth = pulse ? 100 : percent;
+    return '<div class="admin-card admin-dup-auto-clean" data-dup-clean-progress style="margin-bottom:20px;box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent-color, var(--accent)) 35%, transparent)">'
+      + '<div class="admin-card-title">' + escapeHtml(title) + '</div>'
+      + '<p style="margin:8px 0">' + escapeHtml(detail)
+      + (percent ? ' · <strong>' + percent + '%</strong>' : '') + '</p>'
+      + '<p class="muted" data-dup-clean-elapsed style="font-size:.85em;margin:4px 0">'
+      + escapeHtml(uiTp('admin.duplicates.elapsed', { t: fmtDupElapsed(elapsed) })) + '</p>'
+      + '<p class="muted" style="font-size:.85em;margin:4px 0">' + escapeHtml(hint) + '</p>'
+      + '<div style="margin-top:8px;height:4px;background:var(--border);border-radius:2px;overflow:hidden">'
+      + '<div data-dup-clean-bar class="' + barClass + '" style="height:100%;width:' + barWidth + '%;background:var(--accent);transition:width .3s ease"></div>'
+      + '</div></div>';
+  }
+
+  function paintCleanProgress(p) {
+    resultsWrap.innerHTML = renderCleanProgress(p);
+    suppWrap.innerHTML = '';
+    startCleanElapsedTicker((p && p.startedAt) || cleanClientStartedAt);
+  }
+
+  async function pollAutoClean() {
+    if (cleanPolling) return;
+    cleanPolling = true;
+    dupBusy = true;
+    try {
+      for (;;) {
+        await new Promise(function(r) { setTimeout(r, 500); });
+        try {
+          const r = await fetch('/api/admin/duplicates/auto-clean/progress', { credentials: 'same-origin' });
+          const p = await r.json();
+          paintCleanProgress(p);
+          if (!p.running) {
+            stopCleanElapsedTicker();
+            if (p.error) showToast(p.error, 'error');
+            else if (p.mode === 'restore') {
+              showToast(uiTp('admin.duplicates.flashUnsuppressedAll', {
+                n: p.restored || p.deleted || 0
+              }), 'success');
+            } else if (p.stage === 'done' || Number(p.deleted) > 0) {
+              showToast(uiTp('admin.duplicates.autoCleanDone', {
+                groups: p.groups || 0,
+                deleted: p.deleted || 0
+              }), 'success');
+            }
+            break;
+          }
+        } catch {
+          /* запрос мог зависнуть на занятом SQLite — таймер на клиенте продолжает тикать */
+        }
+      }
+    } finally {
+      cleanPolling = false;
+      dupBusy = false;
+    }
+    firstLoadDup = true;
+    loadDuplicates(currentPage);
+    loadSuppressed(suppPage);
   }
 
   /* POST JSON на API, показываем спиннер на нажатой кнопке, перезагружаем данные при успехе. */
@@ -7149,9 +7382,35 @@ function attachAdminUserFormAutofillGuard() {
       });
     });
     resultsWrap.querySelectorAll('[data-dup-auto-clean]').forEach(function(btn) {
-      btn.addEventListener('click', function() {
+      btn.addEventListener('click', async function() {
         const n = Number(btn.getAttribute('data-n') || 0);
-        dupAction('/api/admin/duplicates/auto-clean', {}, uiTp('admin.duplicates.autoCleanConfirm', { n: n }), true, btn);
+        if (dupBusy) return;
+        if (!(await confirmAction(uiTp('admin.duplicates.autoCleanConfirm', { n: n }), { danger: true }))) return;
+        dupBusy = true;
+        paintCleanProgress({ stage: 'prepare', percent: 1, startedAt: Date.now(), deleted: 0, total: n });
+        try {
+          const csrf = getCsrfTokenFromPage();
+          const headers = { 'Content-Type': 'application/json' };
+          if (csrf) headers['X-CSRF-Token'] = csrf;
+          const resp = await fetch('/api/admin/duplicates/auto-clean', {
+            method: 'POST', credentials: 'same-origin', headers, body: '{}'
+          });
+          const data = await resp.json().catch(function() { return {}; });
+          if (!data.ok && !data.started) {
+            stopCleanElapsedTicker();
+            dupBusy = false;
+            showToast(data.error || 'Error', 'error');
+            loadDuplicates(currentPage);
+            return;
+          }
+          if (data.cleanProgress) paintCleanProgress(data.cleanProgress);
+          pollAutoClean();
+        } catch (err) {
+          stopCleanElapsedTicker();
+          dupBusy = false;
+          showToast(err.message || 'Error', 'error');
+          loadDuplicates(currentPage);
+        }
       });
     });
     resultsWrap.querySelectorAll('[data-dup-page]').forEach(function(btn) {
@@ -7170,9 +7429,38 @@ function attachAdminUserFormAutofillGuard() {
       });
     });
     suppWrap.querySelectorAll('[data-dup-unsuppress-all]').forEach(function(btn) {
-      btn.addEventListener('click', function() {
+      btn.addEventListener('click', async function() {
         const n = Number(btn.getAttribute('data-n') || 0);
-        dupAction('/api/admin/duplicates/unsuppress-all', {}, uiTp('admin.duplicates.unsuppressAllConfirm', { n: n }), true, btn);
+        if (dupBusy) return;
+        if (!(await confirmAction(uiTp('admin.duplicates.unsuppressAllConfirm', { n: n }), { danger: true }))) return;
+        dupBusy = true;
+        resultsWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        paintCleanProgress({ mode: 'restore', stage: 'prepare', percent: 1, startedAt: Date.now(), restored: 0, deleted: 0, total: n });
+        try {
+          const csrf = getCsrfTokenFromPage();
+          const headers = { 'Content-Type': 'application/json' };
+          if (csrf) headers['X-CSRF-Token'] = csrf;
+          const resp = await fetch('/api/admin/duplicates/unsuppress-all', {
+            method: 'POST', credentials: 'same-origin', headers, body: '{}'
+          });
+          const data = await resp.json().catch(function() { return {}; });
+          if (!data.ok && !data.started) {
+            stopCleanElapsedTicker();
+            dupBusy = false;
+            showToast(data.error || 'Error', 'error');
+            loadDuplicates(currentPage);
+            loadSuppressed(suppPage);
+            return;
+          }
+          if (data.cleanProgress) paintCleanProgress(data.cleanProgress);
+          pollAutoClean();
+        } catch (err) {
+          stopCleanElapsedTicker();
+          dupBusy = false;
+          showToast(err.message || 'Error', 'error');
+          loadDuplicates(currentPage);
+          loadSuppressed(suppPage);
+        }
       });
     });
     suppWrap.querySelectorAll('[data-supp-page]').forEach(function(btn) {
@@ -7237,6 +7525,11 @@ function attachAdminUserFormAutofillGuard() {
           resultsWrap.innerHTML = '<div class="admin-card"><p class="muted">' + escapeHtml((data && data.error) || 'Error loading duplicates') + '</p></div>';
           return;
         }
+        if (data.cleanProgress && data.cleanProgress.running) {
+          paintCleanProgress(data.cleanProgress);
+          pollAutoClean();
+          return;
+        }
         resultsWrap.innerHTML = renderAutoCleanPanel(data.preview)
           + '<div class="admin-card">'
           + '<div class="admin-card-title">' + escapeHtml(uiT('admin.duplicates.cardTitle')) + '</div>'
@@ -7266,6 +7559,13 @@ function attachAdminUserFormAutofillGuard() {
         if (token !== suppReqToken) return;
         firstLoadSupp = false;
         dim(suppWrap, false);
+        if (sdata && sdata.cleanProgress && sdata.cleanProgress.running) {
+          if (!cleanPolling) {
+            paintCleanProgress(sdata.cleanProgress);
+            pollAutoClean();
+          }
+          return;
+        }
         suppWrap.innerHTML = renderSuppressedSection(sdata && sdata.ok ? sdata : { totalBooks: 0, rows: [] });
         wireSuppActions();
       })

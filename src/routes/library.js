@@ -77,7 +77,8 @@ import {
   hasContinueBooks
 } from '../inpx.js';
 import { getDistinctLanguages, getDistinctFormats, parseGenreList, parseHasSeries } from '../inpx.js';
-import { getOrExtractBookDetails, getStoredBookDetailsCover } from '../fb2.js';
+import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
+import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
 import {
   readFlibustaCover,
   listFlibustaIllustrationsForBook,
@@ -169,6 +170,7 @@ async function tryFastSidecarCover(book) {
   }
 }
 
+const COVER_RESOLVE_MS = parseEnvTimeoutMs('COVER_RESOLVE_TIMEOUT_MS', 8_000);
 const coverResolveInflight = new Map();
 
 async function resolveBestCoverDetails(book) {
@@ -187,6 +189,10 @@ async function resolveBestCoverDetails(book) {
         const mime = detectImageMimeFromBuffer(storedCover.data);
         if (mime && ALLOWED_BOOK_IMAGE_TYPES.has(mime)) return { cover: storedCover };
       }
+
+      /* Solid .7z: извлечение FB2 ради обложки каталога занимает десятки секунд,
+         держит 7z-слоты и замораживает Android (таймаут → reconnect loop). */
+      if (bookUsesSevenZipArchive(book)) return { cover: null };
 
       let details = await getDetailsFull(book);
       if (details?.cover) return details;
@@ -723,12 +729,20 @@ export function registerLibraryRoutes(app, deps) {
           getAuthorBooksGroupedCoalesced(value, sort, order, { page: p, pageSize }),
           Promise.resolve(getFacetSummary(facet, value)),
           flibSourceId != null
-            ? readFlibustaAuthorPortraitForAuthorName(value, facetRoot)
+            ? promiseWithTimeout(
+              readFlibustaAuthorPortraitForAuthorName(value, facetRoot),
+              COVER_RESOLVE_MS,
+              'author portrait'
+            )
               .then(pic => pic?.data?.length ? `/api/authors/portrait?name=${encodeURIComponent(value)}` : '')
               .catch(() => '')
             : Promise.resolve(''),
           flibSourceId != null
-            ? readFlibustaAuthorBioHtml(value, facetRoot, flibSourceId).catch(() => '')
+            ? promiseWithTimeout(
+              readFlibustaAuthorBioHtml(value, facetRoot, flibSourceId),
+              COVER_RESOLVE_MS,
+              'author bio'
+            ).catch(() => '')
             : Promise.resolve('')
         ]);
 
@@ -1004,7 +1018,11 @@ export function registerLibraryRoutes(app, deps) {
       if (!book) {
         return res.status(404).end();
       }
-      const details = await resolveBestCoverDetails(book);
+      const details = await promiseWithTimeout(
+        resolveBestCoverDetails(book),
+        COVER_RESOLVE_MS,
+        `cover ${book.id}`
+      ).catch(() => null);
       const coverMime = detectImageMimeFromBuffer(details?.cover?.data);
       if (coverMime && ALLOWED_BOOK_IMAGE_TYPES.has(coverMime)) {
         res.set('Cache-Control', 'private, max-age=86400');
@@ -1044,7 +1062,11 @@ export function registerLibraryRoutes(app, deps) {
       if (!book) {
         return res.status(404).end();
       }
-      const details = await resolveBestCoverDetails(book);
+      const details = await promiseWithTimeout(
+        resolveBestCoverDetails(book),
+        COVER_RESOLVE_MS,
+        `cover-thumb ${bookId}`
+      ).catch(() => null);
       const coverMimeHead = detectImageMimeFromBuffer(details?.cover?.data);
       if (!coverMimeHead || !ALLOWED_BOOK_IMAGE_TYPES.has(coverMimeHead)) {
         invalidateCoverThumbCaches(book.id);
@@ -1058,8 +1080,10 @@ export function registerLibraryRoutes(app, deps) {
       let outType = 'image/webp';
       const sharp = await getSharp();
       if (sharp) {
-        await acquireSharpSlot();
+        let gotSlot = false;
         try {
+          await acquireSharpSlot();
+          gotSlot = true;
           outBuf = await sharp(coverBuffer, { failOn: 'none' })
             .resize({
               width: getCoverWidth(),
@@ -1073,7 +1097,7 @@ export function registerLibraryRoutes(app, deps) {
           outType = coverMime;
           outBuf = coverBuffer;
         } finally {
-          releaseSharpSlot();
+          if (gotSlot) releaseSharpSlot();
         }
       } else {
         /* Обработка отключена — отдаём оригинал без ресайза */
@@ -1152,7 +1176,11 @@ export function registerLibraryRoutes(app, deps) {
         return res.status(404).end();
       }
       const root = getSourceRoot(book.sourceId);
-      const pic = await readFlibustaAuthorPortraitForAuthorName(primaryAuthor, root);
+      const pic = await promiseWithTimeout(
+        readFlibustaAuthorPortraitForAuthorName(primaryAuthor, root),
+        COVER_RESOLVE_MS,
+        `author-photo ${book.id}`
+      ).catch(() => null);
       if (!pic) {
         return res.status(404).end();
       }
@@ -1180,7 +1208,11 @@ export function registerLibraryRoutes(app, deps) {
         return res.status(404).end();
       }
       const root = getSourceRoot(sourceId);
-      const pic = await readFlibustaAuthorPortraitForAuthorName(name, root);
+      const pic = await promiseWithTimeout(
+        readFlibustaAuthorPortraitForAuthorName(name, root),
+        COVER_RESOLVE_MS,
+        'authors/portrait'
+      ).catch(() => null);
       if (!pic) {
         return res.status(404).end();
       }

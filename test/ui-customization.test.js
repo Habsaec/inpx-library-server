@@ -327,6 +327,22 @@ test('getUiCustomization uses defaults for glass colors', () => {
   assert.equal(ui.glassTextAutoLight, true);
 });
 
+test('getPublicUiSettingsJson app palette matches the resolved site theme', () => {
+  invalidateUiCustomizationCache();
+  resetUiThemeColors();
+  setSetting('ui_glass_color_dark', '#101010');
+  setSetting('ui_accent_dark', '#1122ff');
+  setSetting('ui_glass_link_dark', '#22cc66');
+  invalidateUiCustomizationCache();
+  const ui = getUiCustomization();
+  const json = getPublicUiSettingsJson();
+  assert.equal(json.appPaletteDark.surface, ui.themePair.dark.surface);
+  assert.equal(json.appPaletteDark.accent, '#1122ff');
+  assert.equal(json.appPaletteDark.link, '#22cc66');
+  assert.equal(json.appPaletteDark.text, ui.themePair.dark.text);
+  assert.equal(json.appPaletteDark.bg, ui.themePair.dark.shellBg);
+});
+
 test('getPublicUiSettingsJson returns glass theme fields', () => {
   invalidateUiCustomizationCache();
   saveUiSettings({ glassColorDark: '#101010', glassTextAutoDark: true });
@@ -341,7 +357,7 @@ test('getThemeCssVars injects typography vars when font size or density is custo
   saveUiTypographySettings({ fontSize: 16, density: 'compact' });
   assert.equal(hasUiThemeTypographyConfigured(), true);
   const vars = getThemeCssVars();
-  assert.ok(vars.some((v) => v.startsWith('--font-size-base:16px')));
+  assert.ok(vars.some((v) => v.startsWith('--font-size-base:1rem')));
   assert.ok(vars.some((v) => v.startsWith('--space-md:8px')));
 });
 

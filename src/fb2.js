@@ -5,6 +5,7 @@ import { db } from './db.js';
 import { statSyncCached } from './utils/fs-probe.js';
 import { getLibraryRoot, getSourceRoot, effectiveSourceFlibustaForBook } from './inpx.js';
 import { readArchiveEntryBuffer } from './archives.js';
+import { isSevenZipPath } from './seven-zip.js';
 import { detectImageMimeFromBuffer } from './services/cover.js';
 import {
   readFlibustaAnnotationHtml,
@@ -184,6 +185,20 @@ function findRangeArchive(libraryRoot, book) {
     }
   }
   return null;
+}
+
+/** Книга лежит в .7z (в т.ч. INPX пишет .zip, а на диске — одноимённый .7z). */
+export function bookUsesSevenZipArchive(book) {
+  if (!book?.archiveName) return false;
+  if (isSevenZipPath(book.archiveName)) return true;
+  try {
+    const root = book.sourceId ? getSourceRoot(book.sourceId) : getLibraryRoot();
+    if (!root) return false;
+    const resolved = resolveLibraryArchiveFile(root, book.archiveName);
+    return resolved ? isSevenZipPath(resolved) : false;
+  } catch {
+    return false;
+  }
 }
 
 export async function readBookBuffer(book) {

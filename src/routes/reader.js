@@ -11,7 +11,7 @@ import { asyncHandler } from '../utils/async-handler.js';
 import { safePage } from '../utils/safe-int.js';
 import {
   getReadingPosition, migrateReadingPositionToV4, setReadingPositionCas, setReadingPositionIdleSteal,
-  getReaderBookmarks, addReaderBookmark, deleteReaderBookmark,
+  getReaderBookmarks, addReaderBookmark, deleteReaderBookmark, updateReaderBookmarkTitle,
   getAllReaderBookmarksPage, getAllReaderAnnotationsPage,
   getReaderAnnotations, addReaderAnnotation, updateReaderAnnotation, deleteReaderAnnotation,
   upsertReadingHistoryEntry, deleteReadingHistoryEntry,
@@ -24,6 +24,13 @@ import {
   addReadBooksIfMissing,
   removeReadBookIfPresent,
 } from '../inpx.js';
+
+/** Файл с диска, не из каталога. Один и тот же sha256 на разных устройствах — один bookId. */
+const LOCAL_READER_BOOK_ID = /^local:[a-f0-9]{64}$/;
+
+function readerBookKnown(bookId) {
+  return Boolean(getBookById(bookId)) || LOCAL_READER_BOOK_ID.test(String(bookId || ''));
+}
 
 /**
  * Reader-related API routes: position tracking, bookmarks, reading history.
@@ -119,7 +126,7 @@ export function registerReaderRoutes(app) {
         { requiredPositionVersion: 4 },
       );
     }
-    if (!getBookById(bookId)) {
+    if (!readerBookKnown(bookId)) {
       return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
     }
     const hasExplicitFraction =
@@ -220,7 +227,7 @@ export function registerReaderRoutes(app) {
     if (isBookRead(req.user.username, bookId)) {
       return res.json({ ok: true, already: true });
     }
-    if (!getBookById(bookId)) {
+    if (!readerBookKnown(bookId)) {
       return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
     }
     addReadBooksIfMissing(req.user.username, [bookId]);
@@ -252,7 +259,7 @@ export function registerReaderRoutes(app) {
     if (title.length > 500) {
       return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.bookmark.titleTooLong'));
     }
-    if (!getBookById(req.params.id)) {
+    if (!readerBookKnown(req.params.id)) {
       return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
     }
     const id = addReaderBookmark(req.user.username, req.params.id, position, title);
@@ -265,6 +272,21 @@ export function registerReaderRoutes(app) {
       return apiFail(res, 400, ApiErrorCode.BOOKMARK_INVALID_ID, t('api.bookmark.invalidId'));
     }
     deleteReaderBookmark(bmId, req.user.username);
+    res.json({ ok: true });
+  }));
+
+  app.patch('/api/books/:id/bookmarks/:bmId', requireApiAuth, asyncHandler(async (req, res) => {
+    const bmId = Number(req.params.bmId);
+    if (!Number.isInteger(bmId) || bmId < 1) {
+      return apiFail(res, 400, ApiErrorCode.BOOKMARK_INVALID_ID, t('api.bookmark.invalidId'));
+    }
+    const title = String(req.body?.title ?? '');
+    if (title.length > 500) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.bookmark.titleTooLong'));
+    }
+    if (!updateReaderBookmarkTitle(bmId, req.user.username, title)) {
+      return apiFail(res, 404, ApiErrorCode.BOOKMARK_INVALID_ID, t('api.bookmark.invalidId'));
+    }
     res.json({ ok: true });
   }));
 
@@ -310,7 +332,7 @@ export function registerReaderRoutes(app) {
     if (!ANNOTATION_COLORS.has(color)) {
       return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.annotation.invalidColor'));
     }
-    if (!getBookById(req.params.id)) {
+    if (!readerBookKnown(req.params.id)) {
       return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
     }
     const id = addReaderAnnotation(req.user.username, req.params.id, cfi, text, note, color);
@@ -357,7 +379,7 @@ export function registerReaderRoutes(app) {
     if (!bookId) {
       return apiFail(res, 400, ApiErrorCode.BOOK_INVALID_ID, t('api.book.invalidId'));
     }
-    if (!getBookById(bookId)) {
+    if (!readerBookKnown(bookId)) {
       return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
     }
     const lastOpenedAt = String(req.body?.lastOpenedAt || '').trim();

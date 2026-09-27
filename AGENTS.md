@@ -13,7 +13,7 @@
 | Additive API | Prefer backward-compatible response changes; Android and OPDS depend on stable contracts |
 | INPX DEL=1 | Indexed with `deleted=1` (not purged). Hidden by default via `active_books`; admin **Content → Show deleted books** (`show_deleted_books`) reveals them. Soft-deleted duplicates (`suppressed_books`) stay hidden. Book payloads may include additive `deleted: 0\|1` |
 | Android-only reader | `inpx-book-reader` targets **Android APK only** — do not design API or UX for iOS/desktop/web client |
-| Compressed libraries | Flibusta + Librusec «96 GB» builds: ZIP entries use **PPMd** (`unzipper` can't inflate → `archives.js` falls back to 7z for non Store/Deflate methods) and FB2 images are **WebP** (often inside `content-type="image/jpeg"`). Admin **Content → WebP images in FB2** (`fb2_webp_images`: `keep`\|`png`) recodes WebP `<binary>` to PNG on download / fb2cng input (`src/fb2-webp-images.js`); `/api/books/:id/content` (web reader, Android) is never converted |
+| Compressed libraries | Flibusta + Librusec «96 GB» builds: ZIP entries use **PPMd** (`unzipper` can't inflate → `archives.js` falls back to 7z for non Store/Deflate methods) and FB2 images are **WebP** (often inside `content-type="image/jpeg"`). Admin **Content → WebP images in FB2** (`fb2_webp_images`: `keep`\|`png`) recodes WebP `<binary>` to PNG on download / fb2cng input (`src/fb2-webp-images.js`); `/api/books/:id/content` (web reader, Android) is never converted. Book archives as **`.7z`** (solid): catalog covers must not unpack the FB2 (`bookUsesSevenZipArchive`); sidecar image reads use `listFallback: false` so a miss does not `7z l` a huge archive (that froze Node and made Android reconnect every ~30 s). Adding such a dump next to an already indexed Flibusta/Librusec source creates hundreds of thousands of duplicates (`sourceId:libId`); Admin **Duplicates → auto-clean** keeps the newer source when formats match, also hides the same Flibusta `lib_id` across sources (even if title/author drifted) and same-title pairs from two sources when the author was renamed, and must not load every duplicate row into RAM |
 
 Key endpoints for reader:
 - `GET /api/books/:id/meta` (`seriesList` from index)
@@ -24,7 +24,9 @@ Key endpoints for reader:
 - `GET /api/profile` — user stats, recent books, bookmarks, annotations (Android profile screen)
 - `GET /api/settings/ui` — public library chrome for Android: `siteName`, `logoUrl`, palettes, `radius`/`radiusPreset`/`radiusScale`, `shadows`/`shadowPreset`, `backgroundUrl`, `bgBlur`, `bgOverlayStrength`, `bgSize`, `bgPosition`, `surfaceOpacity` (0–100), `surfaceBlur` (0–24px)
 - `GET /api/reader-bookmarks` — all reader bookmarks for the user (`items`, `total`, `page`, `pageSize`)
+- `PATCH /api/books/:id/bookmarks/:bmId` — rename a reader bookmark (`title`, max 500)
 - `GET /api/reader-annotations` — all reader annotations for the user (`items`, `total`, `page`, `pageSize`)
+- `PATCH /api/books/:id/annotations/:aid` — update a highlight note and/or color (`note`, `color`)
 - `GET /api/favorites` — favorite authors (`name`, `displayName`, `bookCount`, `coverBookId`) and series (`name`, `displayName`, `bookCount`, `previewBookIds`)
 - `GET /api/reader-activity-sync-meta` — read-state and reading-history revs
 - `POST /api/reading-history/:id` — record `lastOpenedAt` when a book is opened
@@ -64,6 +66,8 @@ Shared logic lives in `public/position-sync.js` (copied to Android `public/inpx-
 | `revision` / `baseRevision` | Server CAS token; only a write based on the current revision is accepted |
 | `sessionId` | Per-open-reader UUID; a different holder with differing coordinates always shows a dialog (including when the holder omitted `sessionId`) |
 | `lastUserActivityAt` / idle 4 min | Open readers stop POSTing after 4 minutes without page/snap/scroll/navigation; another session may idle-steal or take over with the current revision only while the holder is idle |
+
+Web static assets (`public/sw.js`): the Service Worker is **network-first** for `STATIC_ASSETS` (`fetch` with `cache: 'no-cache'`, install uses `cache: 'reload'`); the SW cache is only an offline fallback. A cache-first SW combined with `immutable` headers served a stale `position-sync.js` next to a new `reader.js` and the web reader hung on «Загрузка книги…» (`SyntaxError: does not provide an export`). `node scripts/build-assets.js` bumps `CACHE_NAME`.
 
 Cursor rule: `.cursor/rules/unified-ecosystem.mdc` (always apply).
 
@@ -264,6 +268,10 @@ Schema changes must:
 * be additive
 * preserve old databases
 * include migration logic
+
+Settings, users, catalog, FTS and cover cache live in **one** `library.db`. Do not split the file. Dashboard counters use `library_stats_snapshot` (written after catalog refresh) so admin pages do not `COUNT(DISTINCT)` million-row views. `/health` does no DB work — a watchdog timeout means the Node event loop is blocked (heavy sync SQLite), not a missing health query.
+
+Event-loop hygiene (700k-book libraries): `refreshCatalogBookCounts` runs in a `worker_threads` worker (`src/services/catalog-counts-worker.js`, own connection, chunked UPDATEs; `CATALOG_COUNTS_INLINE=1` forces the old inline path) — never call it for a single book, use `adjustCatalogCountsForBook(id, ±1)`. `dropBooksTableIndexes` → `ensureBooksTableIndexes` must end with `analyzeBooksIndexesYielding()`: DROP INDEX wipes `sqlite_stat1` and without stats the planner sorts the whole catalog in a TEMP B-TREE (~800 ms per page instead of ~2 ms); boot re-checks via `booksIndexStatsMissing()`. Browse ORDER BY must match an existing index exactly (`idx_books_title_nocase_id`, `idx_books_series_full` — no `CAST`, `idx_books_recent_sort`, `idx_books_date10` for novinki); a sort key from the joined `sources` table (`flibusta_sidecar`) is only added when enabled sources differ in that flag. `show_deleted_books=1` rewrites `active_books` as `deleted = 0 OR NOT EXISTS(suppressed)`, which disables every `WHERE deleted = 0` partial index — keep it off unless debugging. `[perf] event loop stalled N s` in `runtime.log` (threshold `LOOP_STALL_LOG_MS`, default 2000) is the first thing to check for "server hangs" reports; `/health/perf` has per-route p95. Admin **Backup** can export/import users JSON (password hashes, email, Telegram, favorite author/series **names** — not book ids, which change on reindex). Existing usernames are not overwritten.
 
 ---
 

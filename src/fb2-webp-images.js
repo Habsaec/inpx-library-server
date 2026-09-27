@@ -59,15 +59,17 @@ export async function convertFb2WebpBinariesToPng(buffer) {
   for (const m of matches) {
     parts.push(xml.slice(cursor, m.index));
     let replacement = m[0];
-    await acquireSharpSlot();
+    let gotSlot = false;
     try {
+      await acquireSharpSlot();
+      gotSlot = true;
       const webp = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
       const png = await sharp(webp, { failOn: 'none' }).png().toBuffer();
       replacement = `<binary${setPngContentType(m[1])}>${png.toString('base64')}</binary>`;
     } catch {
       /* битая картинка — оставляем исходный блок */
     } finally {
-      releaseSharpSlot();
+      if (gotSlot) releaseSharpSlot();
     }
     parts.push(replacement);
     cursor = m.index + m[0].length;

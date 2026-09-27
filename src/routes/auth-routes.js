@@ -28,6 +28,17 @@ import {
 import { isOidcConfigured } from '../services/oidc.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolvePublicBaseUrl, sendPasswordResetEmail } from '../services/password-reset.js';
+
+/** Secure-cookie на голом HTTP по LAN браузер молча выбрасывает: вход в журнале есть, сессии нет. */
+function sessionCookieOptions(req) {
+  const https = Boolean(req.secure || req.protocol === 'https');
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: Boolean(config.sessionSecureCookie) && https,
+    maxAge: config.sessionMaxAgeMs,
+  };
+}
 import {
   renderLogin, renderAdminLogin, renderRegister, renderProfile, renderProfileSettings,
   renderForgotPassword, renderResetPassword,
@@ -176,12 +187,7 @@ export function registerAuthRoutes(app, deps) {
     invalidateSessionUserCache(user.username);
     const freshUser = getUserByUsername(user.username);
     logSystemEvent('info', 'auth', 'login successful', { client: getClientKey(req), username: user.username, role: user.role });
-    res.cookie('session', createSessionValue(freshUser.username, freshUser.sessionGen || 0), {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: config.sessionSecureCookie,
-      maxAge: config.sessionMaxAgeMs
-    });
+    res.cookie('session', createSessionValue(freshUser.username, freshUser.sessionGen || 0), sessionCookieOptions(req));
     res.redirect('/');
   });
 
@@ -211,7 +217,7 @@ export function registerAuthRoutes(app, deps) {
     res.cookie('session', createSessionValue(user.username, user.sessionGen || 0), {
       httpOnly: true,
       sameSite: 'lax',
-      secure: config.sessionSecureCookie,
+      ...sessionCookieOptions(req),
       maxAge: config.sessionMaxAgeMs
     });
     res.redirect('/admin');
@@ -341,7 +347,7 @@ export function registerAuthRoutes(app, deps) {
       res.cookie('session', createSessionValue(user.username, user.sessionGen || 0), {
         httpOnly: true,
         sameSite: 'lax',
-        secure: config.sessionSecureCookie,
+        ...sessionCookieOptions(req),
         maxAge: config.sessionMaxAgeMs
       });
       res.redirect('/');
@@ -425,7 +431,7 @@ export function registerAuthRoutes(app, deps) {
       res.cookie('session', createSessionValue(freshUser.username, freshUser.sessionGen || 0), {
         httpOnly: true,
         sameSite: 'lax',
-        secure: config.sessionSecureCookie,
+        ...sessionCookieOptions(req),
         maxAge: config.sessionMaxAgeMs
       });
       logSystemEvent('info', 'auth', 'password changed', { username: req.user.username });

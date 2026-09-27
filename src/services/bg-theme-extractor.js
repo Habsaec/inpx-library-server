@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import sharp from 'sharp';
+import { getSharp } from './sharp-loader.js';
 import {
   DEFAULT_GLASS_DARK,
   DEFAULT_GLASS_LIGHT,
@@ -104,6 +104,8 @@ export function extractThemeFromPixels(samples) {
 }
 
 export async function extractThemeFromImageBuffer(buffer) {
+  const sharp = await getSharp();
+  if (!sharp) return null;
   const { data, info } = await sharp(buffer, { failOn: 'error' })
     .rotate()
     .resize(64, 64, { fit: 'cover' })

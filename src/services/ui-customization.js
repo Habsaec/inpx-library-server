@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import sharp from 'sharp';
 import { config } from '../config.js';
+import { getSharp } from './sharp-loader.js';
 import { getSetting, setSetting } from '../db.js';
 import {
   DEFAULT_GLASS_DARK,
@@ -298,6 +298,7 @@ export async function refreshBgThemePaletteFromFile({ resetTypography = false } 
   const filePath = path.join(UI_DIR, 'background.webp');
   if (!fs.existsSync(filePath)) throw new Error('admin.ui.errorNoBackground');
   const palette = await extractThemeFromImageFile(filePath);
+  if (!palette) throw new Error('admin.ui.errorSharpUnavailable');
   setSetting('ui_bg_palette_dark', palette.darkSurface);
   setSetting('ui_bg_palette_light', palette.lightSurface);
   if (resetTypography) clearManualGlassTypographyColors();
@@ -976,6 +977,8 @@ export async function saveUiAsset(asset, buffer, options = {}) {
   if (buffer.length > MAX_BYTES) throw new Error('admin.ui.errorTooLarge');
 
   ensureUiDir();
+  const sharp = await getSharp();
+  if (!sharp) throw new Error('admin.ui.errorSharpUnavailable');
   const image = sharp(buffer, { failOn: 'error' }).rotate();
   const meta = await image.metadata();
   if (!meta.width || !meta.height) throw new Error('admin.ui.errorInvalidImage');
@@ -1124,18 +1127,14 @@ export function getUiAppearanceFormState() {
 export function getPublicUiSettingsJson() {
   const ui = getUiCustomization();
   const siteName = String(getSetting('site_name') || '').trim();
-  const pair = buildThemePair(
-    ui.glassColorDark,
-    ui.glassColorLight,
-    ui.glassTextDark,
-    ui.glassTextLight,
-  );
+  const pair = ui.themePair;
   const mapAppPalette = (p) => ({
     bg: p.shellBg,
     surface: p.surface,
     surfaceHover: p.surfaceHover,
     text: p.text,
     muted: p.muted,
+    accent: p.accent,
     link: p.link,
     linkHover: p.linkHover,
     accentHover: p.accentHover,
@@ -1153,6 +1152,12 @@ export function getPublicUiSettingsJson() {
     ui.glassColorLight,
     ui.glassTextDark,
     ui.glassTextLight,
+    ui.glassAccentDark,
+    ui.glassAccentLight,
+    ui.glassLinkDark,
+    ui.glassLinkLight,
+    ui.glassMutedDark,
+    ui.glassMutedLight,
     ui.fontFamily,
     ui.fontSize,
     ui.density,

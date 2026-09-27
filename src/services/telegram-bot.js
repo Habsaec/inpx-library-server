@@ -7,8 +7,8 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import cluster from 'node:cluster';
-import sharp from 'sharp';
 import { config } from '../config.js';
+import { getSharp } from './sharp-loader.js';
 import { getMeta, setMeta, resolveTelegramRuntimeConfig, getTelegramSettings, getUserByTelegramId, completeTelegramLink, unlinkTelegramByTelegramId, getUserShelves, getShelfBooks, getShelfById, isTelegramBotAllowedForUser, registerTelegramChat, removeTelegramChat, listTelegramAnnounceChats, getPublicBaseUrlSetting, syncTelegramChatsFromLinkedUsers } from '../db.js';
 import {
   searchCatalog,
@@ -859,7 +859,7 @@ function bookCaption(book, annotation, annotationIsHtml) {
   let cap = fmtBook(book);
   const plain = plainAnnotation(annotation, annotationIsHtml);
   if (plain) {
-    const prefixLen = cap.length + 5; // \n\n📄 
+    const prefixLen = cap.length + 5; // \n\n📄
     const room = TG_CAPTION_MAX - prefixLen - 1;
     const maxLen = Math.min(ANNOTATION_MAX, Math.max(0, room));
     const chunk = plain.slice(0, maxLen);

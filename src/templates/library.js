@@ -26,24 +26,26 @@ import { pickHomeWelcomeQuote } from '../home-welcome-quotes.js';
 export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false }) {
   const isAuthenticated = Boolean(user);
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
-  const quoteInviting = !isAuthenticated;
+  const quoteInviting = !isAuthenticated || !hasContinueData;
   const welcomeQuote = pickHomeWelcomeQuote(getLocale(), { inviting: quoteInviting });
   const subtitleText = homeSubtitle === '-' ? '' : (homeSubtitle || t('home.subtitle'));
   const homeViewAttr = listView ? 'list' : 'grid';
-  const recsAttr = isAuthenticated ? ' data-home-recommendations' : '';
-  const continueShelf = isAuthenticated && hasContinueData
-    ? `
-    <section class="library-shelf" data-home-continue data-home-view="${homeViewAttr}" data-loaded="0">
+  const recommendationsShelf = isAuthenticated
+    ? (recommendations.length
+        ? renderHomeShelf({ title: t('home.shelfRecommended'), href: '/library/recommended', items: recommendations, type: 'books', isAuthenticated, showBatch: true, user, readBookIds, listView })
+        : `
+    <section class="library-shelf" data-home-recommendations data-home-view="${homeViewAttr}" data-loaded="0">
       <div class="section-title">
-        <h2>${escapeHtml(t('home.shelfContinue'))}</h2>
-        <div class="actions"><a class="shelf-link" href="/library/continue">${escapeHtml(t('home.showAll'))}</a></div>
+        <h2>${escapeHtml(t('home.shelfRecommended'))}</h2>
+        <div class="actions"><a class="shelf-link" href="/library/recommended">${escapeHtml(t('home.showAll'))}</a></div>
       </div>
-      <div data-home-continue-grid>${renderSkeletonGrid(6)}</div>
-    </section>`
+      <div data-home-recommendations-grid>${renderSkeletonGrid(8)}</div>
+    </section>`)
     : '';
+  const continueAttr = isAuthenticated && hasContinueData ? ' data-home-continue' : '';
   const content = `
     ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
-    <section class="welcome-hero-banner home-reveal"${recsAttr}>
+    <section class="welcome-hero-banner home-reveal"${continueAttr}>
       <div class="welcome-hero-overlay"></div>
       <div class="welcome-hero-content">
         <blockquote class="welcome-hero-quote">${escapeHtml(welcomeQuote.quote)}</blockquote>
@@ -52,7 +54,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     </section>
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}
     ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, showBatch: false, user, readBookIds, listView })}
-    ${continueShelf}
+    ${recommendationsShelf}
     `;
   return pageShell({ title: t('home.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home') }], currentPath: '/', csrfToken, readBookIds });
 }
@@ -461,11 +463,25 @@ export function renderCatalog({
       : `${catalogHintBlock}${recoveryHints}${renderEntityGrid(items, field === 'authors' ? '/facet/authors' : '/facet/series', t('browse.empty'))}`
     : `${catalogHintBlock}${catalogEmpty}${recoveryHints}`;
   const pageHeading = hasQueryContext ? t('catalog.resultsTitle') : t('catalog.title');
+  const viewToggle = isBookField
+    ? (() => {
+      const gridParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, view: '' });
+      const listParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, view: 'list' });
+      gridParams.set('view', 'grid');
+      const gridIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
+      const listIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
+      return `<div class="view-toggle" role="group" aria-label="${escapeHtml(t('browse.viewGrid'))} / ${escapeHtml(t('browse.viewList'))}">
+          <a class="view-toggle-btn${isListView ? '' : ' is-active'}" href="/catalog?${gridParams.toString()}" title="${escapeHtml(t('browse.viewGrid'))}" aria-label="${escapeHtml(t('browse.viewGrid'))}" ${isListView ? '' : 'aria-current="true"'}>${gridIcon}</a>
+          <a class="view-toggle-btn${isListView ? ' is-active' : ''}" href="/catalog?${listParams.toString()}" title="${escapeHtml(t('browse.viewList'))}" aria-label="${escapeHtml(t('browse.viewList'))}" ${isListView ? 'aria-current="true"' : ''}>${listIcon}</a>
+        </div>`;
+    })()
+    : '';
   const content = `
     <section class="hero">
       <div class="section-title">
         <h2>${escapeHtml(pageHeading)}</h2>
         <div class="actions">
+          ${viewToggle}
           ${renderSortControl({
             action: '/catalog',
             sort,
@@ -480,7 +496,8 @@ export function renderCatalog({
               ...(year ? { year: String(year) } : {}),
               ...(minRate >= 1 ? { minRate: String(minRate) } : {}),
               ...((hasSeries === 0 || hasSeries === 1) ? { hasSeries: String(hasSeries) } : {}),
-              ...(letter ? { letter } : {})
+              ...(letter ? { letter } : {}),
+              ...(isListView ? { view: 'list' } : {})
             }
           })}
         </div>
@@ -629,7 +646,7 @@ export function renderLibraryView({ view, title, subtitle = '', items, total, pa
     stats,
     indexStatus,
     breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }],
-    
+
     currentPath,
     csrfToken,
     readBookIds
@@ -717,7 +734,7 @@ export function renderBook({
               : ''
           }
           <div class="actions actions-primary">
-            <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer">${escapeHtml(t('home.heroReadBook'))}</a>
+            <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${escapeHtml(t('home.heroReadBook'))}</a>
             ${renderDownloadMenu(book, { accent: true, user })}
             ${isAuthenticated && canSendToEmailInUi(user) ? `<button class="button" type="button" ${bookIdDataAttr(book.id)} data-send-to-ereader="1">${escapeHtml(t('book.toEmail'))}</button>` : ''}
           </div>
@@ -853,7 +870,7 @@ export function renderFavorites({
       </div>
       <div class="table-list entity-list favorites-list">
         ${authors.map((item) => {
-          const label = item.displayName || item.name;
+          const label = formatAuthorLabel(item.displayName || item.name) || item.displayName || item.name;
           const initial = String(label || '?').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase() || '?';
           const portraitSrc = `/api/authors/portrait?name=${encodeURIComponent(item.name)}`;
           const coverFallback = item.coverBookId
@@ -1141,6 +1158,14 @@ export function renderAuthorFacetPage({
       ? `<section class="book-detail-side-block author-facet-bio-block"><h3>${escapeHtml(t('book.aboutAuthor'))}</h3><div class="book-detail-author-bio book-detail-author-bio--facet">${sanitizeHtml(authorBioHtml)}</div></section>`
       : '';
 
+  // Жанры автора — чипами в hero, а не сиротским блоком под списком книг.
+  const genreChips =
+    summary.secondaryItems?.length && summary.secondaryPath
+      ? `<div class="author-facet-genres" aria-label="${escapeHtml(summary.secondaryTitle || '')}">${
+          summary.secondaryItems.slice(0, 8).map((item) => `<a class="author-facet-genre-chip" href="${summary.secondaryPath}/${encodeURIComponent(item.name)}">${escapeHtml(item.displayName || item.name)}</a>`).join('')
+        }</div>`
+      : '';
+
   const hero = `
     <section class="book-detail-shell author-facet-hero">
       <div class="book-detail-main card-detail-panel">
@@ -1153,6 +1178,7 @@ export function renderAuthorFacetPage({
         <div class="book-detail-content">
           <h2 class="book-detail-title">${escapeHtml(displayName || title)}</h2>
           <div class="muted author-facet-count-line">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural('book', total)}</div>
+          ${genreChips}
           ${bioBlock}
         </div>
       </div>
@@ -1212,16 +1238,10 @@ export function renderAuthorFacetPage({
       })
     : listsCombined;
 
-  const genreSummary =
-    summary.secondaryItems?.length && summary.secondaryPath
-      ? `<div class="facet-summary-group">${renderFacetSummaryBlock(summary.secondaryTitle, summary.secondaryItems, summary.secondaryPath)}</div>`
-      : '';
-
   const content = `
     ${hero}
     ${controls}
     ${booksInner}
-    ${genreSummary}
   `;
   const sectionPath = breadcrumbs[1]?.href || '/authors';
   return pageShell({
@@ -1231,7 +1251,7 @@ export function renderAuthorFacetPage({
     stats,
     indexStatus,
     breadcrumbs,
-    
+
     currentPath: sectionPath,
     csrfToken,
     readSeriesNames
@@ -1296,7 +1316,7 @@ export function renderAuthorOutsideSeriesPage({
     stats,
     indexStatus,
     breadcrumbs,
-    
+
     currentPath: sectionPath,
     csrfToken,
     readBookIds

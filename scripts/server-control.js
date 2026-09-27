@@ -14,7 +14,7 @@ const statePath = path.join(config.dataDir, `server-process-${targetPort}.json`)
 const serverLogPath = path.join(config.dataDir, 'server.log');
 const STARTUP_TIMEOUT_MS = Math.max(
   20_000,
-  Number.parseInt(String(process.env.SERVER_STARTUP_TIMEOUT_MS || ''), 10) || 120_000
+  Number.parseInt(String(process.env.SERVER_STARTUP_TIMEOUT_MS || ''), 10) || 900_000
 );
 
 function resolveNodeExecutable() {

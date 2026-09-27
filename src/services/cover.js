@@ -8,6 +8,7 @@ import { getSharp } from './sharp-loader.js';
 // --- Sharp concurrency limiter ---
 
 const SHARP_CONCURRENCY_LIMIT = 6;
+const SHARP_QUEUE_TIMEOUT_MS = 15_000;
 let _sharpActiveCount = 0;
 const _sharpQueue = [];
 
@@ -16,15 +17,24 @@ export function acquireSharpSlot() {
     _sharpActiveCount++;
     return Promise.resolve();
   }
-  return new Promise(resolve => _sharpQueue.push(resolve));
+  return new Promise((resolve, reject) => {
+    const entry = { resolve, reject, timer: null };
+    entry.timer = setTimeout(() => {
+      const idx = _sharpQueue.indexOf(entry);
+      if (idx !== -1) _sharpQueue.splice(idx, 1);
+      reject(new Error('sharp queue timeout'));
+    }, SHARP_QUEUE_TIMEOUT_MS);
+    _sharpQueue.push(entry);
+  });
 }
 
 export function releaseSharpSlot() {
   if (_sharpQueue.length > 0) {
     const next = _sharpQueue.shift();
-    next();
+    if (next.timer) clearTimeout(next.timer);
+    next.resolve();
   } else {
-    _sharpActiveCount--;
+    _sharpActiveCount = Math.max(0, _sharpActiveCount - 1);
   }
 }
 
@@ -96,8 +106,10 @@ export async function normalizeBookImageForClient(img) {
     }
     return null;
   }
-  await acquireSharpSlot();
+  let gotSlot = false;
   try {
+    await acquireSharpSlot();
+    gotSlot = true;
     const converted = await sharp(img.data, { failOn: 'none' })
       .webp({ quality: getCoverQuality(), effort: 4 })
       .toBuffer();
@@ -108,7 +120,7 @@ export async function normalizeBookImageForClient(img) {
     }
     return null;
   } finally {
-    releaseSharpSlot();
+    if (gotSlot) releaseSharpSlot();
   }
 }
 

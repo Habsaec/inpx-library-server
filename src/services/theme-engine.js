@@ -311,12 +311,13 @@ export const MAX_HEADING_SCALE = 170;
 export function fontSizeToCssVars(basePx = DEFAULT_FONT_SIZE_PX, headingScale = DEFAULT_HEADING_SCALE) {
   const base = Math.min(MAX_FONT_SIZE_PX, Math.max(MIN_FONT_SIZE_PX, Math.round(Number(basePx) || DEFAULT_FONT_SIZE_PX)));
   const scale = Math.min(MAX_HEADING_SCALE, Math.max(MIN_HEADING_SCALE, Math.round(Number(headingScale) || DEFAULT_HEADING_SCALE))) / 100;
+  const toRem = (px) => `${Math.round((px / 16) * 100000) / 100000}rem`;
   return [
-    `--font-size-sm:${Math.round(base * FONT_SIZE_RATIOS.sm)}px`,
-    `--font-size-base:${base}px`,
-    `--font-size-lg:${Math.round(base * FONT_SIZE_RATIOS.lg)}px`,
-    `--font-size-xl:${Math.round(base * FONT_SIZE_RATIOS.xl * scale)}px`,
-    `--font-size-2xl:${Math.round(base * FONT_SIZE_RATIOS['2xl'] * scale)}px`,
+    `--font-size-sm:${toRem(Math.round(base * FONT_SIZE_RATIOS.sm))}`,
+    `--font-size-base:${toRem(base)}`,
+    `--font-size-lg:${toRem(Math.round(base * FONT_SIZE_RATIOS.lg))}`,
+    `--font-size-xl:${toRem(Math.round(base * FONT_SIZE_RATIOS.xl * scale))}`,
+    `--font-size-2xl:${toRem(Math.round(base * FONT_SIZE_RATIOS['2xl'] * scale))}`,
   ];
 }
 

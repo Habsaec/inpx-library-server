@@ -54,7 +54,7 @@ import { startTelegramBot, stopTelegramBot, restartTelegramBot, isTelegramBotRun
 import {
   STATS_CACHE_TTL_MS, HOME_SECTIONS_CACHE_TTL_MS
 } from './constants.js';
-import { db, getUserByUsername, hasAdminUser, initDb, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus } from './db.js';
+import { db, getUserByUsername, hasAdminUser, initDb, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus, tryIdleWalTruncate, compactWalExclusive } from './db.js';
 import {
   backfillCatalogSearchFields,
   getConfiguredInpxFile,
@@ -166,6 +166,8 @@ const operationsState = {
   ftsRebuildRunning: false,
   sidecarRunning: false,
   sourceDeleteRunning: false,
+  dupCleanRunning: false,
+  dupCleanProgress: null,
   lastReindexRequestedAt: null,
   lastFtsRebuildRequestedAt: null,
   lastSidecarRequestedAt: null,
@@ -211,6 +213,29 @@ function sampleProcessCpuPercent() {
  */
 const loopLagHist = monitorEventLoopDelay({ resolution: 20 });
 loopLagHist.enable();
+
+/* Отдельный детектор длинных остановок: пишет в runtime.log каждую блокировку loop дольше
+   порога (по умолчанию 2 с), чтобы жалобы «сервер завис» можно было сопоставить по времени
+   с операцией, а не гадать. Не зависит от histogram выше (тот сбрасывается на snapshot). */
+const LOOP_STALL_LOG_MS = Number(process.env.LOOP_STALL_LOG_MS) || 2000;
+{
+  const STALL_TICK_MS = 500;
+  /* Дольше 5 минут синхронный код не блокирует loop — это сон/гибернация машины или перевод
+     часов (Date.now прыгает). Логируем отдельно, чтобы не читалось как «сервер завис на 12 часов». */
+  const CLOCK_JUMP_MS = 5 * 60 * 1000;
+  let lastTick = Date.now();
+  const stallTimer = setInterval(() => {
+    const now = Date.now();
+    const stall = now - lastTick - STALL_TICK_MS;
+    lastTick = now;
+    if (stall >= CLOCK_JUMP_MS) {
+      console.warn(`[perf] clock jumped ${(stall / 1000).toFixed(0)} s (system sleep/resume or time sync, not an event-loop stall)`);
+    } else if (stall >= LOOP_STALL_LOG_MS) {
+      console.warn(`[perf] event loop stalled ${(stall / 1000).toFixed(1)} s (blocked main thread: heavy sync SQLite/IO); index=${getIndexStatus().active ? 'active' : 'idle'}`);
+    }
+  }, STALL_TICK_MS);
+  stallTimer.unref();
+}
 
 function sampleEventLoopLag() {
   /* monitorEventLoopDelay возвращает наносекунды. Делим на 1e6 → миллисекунды. */
@@ -258,7 +283,10 @@ export function gracefulExit(code = 0) {
   }
   stopTelegramBot();
   const server = app.get('httpServer');
-  const closeDb = () => { try { db.close(); } catch {} };
+  const closeDb = () => {
+    try { tryIdleWalTruncate(); } catch { /* ignore */ }
+    try { db.close(); } catch {}
+  };
   if (server) {
     server.close(() => { closeDb(); process.exit(code); });
     setTimeout(() => { closeDb(); process.exit(code); }, SHUTDOWN_TIMEOUT_MS);
@@ -425,18 +453,38 @@ let _stmtBookmarkCount;
 let _stmtHistoryCount;
 let _stmtTotalUsers;
 
+let _opsCountsCache = { at: 0, value: null };
+const OPS_COUNTS_TTL_MS = 30_000;
+
 function getOperationsSnapshot() {
   const dbStats = fs.existsSync(config.dbPath) ? fs.statSync(config.dbPath) : null;
   const inpxFile = getConfiguredInpxFile();
   if (!_stmtCacheStats) {
-    _stmtCacheStats = db.prepare(`SELECT COUNT(*) AS count, IFNULL(SUM(LENGTH(COALESCE(annotation, '')) + LENGTH(COALESCE(cover_data, ''))), 0) AS approx_bytes FROM book_details_cache`);
+    /* Не SUM(LENGTH(cover_data)): чтение всех BLOB на 2с poll админки замораживает /health. */
+    _stmtCacheStats = db.prepare(`SELECT COUNT(*) AS count FROM book_details_cache`);
     _stmtBookmarkCount = db.prepare('SELECT COUNT(*) AS count FROM bookmarks');
     _stmtHistoryCount = db.prepare('SELECT COUNT(*) AS count FROM reading_history');
     _stmtTotalUsers = db.prepare('SELECT COUNT(*) AS count FROM users');
   }
-  const bookCacheStats = _stmtCacheStats.get();
-  const bookmarkCount = _stmtBookmarkCount.get().count;
-  const historyCount = _stmtHistoryCount.get().count;
+  const now = Date.now();
+  if (!_opsCountsCache.value || now - _opsCountsCache.at >= OPS_COUNTS_TTL_MS) {
+    _opsCountsCache = {
+      at: now,
+      value: {
+        cacheCount: _stmtCacheStats.get()?.count || 0,
+        bookmarkCount: _stmtBookmarkCount.get().count,
+        historyCount: _stmtHistoryCount.get().count,
+        totalUsers: _stmtTotalUsers.get().count,
+        suppressedCount: 0,
+        deletedCount: 0
+      }
+    };
+    try { _opsCountsCache.value.suppressedCount = countSuppressedBooks(); } catch { /* ignore */ }
+    try { _opsCountsCache.value.deletedCount = countIndexedDeletedBooks(); } catch { /* ignore */ }
+  }
+  const bookCacheStats = { count: _opsCountsCache.value.cacheCount, approx_bytes: 0 };
+  const bookmarkCount = _opsCountsCache.value.bookmarkCount;
+  const historyCount = _opsCountsCache.value.historyCount;
   const validation = getServiceValidation();
   const mem = process.memoryUsage();
   const disk = getDiskUsageForPath(config.dbPath);
@@ -455,18 +503,13 @@ function getOperationsSnapshot() {
   } catch (err) {
     console.warn('[ops snapshot] getCachedStats failed:', err.message);
   }
-  let suppressedCount = 0;
-  try { suppressedCount = countSuppressedBooks(); } catch (err) {
-    console.warn('[ops snapshot] countSuppressedBooks failed:', err.message);
-  }
-  let deletedCount = 0;
-  try { deletedCount = countIndexedDeletedBooks(); } catch (err) {
-    console.warn('[ops snapshot] countIndexedDeletedBooks failed:', err.message);
-  }
+  const suppressedCount = _opsCountsCache.value.suppressedCount;
+  const deletedCount = _opsCountsCache.value.deletedCount;
   let dbBreakdown = null;
-  try { dbBreakdown = getDbBreakdown(); } catch (err) {
+  try { dbBreakdown = getDbBreakdown({ compute: false }); } catch (err) {
     console.warn('[ops snapshot] getDbBreakdown failed:', err.message);
   }
+  const coverSegBytes = Number((dbBreakdown?.segments || []).find((s) => s.key === 'covers')?.bytes) || 0;
   const idx = getIndexStatus();
   return {
     ...operationsState,
@@ -480,14 +523,14 @@ function getOperationsSnapshot() {
     dbSizeBytes: dbStats?.size || 0,
     dbUpdatedAt: dbStats?.mtime?.toISOString?.() || '',
     cacheCount: bookCacheStats.count,
-    cacheApproxBytes: bookCacheStats.approx_bytes,
+    cacheApproxBytes: coverSegBytes || bookCacheStats.approx_bytes,
     bookmarkCount,
     historyCount,
     loginRateLimitWindowMs: config.loginWindowMs,
     loginRateLimitMaxAttempts: config.loginMaxAttempts,
     sessionMaxAgeMs: config.sessionMaxAgeMs,
     serverStartedAt: serverStartedAt.toISOString(),
-    totalUsers: _stmtTotalUsers.get().count,
+    totalUsers: _opsCountsCache.value.totalUsers,
     onlineUsers: getOnlineUserCount(),
     memoryMB: Math.round(mem.rss / 1024 / 1024),
     systemMemoryMB: getSystemMemoryLimitMB(),
@@ -562,7 +605,14 @@ function runRepairMetadata() {
 }
 
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
-app.use(express.json({ limit: '100kb' }));
+const json100kb = express.json({ limit: '100kb' });
+const jsonUsersImport = express.json({ limit: '2mb' });
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.path === '/api/operations/users-import') {
+    return jsonUsersImport(req, res, next);
+  }
+  return json100kb(req, res, next);
+});
 registerTelegramBotRoutes(app);
 app.use(cookieParser());
 // gzip/deflate — обрабатывается пакетом compression (fallback для клиентов без Brotli).
@@ -735,7 +785,8 @@ function isMaintenanceActive() {
   return operationsState.reindexRunning ||
     operationsState.repairRunning ||
     operationsState.sourceDeleteRunning ||
-    operationsState.sidecarRunning;
+    operationsState.sidecarRunning ||
+    operationsState.dupCleanRunning;
 }
 app.use((req, res, next) => {
   if (!isMaintenanceActive()) return next();
@@ -1101,13 +1152,14 @@ function scheduleDeferredOptimize() {
   if (typeof t.unref === 'function') t.unref();
 }
 
-/** Периодический PASSIVE WAL checkpoint — не блокирует читателей, сдерживает рост WAL-файла. */
+/** Периодический PASSIVE checkpoint; при раздутом WAL — короткий TRUNCATE без ожидания читателей. */
 function schedulePeriodicWalCheckpoint() {
   const delayMs = 2 * 60 * 1000; // 2 минуты — чаще при простое, PASSIVE не блокирует
   const t = setTimeout(() => {
     try {
       if (!getIndexStatus().active) {
         db.pragma('wal_checkpoint(PASSIVE)');
+        tryIdleWalTruncate();
       }
     } catch (err) {
       console.warn('[db] WAL checkpoint не удался:', err.message);
@@ -1170,6 +1222,12 @@ async function bootstrap() {
     console.log(`Library root: ${getLibraryRoot()}`);
     logSystemEvent('info', 'server', 'server started', { port: config.port, libraryRoot: getLibraryRoot() });
     warmSharedPageCaches();
+    // WAL в несколько ГБ нельзя ужимать до listen: health и логин молчат десятки минут.
+    setImmediate(() => {
+      try { compactWalExclusive(); } catch (err) {
+        console.warn('[db] WAL TRUNCATE after listen failed:', err?.message || err);
+      }
+    });
   });
   httpServer.on('error', (err) => {
     if (err?.code === 'EADDRINUSE') {
@@ -1206,7 +1264,7 @@ async function bootstrap() {
   setTimeout(async () => {
     try {
       // Full catalog recount is multi-second on huge libraries — only when filters changed.
-      const fingerprint = `${getSetting('excluded_languages') || ''}\n${getSetting('excluded_genres') || ''}\n${getSetting('show_deleted_books') === '1' ? '1' : '0'}`;
+      const fingerprint = `v2\n${getSetting('excluded_languages') || ''}\n${getSetting('excluded_genres') || ''}\n${getSetting('show_deleted_books') === '1' ? '1' : '0'}`;
       if (getMeta('active_books_filter_fp') === fingerprint) {
         return;
       }

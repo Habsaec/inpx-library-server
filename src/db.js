@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { Worker } from 'node:worker_threads';
 import { normalizeLookupEmail } from './utils/email-address.js';
 import Database from 'better-sqlite3';
 import { config } from './config.js';
@@ -56,6 +57,13 @@ if (
 
 export const db = new Database(config.dbPath, { timeout: 30000 });
 db.function('lower_unicode', { deterministic: true }, (text) => String(text || '').toLowerCase());
+db.function('archive_stem', { deterministic: true }, (name) => String(name || '')
+  .replace(/\\/g, '/')
+  .toLowerCase()
+  .split('lib.flib/').join('')
+  .split('lib.rus/').join('')
+  .replace(/\.zip$/i, '')
+  .replace(/\.7z$/i, ''));
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 30000');
 const appliedTimeout = db.pragma('busy_timeout', { simple: true });
@@ -88,6 +96,75 @@ db.pragma('temp_store = MEMORY');       // temp tables in RAM
 
 // Force WAL checkpoint on startup to clear stale locks from crashed processes
 try { db.pragma('wal_checkpoint(PASSIVE)'); } catch { /* ignore if locked briefly */ }
+
+const WAL_TRUNCATE_MIN_BYTES = 32 * 1024 * 1024;
+
+function walFileSize() {
+  try {
+    return fs.statSync(`${config.dbPath}-wal`).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Усечь WAL, если он разросся. busy_timeout короткий: не ждать HTTP-читателей
+ * минутами (TRUNCATE/RESTART после удаления источника подвешивали все страницы).
+ */
+export function tryIdleWalTruncate() {
+  const size = walFileSize();
+  if (size < WAL_TRUNCATE_MIN_BYTES) {
+    return { ok: true, skipped: true, size };
+  }
+  const prevBusy = db.pragma('busy_timeout', { simple: true });
+  try {
+    db.pragma('busy_timeout = 50');
+    const result = db.pragma('wal_checkpoint(TRUNCATE)');
+    const info = result[0] || {};
+    const newSize = walFileSize();
+    if (info.busy === 0) {
+      console.log(`[db] WAL TRUNCATE ${size} → ${newSize} bytes`);
+    }
+    return { ok: info.busy === 0, size, newSize, info };
+  } catch (err) {
+    return { ok: false, size, error: err.message };
+  } finally {
+    db.pragma(`busy_timeout = ${Number(prevBusy) || 30000}`);
+  }
+}
+
+/**
+ * Полный checkpoint+TRUNCATE, пока нет HTTP-читателей (старт процесса).
+ * После массового DELETE WAL может быть несколько ГБ; PASSIVE файл не ужимает.
+ */
+export function compactWalExclusive() {
+  const size = walFileSize();
+  if (size < WAL_TRUNCATE_MIN_BYTES) {
+    return { skipped: true, size };
+  }
+  console.log(`[db] WAL ${(size / 1e9).toFixed(2)} GB — checkpoint TRUNCATE до запуска HTTP…`);
+  const t0 = Date.now();
+  const prevBusy = db.pragma('busy_timeout', { simple: true });
+  db.pragma('mmap_size = 0');
+  db.pragma('busy_timeout = 600000');
+  try {
+    const result = db.pragma('wal_checkpoint(TRUNCATE)');
+    const info = result[0] || {};
+    const newSize = walFileSize();
+    const ms = Date.now() - t0;
+    console.log(`[db] WAL TRUNCATE ${ms}ms busy=${info.busy ?? '?'} ${size} → ${newSize} bytes`);
+    if (info.busy !== 0) {
+      console.warn('[db] WAL TRUNCATE не завершён (busy). Файл может остаться большим.');
+    }
+    return { ok: info.busy === 0, size, newSize, info, ms };
+  } catch (err) {
+    console.warn('[db] WAL TRUNCATE failed:', err.message);
+    return { ok: false, size, error: err.message, ms: Date.now() - t0 };
+  } finally {
+    db.pragma(`busy_timeout = ${Number(prevBusy) || 30000}`);
+    db.pragma(`mmap_size = ${_mmapSize}`);
+  }
+}
 
 /**
  * PRAGMA quick_check reads the whole DB file. On multi‑GB libraries with a cold
@@ -1206,13 +1283,51 @@ export function dropBooksTableIndexes() {
 }
 
 /** Восстановить индексы таблицы books, удалённые dropBooksTableIndexes(). */
-export function ensureBooksTableIndexes() {
+export async function ensureBooksTableIndexes() {
   for (const idx of _savedBooksIndexes) {
     if (idx.sql) {
       db.exec(idx.sql);
     }
+    await new Promise((r) => setImmediate(r));
   }
   _savedBooksIndexes = [];
+  /* DROP INDEX стирает строки sqlite_stat1; без них планировщик берёт индекс deleted=0
+     и сортирует весь каталог в TEMP B-TREE (~800 мс на страницу вместо 1–8 мс). */
+  await analyzeBooksIndexesYielding();
+}
+
+/**
+ * ANALYZE по каждому индексу books отдельно (100–300 мс на 600k строк) с уступкой event loop,
+ * затем сброс кэшированных prepared statements — иначе они остаются со старыми планами.
+ */
+export async function analyzeBooksIndexesYielding() {
+  const names = db.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'books' ORDER BY name
+  `).all().map((r) => r.name);
+  const t0 = Date.now();
+  for (const name of names) {
+    try {
+      db.exec(`ANALYZE ${sqliteQuoteIdent(name)}`);
+    } catch (err) {
+      console.warn(`[analyze] skip ${name}:`, err.message);
+    }
+    await new Promise((r) => setImmediate(r));
+  }
+  resetDbPreparedStatements();
+  for (const cb of _viewResetCallbacks) cb();
+  console.log(`[analyze] books indexes: ${names.length} in ${Date.now() - t0} ms`);
+}
+
+/** Статистика индексов books отсутствует/неполная (например, после DROP INDEX без ANALYZE). */
+export function booksIndexStatsMissing() {
+  const idx = db.prepare(`SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'index' AND tbl_name = 'books'`).get()?.c ?? 0;
+  let stats = 0;
+  try {
+    stats = db.prepare(`SELECT COUNT(*) AS c FROM sqlite_stat1 WHERE tbl = 'books'`).get()?.c ?? 0;
+  } catch {
+    return true;
+  }
+  return stats < idx;
 }
 
 /**
@@ -1815,6 +1930,7 @@ export function ensureSchemaIndexes() {
     'CREATE INDEX IF NOT EXISTS idx_book_series_series_id ON book_series(series_id)',
     'CREATE INDEX IF NOT EXISTS idx_book_series_book_id ON book_series(book_id)',
     'CREATE INDEX IF NOT EXISTS idx_books_title_sort ON books(title_sort)',
+    'CREATE INDEX IF NOT EXISTS idx_books_title_author_sort ON books(title_sort, author_sort) WHERE deleted = 0',
     'CREATE INDEX IF NOT EXISTS idx_books_author_sort ON books(author_sort)',
     'CREATE INDEX IF NOT EXISTS idx_books_series_sort_series_index ON books(series_sort, series_index)',
     'CREATE INDEX IF NOT EXISTS idx_books_imported_at ON books(imported_at DESC)',
@@ -1833,6 +1949,7 @@ export function ensureSchemaIndexes() {
     'CREATE INDEX IF NOT EXISTS idx_reading_history_username_opened ON reading_history(username, last_opened_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_system_events_created_at ON system_events(created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_books_source_id ON books(source_id)',
+    'CREATE INDEX IF NOT EXISTS idx_books_lib_id ON books(lib_id) WHERE deleted = 0 AND lib_id IS NOT NULL AND TRIM(lib_id) != \'\'' ,
     'CREATE INDEX IF NOT EXISTS idx_books_deleted ON books(deleted)',
     'CREATE INDEX IF NOT EXISTS idx_books_deleted_source ON books(deleted, source_id)',
     'CREATE INDEX IF NOT EXISTS idx_books_lang ON books(lang)',
@@ -1868,6 +1985,11 @@ export function ensureSchemaIndexes() {
     'CREATE INDEX IF NOT EXISTS idx_book_ratings_user_book ON book_ratings(username, book_id)',
     // Expression indexes для facet-запросов
     "CREATE INDEX IF NOT EXISTS idx_books_recent_sort ON books(COALESCE(NULLIF(date, ''), imported_at) DESC, imported_at DESC, id DESC)",
+    // Новинки: MAX/диапазон/сортировка по SUBSTR(date,1,10) — без индекса это три полных скана по ~850 мс
+    'CREATE INDEX IF NOT EXISTS idx_books_date10 ON books(SUBSTR(date, 1, 10))',
+    // Каталог по названию (сортировка по умолчанию): точное совпадение с ORDER BY resolveSort('title'),
+    // иначе каждая страница листания = сортировка всех книг в TEMP B-TREE
+    'CREATE INDEX IF NOT EXISTS idx_books_title_nocase_id ON books(title_sort ASC, title COLLATE NOCASE ASC, id DESC)',
     'CREATE INDEX IF NOT EXISTS idx_books_author_title_id ON books(author_sort ASC, title_sort ASC, id DESC)',
     'CREATE INDEX IF NOT EXISTS idx_books_series_full ON books(series_sort ASC, series_index ASC, title_sort ASC, id DESC)',
     'CREATE INDEX IF NOT EXISTS idx_books_rating ON books(lib_rate DESC, title_sort ASC, id DESC)',
@@ -1893,6 +2015,10 @@ export function ensureSchemaIndexes() {
         analyzeDatabaseYielding()
           .then(() => console.log('[boot] ANALYZE завершён после создания индексов.'))
           .catch((err) => console.warn('[boot] ANALYZE после индексов не удался:', err.message));
+      } else if (booksIndexStatsMissing()) {
+        console.log('[boot] Нет статистики индексов books — ANALYZE по индексам в фоне…');
+        analyzeBooksIndexesYielding()
+          .catch((err) => console.warn('[boot] ANALYZE индексов books не удался:', err.message));
       }
       return;
     }
@@ -2066,13 +2192,21 @@ export async function deleteSourceProgressive(
       })();
       onProgress?.({ deleted, total, stage: 'books' });
     } finally {
-      ensureBooksTableIndexes();
+      await ensureBooksTableIndexes();
       ensureBooksFtsTriggers();
     }
 
     // Rebuild FTS once instead of per-row deletes.
     try {
-      rebuildBooksFtsFromContentSync();
+      await rebuildBooksFtsFromContent({
+        onProgress: (p) => onProgress?.({
+          deleted,
+          total,
+          stage: 'fts',
+          ftsDone: p.done,
+          ftsTotal: p.total
+        })
+      });
     } catch (err) {
       console.warn('[db] FTS rebuild after source delete failed:', err.message);
     }
@@ -2084,6 +2218,13 @@ export async function deleteSourceProgressive(
     onProgress?.({ deleted, total, stage: 'catalogs' });
     try { await cleanupOrphanedCatalogs(); } catch {}
     await new Promise(r => setImmediate(r));
+    /* book_count авторов/серий/жанров иначе остаётся с учётом удалённых книг (после удаления
+       дублирующего источника счётчики были ровно вдвое больше реальных). */
+    try {
+      await refreshCatalogBookCounts();
+    } catch (err) {
+      console.warn('[db] catalog recount after source delete failed:', err.message);
+    }
 
     // Reclaim disk space after mass deletion.
     onProgress?.({ deleted, total, stage: 'vacuum' });
@@ -2091,28 +2232,25 @@ export async function deleteSourceProgressive(
       db.pragma('mmap_size = 0');
       const freed = db.pragma('freelist_count', { simple: true });
       if (freed > 0) {
-        db.pragma(`incremental_vacuum(${freed})`);
+        const CHUNK = 4000;
+        let left = Number(freed) || 0;
+        while (left > 0) {
+          const n = Math.min(CHUNK, left);
+          db.pragma(`incremental_vacuum(${n})`);
+          left -= n;
+          await new Promise((r) => setImmediate(r));
+        }
         console.log(`[db] incremental_vacuum released ${freed} pages after source delete`);
       } else {
         console.log('[db] no free pages to reclaim after source delete');
       }
-      let checkpointed = false;
-      for (const mode of ['TRUNCATE', 'RESTART', 'PASSIVE']) {
-        try {
-          const result = db.pragma(`wal_checkpoint(${mode})`);
-          const info = result[0] || result;
-          if (info.busy === 0 || mode === 'PASSIVE') {
-            checkpointed = true;
-            console.log(`[db] WAL checkpoint ${mode} succeeded`);
-            break;
-          }
-          console.warn(`[db] WAL checkpoint ${mode} partially completed, trying less aggressive mode`);
-        } catch (err) {
-          console.warn(`[db] WAL checkpoint ${mode} failed: ${err.message}`);
-        }
-      }
-      if (!checkpointed) {
-        console.error('[db] WAL checkpoint failed in all modes — WAL file may be large');
+      /* TRUNCATE/RESTART ждут читателей HTTP и на минуты блокируют все страницы.
+         Здесь только PASSIVE; усечение WAL — в idle-планировщике. */
+      try {
+        db.pragma('wal_checkpoint(PASSIVE)');
+        console.log('[db] WAL checkpoint PASSIVE after source delete');
+      } catch (err) {
+        console.warn(`[db] WAL checkpoint PASSIVE failed: ${err.message}`);
       }
       const lastCkpt = db.pragma('wal_checkpoint(PASSIVE)')[0] || {};
       if (lastCkpt.busy === 0) {
@@ -2120,6 +2258,7 @@ export async function deleteSourceProgressive(
       } else {
         console.warn(`[db] skipping mmap re-enable: ${lastCkpt.busy} busy pages remain after checkpoint`);
       }
+      tryIdleWalTruncate();
     } catch (vacErr) {
       console.warn('[db] incremental_vacuum after source delete failed:', vacErr.message);
       try {
@@ -2364,6 +2503,81 @@ export function setMeta(key, value) {
   _stmtSetMeta.run(key, value);
 }
 
+const LIBRARY_STATS_META_KEY = 'library_stats_snapshot';
+let _stmtLibraryStats = null;
+
+/** Дешёвые счётчики дашборда: без COUNT(DISTINCT) по VIEW на миллионах строк. */
+export function writeLibraryStatsSnapshot() {
+  _stmtLibraryStats ??= db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM books b
+        LEFT JOIN sources s ON s.id = b.source_id
+        WHERE b.deleted = 0 AND (b.source_id IS NULL OR s.enabled = 1)
+      ) AS totalBooks,
+      (SELECT COUNT(*) FROM authors) AS totalAuthors,
+      (SELECT COUNT(*) FROM series_catalog) AS totalSeries,
+      (SELECT COUNT(*) FROM genres_catalog) AS totalGenres,
+      (SELECT COUNT(*) FROM (
+        SELECT 1 FROM books WHERE deleted = 0 GROUP BY COALESCE(NULLIF(lang, ''), 'unknown')
+      )) AS totalLanguages
+  `);
+  const row = _stmtLibraryStats.get();
+  const snapshot = {
+    totalBooks: Number(row?.totalBooks) || 0,
+    totalAuthors: Number(row?.totalAuthors) || 0,
+    totalSeries: Number(row?.totalSeries) || 0,
+    totalGenres: Number(row?.totalGenres) || 0,
+    totalLanguages: Number(row?.totalLanguages) || 0
+  };
+  setMeta(LIBRARY_STATS_META_KEY, JSON.stringify(snapshot));
+  return snapshot;
+}
+
+/**
+ * Точечная правка book_count для одной книги (delta = ±1) вместо полного пересчёта
+ * (три GROUP BY по всей библиотеке). Вызывать только если книга видна в active_books
+ * до скрытия / после восстановления — иначе счётчики разойдутся.
+ */
+export function adjustCatalogCountsForBook(bookId, delta) {
+  const id = String(bookId);
+  db.transaction(() => {
+    db.prepare(`UPDATE authors SET book_count = MAX(0, COALESCE(book_count, 0) + ?)
+      WHERE id IN (SELECT author_id FROM book_authors WHERE book_id = ?)`).run(delta, id);
+    db.prepare(`UPDATE series_catalog SET book_count = MAX(0, COALESCE(book_count, 0) + ?)
+      WHERE id IN (SELECT series_id FROM book_series WHERE book_id = ?)`).run(delta, id);
+    db.prepare(`UPDATE genres_catalog SET book_count = MAX(0, COALESCE(book_count, 0) + ?)
+      WHERE id IN (SELECT genre_id FROM book_genres WHERE book_id = ?)`).run(delta, id);
+  })();
+  const snapshot = getLibraryStatsSnapshot();
+  if (snapshot) {
+    snapshot.totalBooks = Math.max(0, snapshot.totalBooks + delta);
+    setMeta(LIBRARY_STATS_META_KEY, JSON.stringify(snapshot));
+  }
+}
+
+export function isBookInActiveView(bookId) {
+  return Boolean(db.prepare('SELECT 1 FROM active_books WHERE id = ? LIMIT 1').get(String(bookId)));
+}
+
+export function getLibraryStatsSnapshot() {
+  try {
+    const raw = getMeta(LIBRARY_STATS_META_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!Number.isFinite(Number(parsed.totalBooks))) return null;
+    return {
+      totalBooks: Number(parsed.totalBooks) || 0,
+      totalAuthors: Number(parsed.totalAuthors) || 0,
+      totalSeries: Number(parsed.totalSeries) || 0,
+      totalGenres: Number(parsed.totalGenres) || 0,
+      totalLanguages: Number(parsed.totalLanguages) || 0
+    };
+  } catch {
+    return null;
+  }
+}
+
 let _stmtGetUserShelves = null;
 export function getUserShelves(username) {
   _stmtGetUserShelves ??= db.prepare(`
@@ -2584,8 +2798,10 @@ export async function rebuildActiveBooksView() {
   populateFilters();
 
   // Build VIEW referencing the config table — no string interpolation in DDL
+  /* Пустой язык не прячем: скан по файлам часто не заполняет lang, и «только RU»
+     иначе выкидывает всю выдачу (автор/серии пропадают при живых счётчиках). */
   const langFilter = langs.length > 0
-    ? ` AND COALESCE(NULLIF(b.lang, ''), 'unknown') NOT IN (SELECT value FROM excluded_filters WHERE type = 'lang')`
+    ? ` AND (b.lang IS NULL OR TRIM(b.lang) = '' OR b.lang NOT IN (SELECT value FROM excluded_filters WHERE type = 'lang'))`
     : '';
   const genreFilter = genres.length > 0
     ? ` AND (NOT EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id) OR EXISTS (SELECT 1 FROM book_genres bg JOIN genres_catalog gc ON gc.id = bg.genre_id WHERE bg.book_id = b.id AND gc.name NOT IN (SELECT value FROM excluded_filters WHERE type = 'genre')))`
@@ -2601,7 +2817,7 @@ export async function rebuildActiveBooksView() {
   resetDbPreparedStatements();
   for (const cb of _viewResetCallbacks) cb();
   await refreshCatalogBookCounts();
-  setMeta('active_books_filter_fp', `${excluded || ''}\n${excludedGenres || ''}\n${showDeleted ? '1' : '0'}`);
+  setMeta('active_books_filter_fp', `v2\n${excluded || ''}\n${excludedGenres || ''}\n${showDeleted ? '1' : '0'}`);
 }
 
 /**
@@ -2609,10 +2825,69 @@ export async function rebuildActiveBooksView() {
  * на основе active_books VIEW. Вызывается после индексации и при изменении
  * excluded_languages.
  */
-export async function refreshCatalogBookCounts() {
+const CATALOG_COUNTS_WORKER_URL = new URL('./services/catalog-counts-worker.js', import.meta.url);
+const CATALOG_COUNTS_STAGE_PERCENT = { catalog_authors: 75, catalog_series: 85, catalog_genres: 95 };
+let _catalogCountsInflight = null;
+
+function runCatalogCountsWorkerOnce(onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(CATALOG_COUNTS_WORKER_URL, {
+      workerData: { dbPath: config.dbPath },
+      execArgv: []
+    });
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      fn(value);
+    };
+    worker.on('message', (msg) => {
+      if (msg?.type === 'progress') {
+        onProgress?.({ stage: msg.stage, percent: CATALOG_COUNTS_STAGE_PERCENT[msg.stage] || 75 });
+      } else if (msg?.type === 'done') {
+        finish(resolve, msg.timings || {});
+      } else if (msg?.type === 'error') {
+        finish(reject, new Error(msg.message || 'catalog counts worker failed'));
+      }
+    });
+    worker.on('error', (err) => finish(reject, err));
+    worker.on('exit', (code) => finish(reject, new Error(`catalog counts worker exited with code ${code}`)));
+  });
+}
+
+/* Один пересчёт за раз: повторные вызовы (например, view rebuild во время auto-clean) ждут и запускаются следом. */
+async function runCatalogCountsWorker(onProgress) {
+  while (_catalogCountsInflight) {
+    await _catalogCountsInflight.catch(() => {});
+  }
+  _catalogCountsInflight = runCatalogCountsWorkerOnce(onProgress).finally(() => {
+    _catalogCountsInflight = null;
+  });
+  return _catalogCountsInflight;
+}
+
+export async function refreshCatalogBookCounts({ onProgress } = {}) {
   console.log('[index] catalog: пересчёт book_count (authors, series, genres)…');
   const t0 = Date.now();
 
+  /* Основной путь — worker_threads: event loop свободен, HTTP отвечает во время пересчёта.
+     Inline-вариант ниже остаётся как fallback (например, если worker не смог открыть БД). */
+  if (process.env.CATALOG_COUNTS_INLINE !== '1') {
+    try {
+      const timings = await runCatalogCountsWorker(onProgress);
+      console.log(`[index] catalog: worker done in ${((Date.now() - t0) / 1000).toFixed(1)} s ${JSON.stringify(timings)}`);
+      try {
+        writeLibraryStatsSnapshot();
+      } catch (err) {
+        console.warn('[index] catalog: stats snapshot failed:', err.message);
+      }
+      return;
+    } catch (err) {
+      console.warn('[index] catalog: worker failed, inline fallback:', err.message);
+    }
+  }
+
+  onProgress?.({ stage: 'catalog_authors', percent: 75 });
   db.transaction(() => {
     db.exec(`
       UPDATE authors SET book_count = COALESCE((
@@ -2629,6 +2904,7 @@ export async function refreshCatalogBookCounts() {
   console.log(`[index] catalog: authors done in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
   const t1 = Date.now();
+  onProgress?.({ stage: 'catalog_series', percent: 85 });
   db.transaction(() => {
     db.exec(`
       UPDATE series_catalog SET book_count = COALESCE((
@@ -2645,6 +2921,7 @@ export async function refreshCatalogBookCounts() {
   console.log(`[index] catalog: series done in ${((Date.now() - t1) / 1000).toFixed(1)} s`);
 
   const t2 = Date.now();
+  onProgress?.({ stage: 'catalog_genres', percent: 95 });
   db.transaction(() => {
     db.exec(`
       UPDATE genres_catalog SET book_count = COALESCE((
@@ -2659,6 +2936,11 @@ export async function refreshCatalogBookCounts() {
   })();
   await new Promise(r => setImmediate(r));
   console.log(`[index] catalog: genres done in ${((Date.now() - t2) / 1000).toFixed(1)} s, total ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  try {
+    writeLibraryStatsSnapshot();
+  } catch (err) {
+    console.warn('[index] catalog: stats snapshot failed:', err.message);
+  }
 }
 
 export function getSmtpSettings() {
@@ -3405,6 +3687,14 @@ export function deleteReaderBookmark(id, username) {
   if (row?.book_id) touchReaderBookRevision(username, row.book_id, 'bookmarks_rev');
 }
 
+export function updateReaderBookmarkTitle(id, username, title) {
+  const row = db.prepare('SELECT book_id FROM reader_bookmarks WHERE id = ? AND username = ?').get(id, username);
+  if (!row) return false;
+  db.prepare('UPDATE reader_bookmarks SET title = ? WHERE id = ? AND username = ?').run(String(title || ''), id, username);
+  touchReaderBookRevision(username, row.book_id, 'bookmarks_rev');
+  return true;
+}
+
 /* ── Аннотации читалки (выделения и заметки) ──────────────────────── */
 db.exec(`CREATE TABLE IF NOT EXISTS reader_annotations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3677,8 +3967,8 @@ function _ensureUserStatsStmt() {
         (SELECT COUNT(*) FROM favorite_authors WHERE username = ?) AS favoriteAuthorsCount,
         (SELECT COUNT(*) FROM favorite_series WHERE username = ?) AS favoriteSeriesCount,
         (SELECT COUNT(*) FROM shelves WHERE username = ?) AS shelvesCount,
-        (SELECT COUNT(*) FROM reader_bookmarks WHERE username = ?) AS readerBookmarksCount,
-        (SELECT COUNT(*) FROM reader_annotations WHERE username = ?) AS readerAnnotationsCount,
+        (SELECT COUNT(*) FROM reader_bookmarks rbm JOIN active_books ab3 ON ab3.id = rbm.book_id WHERE rbm.username = ?) AS readerBookmarksCount,
+        (SELECT COUNT(*) FROM reader_annotations ra JOIN active_books ab4 ON ab4.id = ra.book_id WHERE ra.username = ?) AS readerAnnotationsCount,
         (SELECT created_at FROM users WHERE username = ?) AS createdAt
     `);
   }
@@ -4034,19 +4324,39 @@ export function unsuppressBook(bookId) {
   return removed;
 }
 
-export function unsuppressAll() {
-  const ids = [];
-  for (const row of db.prepare('SELECT book_id FROM suppressed_books').iterate()) {
-    ids.push(row.book_id);
+export async function unsuppressAll({ onProgress } = {}) {
+  const report = (stage, extra = {}) => {
+    onProgress?.({ stage, mode: 'restore', ...extra });
+  };
+  const yieldLoop = () => new Promise((resolve) => setImmediate(resolve));
+
+  report('prepare', { percent: 2, restored: 0, total: 0, deleted: 0 });
+  await yieldLoop();
+
+  const total = Number(db.prepare('SELECT COUNT(*) AS c FROM suppressed_books').get()?.c) || 0;
+  report('restore', { percent: 12, restored: 0, total, deleted: 0 });
+  await yieldLoop();
+
+  /* Один UPDATE по подзапросу — без массива из 400k id в RAM и без цикла по строкам. */
+  const restored = db.prepare(`
+    UPDATE books SET deleted = 0
+    WHERE id IN (SELECT book_id FROM suppressed_books)
+  `).run().changes;
+  report('restore', { percent: 55, restored, total, deleted: restored });
+  await yieldLoop();
+
+  report('clear', { percent: 65, restored, total, deleted: restored });
+  db.prepare('DELETE FROM suppressed_books').run();
+  await yieldLoop();
+
+  if (total > 0) {
+    await refreshCatalogBookCounts({
+      onProgress: (p) => report(p.stage, { ...p, restored, total, deleted: restored })
+    });
   }
-  if (!ids.length) return 0;
-  const tx = db.transaction(() => {
-    const restoreStmt = db.prepare('UPDATE books SET deleted = 0 WHERE id = ?');
-    for (const id of ids) restoreStmt.run(id);
-    db.prepare('DELETE FROM suppressed_books').run();
-  });
-  tx();
-  return ids.length;
+
+  report('done', { percent: 100, restored, total, deleted: restored, groups: restored });
+  return restored;
 }
 
 export function isBookSuppressed(bookId) {
@@ -4177,13 +4487,20 @@ function classifyDbObject(name) {
 let _dbBreakdownCache = null;
 let _stmtDbStat = null;
 let _dbStatSupported = null;
-const DB_BREAKDOWN_TTL_MS = 60_000;
+const DB_BREAKDOWN_TTL_MS = 10 * 60_000;
 const DB_CATEGORY_ORDER = ['books', 'catalogs', 'covers', 'sidecar', 'activity', 'other'];
 
-/** Сводка по содержимому БД: размеры по категориям. {supported, total, segments[]}. */
-export function getDbBreakdown() {
+/**
+ * Сводка по содержимому БД: размеры по категориям. {supported, total, segments[]}.
+ * dbstat сканирует все страницы файла — не вызывать на 2-секундном poll админки.
+ * @param {{ compute?: boolean }} [opts] compute=false — только кэш, без скана.
+ */
+export function getDbBreakdown({ compute = true } = {}) {
   const now = Date.now();
   if (_dbBreakdownCache && now < _dbBreakdownCache.expiresAt) return _dbBreakdownCache.value;
+  if (!compute) {
+    return _dbBreakdownCache?.value || { supported: false, total: 0, segments: [] };
+  }
 
   /* Один раз проверяем, поддерживается ли dbstat — если нет, возвращаем
      «неподдерживаемый» режим (UI покажет просто размер без разбивки). */

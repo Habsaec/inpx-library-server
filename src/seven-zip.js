@@ -208,13 +208,32 @@ export function parseSevenZipListSlt(text) {
   const blocks = text.split(/\r?\n\r?\n/);
   const files = [];
   for (const block of blocks) {
-    const pathLine = block.match(/^Path = (.+)$/m);
-    if (!pathLine) continue;
-    const p = pathLine[1].trim();
-    if (!p || p.endsWith('/') || p.endsWith('\\')) continue;
-    const sizeLine = block.match(/^Size = (\d+)$/m);
-    const uncompressedSize = sizeLine ? parseInt(sizeLine[1], 10) : 0;
-    files.push({ path: p.replace(/\\/g, '/'), uncompressedSize });
+    const parsed = parseSevenZipListSltBlock(block);
+    if (parsed) files.push(parsed);
+  }
+  return files;
+}
+
+function parseSevenZipListSltBlock(block) {
+  const pathLine = block.match(/^Path = (.+)$/m);
+  if (!pathLine) return null;
+  const p = pathLine[1].trim();
+  if (!p || p.endsWith('/') || p.endsWith('\\')) return null;
+  const sizeLine = block.match(/^Size = (\d+)$/m);
+  const uncompressedSize = sizeLine ? parseInt(sizeLine[1], 10) : 0;
+  return { path: p.replace(/\\/g, '/'), uncompressedSize };
+}
+
+/** Листинг большого .7z иначе на секунды замораживает HTTP (в т.ч. /health). */
+async function parseSevenZipListSltYielding(text) {
+  const blocks = text.split(/\r?\n\r?\n/);
+  const files = [];
+  for (let i = 0; i < blocks.length; i++) {
+    if (i > 0 && i % 250 === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const parsed = parseSevenZipListSltBlock(blocks[i]);
+    if (parsed) files.push(parsed);
   }
   return files;
 }
@@ -230,7 +249,8 @@ export async function listSevenZipEntries(archivePath, binOverride) {
   }
   await new Promise((resolve) => setImmediate(resolve));
   const normalizedArchive = String(archivePath || '').replace(/\\/g, '/').toLowerCase();
-  return parseSevenZipListSlt(out).filter((entry) => {
+  const listed = await parseSevenZipListSltYielding(out);
+  return listed.filter((entry) => {
     const p = String(entry?.path || '').replace(/\\/g, '/').toLowerCase();
     return p && p !== normalizedArchive;
   });

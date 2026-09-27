@@ -27,11 +27,14 @@ import {
   readFlibustaAuthorBioHtml,
   readFlibustaAuthorPortraitForAuthorName
 } from '../flibusta-sidecar.js';
+import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
 import { getGenreGroups } from '../genre-map.js';
 import { getLocale } from '../i18n.js';
 import { getRecommendedLibraryView } from '../services/recommendations.js';
 import { requireBrowseAuth } from '../middleware/auth.js';
 import { t } from '../i18n.js';
+
+const AUTHOR_SIDECAR_MS = parseEnvTimeoutMs('AUTHOR_SIDECAR_TIMEOUT_MS', 2_500);
 
 /**
  * @param {import('express').Application} app
@@ -166,7 +169,12 @@ export function registerBrowseApiRoutes(app) {
     const sort = ['name', 'count'].includes(String(req.query.sort || '')) ? String(req.query.sort) : 'count';
     const query = String(req.query.q || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
-    const result = listAuthors({ query, page, pageSize, sort, order: '', letter });
+    /* Без фильтра listAuthors — скан 180k авторов с коррелированным подзапросом алиасов (~1 с); кэш как у HTML /authors. */
+    const result = getCachedPageData(
+      `api:browse:authors:${page}:${sort}:${letter}:${query}`,
+      () => listAuthors({ query, page, pageSize, sort, order: '', letter }),
+      PAGE_CACHE_TTL_MS
+    );
     res.json({ ...result, page, pageSize });
   });
 
@@ -176,7 +184,11 @@ export function registerBrowseApiRoutes(app) {
     const sort = ['name', 'count'].includes(String(req.query.sort || '')) ? String(req.query.sort) : 'count';
     const query = String(req.query.q || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
-    const result = listSeries({ query, page, pageSize, sort, order: '', letter });
+    const result = getCachedPageData(
+      `api:browse:series:${page}:${sort}:${letter}:${query}`,
+      () => listSeries({ query, page, pageSize, sort, order: '', letter }),
+      PAGE_CACHE_TTL_MS
+    );
     res.json({ ...result, page, pageSize });
   });
 
@@ -215,10 +227,18 @@ export function registerBrowseApiRoutes(app) {
       const [grouped, bioHtml, portrait] = await Promise.all([
         getAuthorBooksGroupedCoalesced(value, sort, order, { page: 1, pageSize: 48 }),
         flibSourceId != null
-          ? readFlibustaAuthorBioHtml(value, facetRoot, flibSourceId).catch(() => '')
+          ? promiseWithTimeout(
+            readFlibustaAuthorBioHtml(value, facetRoot, flibSourceId),
+            AUTHOR_SIDECAR_MS,
+            'author bio'
+          ).catch(() => '')
           : Promise.resolve(''),
         flibSourceId != null
-          ? readFlibustaAuthorPortraitForAuthorName(value, facetRoot).catch(() => null)
+          ? promiseWithTimeout(
+            readFlibustaAuthorPortraitForAuthorName(value, facetRoot),
+            AUTHOR_SIDECAR_MS,
+            'author portrait'
+          ).catch(() => null)
           : Promise.resolve(null),
       ]);
       /* Always include books[] per series — Android/list UI groups titles under series (Flibusta-style).

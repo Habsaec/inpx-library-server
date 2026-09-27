@@ -565,6 +565,10 @@ export class Paginator extends HTMLElement {
     #touchState
     #touchScrolled
     #lastVisibleRange
+    #selectionPin = null
+    #keptSelection = null
+    #clampingSel = false
+    #restoringSelScroll = false
     constructor() {
         super()
         this.#root.innerHTML = `<style>
@@ -681,7 +685,15 @@ export class Paginator extends HTMLElement {
         this.#footer = this.#root.getElementById('footer')
 
         this.#observer.observe(this.#container)
-        this.#container.addEventListener('scroll', () => this.dispatchEvent(new Event('scroll')))
+        this.#container.addEventListener('scroll', () => {
+            this.dispatchEvent(new Event('scroll'))
+            if (this.scrolled || this.#restoringSelScroll || this.#selectionPin == null) return
+            if (!this.#selectionActive()) return
+            if (Math.abs(this.containerPosition - this.#selectionPin) < 0.5) return
+            this.#restoringSelScroll = true
+            this.containerPosition = this.#selectionPin
+            this.#restoringSelScroll = false
+        })
         this.#container.addEventListener('scroll', debounce(() => {
             if (this.scrolled) {
                 if (this.#justAnchored) this.#justAnchored = false
@@ -713,7 +725,8 @@ export class Paginator extends HTMLElement {
             doc.addEventListener('keydown', () => isKeyboardSelecting = true)
             doc.addEventListener('keyup', () => isKeyboardSelecting = false)
             doc.addEventListener('selectionchange', () => {
-                if (this.scrolled) return
+                if (this.scrolled || this.#clampingSel) return
+                this.#clampSelectionToPage(doc)
                 const range = this.#lastVisibleRange
                 if (!range) return
                 const sel = doc.getSelection()
@@ -1195,7 +1208,72 @@ export class Paginator extends HTMLElement {
             overscroll: 0,
             startPage: this.page,
             startPos: this.containerPosition,
+            x0: touch?.screenX, y0: touch?.screenY,
+            t0: e.timeStamp,
+            selecting: this.#selectionActive(),
         }
+    }
+    #selectionActive() {
+        const selection = this.#view?.document?.getSelection?.()
+        return !!(selection && selection.rangeCount > 0 && !selection.isCollapsed)
+    }
+    #clampSelectionToPage(doc) {
+        const sel = doc.getSelection?.()
+        if (!sel?.rangeCount || sel.isCollapsed) {
+            this.#selectionPin = null
+            this.#keptSelection = null
+            return
+        }
+        if (this.#selectionPin == null) this.#selectionPin = this.containerPosition
+        const win = doc.defaultView
+        const rect = this.#focusCaretRect(doc, sel)
+        const outside = !!(rect && win && (
+            rect.left > win.innerWidth + 16
+            || rect.right < -16
+            || rect.top > win.innerHeight + 28
+            || rect.bottom < -28
+        ))
+        if (!outside) {
+            try { this.#keptSelection = sel.getRangeAt(0).cloneRange() } catch { /* ignore */ }
+            return
+        }
+        const kept = this.#keptSelection
+        if (!kept) return
+        this.#clampingSel = true
+        try {
+            const backward = selectionIsBackward(sel)
+            sel.removeAllRanges()
+            if (backward && typeof sel.extend === 'function') {
+                sel.collapse(kept.endContainer, kept.endOffset)
+                sel.extend(kept.startContainer, kept.startOffset)
+            } else sel.addRange(kept)
+        } catch { /* keep the browser range */ }
+        finally { this.#clampingSel = false }
+    }
+    #focusCaretRect(doc, sel) {
+        const node = sel.focusNode
+        if (!node) return null
+        const range = doc.createRange()
+        try {
+            if (node.nodeType === 3) {
+                const len = node.length || 0
+                const at = Math.max(0, Math.min(len, sel.focusOffset || 0))
+                const next = Math.min(len, at + 1)
+                if (next > at) {
+                    range.setStart(node, at)
+                    range.setEnd(node, next)
+                } else {
+                    range.setStart(node, Math.max(0, at - 1))
+                    range.setEnd(node, at)
+                }
+            } else {
+                range.setStart(node, sel.focusOffset || 0)
+                range.collapse(true)
+            }
+        } catch { return null }
+        const rect = range.getBoundingClientRect()
+        if (!rect || (!rect.width && !rect.height && !rect.left && !rect.top)) return null
+        return rect
     }
     #onTouchMove(e) {
         const state = this.#touchState
@@ -1206,9 +1284,11 @@ export class Paginator extends HTMLElement {
             if (this.#touchScrolled) e.preventDefault()
             return
         }
-        const doc = this.#view?.document
-        const selection = doc?.getSelection()
-        if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+        if (this.#selectionActive()) state.selecting = true
+        if (state.selecting) {
+            const pin = state.startPos
+            if (pin != null && this.containerPosition !== pin) this.containerPosition = pin
+            this.#touchScrolled = false
             return
         }
         const touch = e.changedTouches[0]
@@ -1248,6 +1328,20 @@ export class Paginator extends HTMLElement {
         }
         if (this.scrolled) return
 
+        const held = Math.max(1, e.timeStamp - (state.t0 ?? state.t))
+        const travel = Math.hypot((state.x0 ?? state.x) - x, (state.y0 ?? state.y) - y)
+        if (!this.#touchScrolled && travel < 36) {
+            state.x = x
+            state.y = y
+            state.t = e.timeStamp
+            return
+        }
+        if (!this.#touchScrolled && travel / held < 0.55) {
+            state.selecting = true
+            if (this.#selectionPin == null) this.#selectionPin = state.startPos
+            return
+        }
+
         // Horizontal books: only follow a predominantly horizontal finger.
         // Vertical toolbar-toggle swipes used to drag + snap on lift-off
         // jitter (readest#5185).
@@ -1274,7 +1368,12 @@ export class Paginator extends HTMLElement {
         const state = this.#touchState
         const overscroll = state?.overscroll || 0
         const touchScrolled = this.#touchScrolled
+        const selecting = state?.selecting || this.#selectionActive()
         this.#touchScrolled = false
+        if (selecting) {
+            if (state?.startPos != null) this.containerPosition = state.startPos
+            return
+        }
         if (this.scrolled) {
             const thresh = 56
             if (overscroll > thresh && this.#adjacentIndex(1) != null) void this.next()

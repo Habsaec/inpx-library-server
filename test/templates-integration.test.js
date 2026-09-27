@@ -264,12 +264,12 @@ test('renderHome returns home page HTML', async () => {
     sections: {},
     hasContinueData: true
   });
-  assert.ok(withContinue.includes('data-home-recommendations'));
-  assert.ok(!withContinue.includes('data-home-recommendations-grid'));
   assert.ok(withContinue.includes('data-home-continue'));
-  assert.ok(withContinue.includes('data-home-continue-grid'));
-  assert.ok(withContinue.indexOf('data-home-recommendations') < withContinue.indexOf('data-home-continue'));
-  assert.ok(withContinue.lastIndexOf('href="/library/recent"') < withContinue.indexOf('data-home-continue-grid'));
+  assert.ok(!withContinue.includes('data-home-continue-grid'));
+  assert.ok(!withContinue.includes('data-home-continue-cta'));
+  assert.ok(withContinue.includes('data-home-recommendations-grid'));
+  assert.ok(withContinue.indexOf('data-home-continue') < withContinue.indexOf('data-home-recommendations'));
+  assert.ok(withContinue.lastIndexOf('href="/library/recent"') < withContinue.indexOf('data-home-recommendations-grid'));
 });
 
 test('renderBook returns book detail page', async () => {
@@ -285,7 +285,7 @@ test('renderBook returns book detail page', async () => {
   assert.ok(html.includes('Test Author'));
   const actionsStart = html.indexOf('class="actions actions-primary"');
   const actions = actionsStart >= 0 ? html.slice(actionsStart, actionsStart + 2500) : '';
-  const readAt = actions.search(/class="button button-primary"[^>]*>[^<]*(Читать книгу|Read book)/);
+  const readAt = actions.search(/class="button button-primary"[^>]*>(?:<svg[\s\S]*?<\/svg>)?[^<]*(Читать книгу|Read book)/);
   const downloadAt = actions.indexOf('download-menu-trigger');
   assert.ok(readAt >= 0 && downloadAt >= 0 && readAt < downloadAt, 'Read book should come before Download');
 });

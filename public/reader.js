@@ -1265,7 +1265,8 @@ import {
     const f = normalizeFraction(fraction);
     if (!seekBarUserActive) {
       currentFraction = f;
-      const pctDisplay = String(fractionToProgress(f));
+      // fractionToProgress даёт 0.0001% для sync-контракта; людям показываем одну десятую.
+      const pctDisplay = (Math.round(fractionToProgress(f) * 10) / 10).toFixed(1).replace(/\.0$/, '');
       if (seekBar) seekBar.value = f;
       updateSeekbar();
       if (pctLabel) pctLabel.textContent = pctDisplay + '%';
@@ -3954,7 +3955,7 @@ import {
       const fb2Entry = entries.find((entry) => /\.fb2$/i.test(String(entry.filename || '')));
       if (fb2Entry) {
         await reader.close();
-        return 'fb2';
+        return 'fb2.zip';
       }
       await reader.close();
     } catch {
@@ -3965,7 +3966,8 @@ import {
 
   /** Определяет реальный формат по содержимому — важно, если ext в URL/профиле неверный. */
   async function sniffBookExt(buffer, fallbackExt) {
-    const fb = String(fallbackExt || 'fb2').toLowerCase().replace(/^\./, '').replace(/\.zip$/, '');
+    const raw = String(fallbackExt || 'fb2').toLowerCase().replace(/^\./, '');
+    const fb = raw === 'zip' ? 'zip' : raw.replace(/\.zip$/, '');
     if (!buffer || buffer.byteLength < 4) return fb || 'fb2';
     const h = new Uint8Array(buffer);
     if (h[0] === 0x25 && h[1] === 0x50 && h[2] === 0x44 && h[3] === 0x46) return 'pdf';
@@ -3981,7 +3983,7 @@ import {
       const zipKind = await inspectZipBookKind(buffer);
       if (zipKind) return zipKind;
       if (fb.includes('epub')) return 'epub';
-      if (fb === 'fb2' || fb === 'fbz') return 'fb2';
+      if (fb === 'fb2' || fb === 'fbz' || fb === 'zip' || raw === 'fb2.zip') return 'fb2.zip';
       if (fb.includes('mobi') || fb.includes('azw')) return fb;
       return 'epub';
     }

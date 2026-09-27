@@ -112,12 +112,23 @@ const isZip = async file => {
 const isCBZ = ({ name, type }) =>
     type === 'application/vnd.comicbook+zip' || name.endsWith('.cbz')
 
+const isTXT = ({ name, type }) =>
+    type === 'text/plain' || String(name || '').toLowerCase().endsWith('.txt')
+
+const isPDF = async file => {
+    const arr = new Uint8Array(await file.slice(0, 5).arrayBuffer())
+    return arr[0] === 0x25 && arr[1] === 0x50 && arr[2] === 0x44 && arr[3] === 0x46 && arr[4] === 0x2d
+}
+
 const isFB2 = ({ name, type }) =>
     type === 'application/x-fictionbook+xml' || name.endsWith('.fb2')
 
 const isFBZ = ({ name, type }) =>
     type === 'application/x-zip-compressed-fb2'
     || name.endsWith('.fb2.zip') || name.endsWith('.fbz')
+
+const zipFb2Entry = entries =>
+    entries.find(entry => !entry.directory && /\.fb2$/i.test(String(entry.filename || '')))
 
 const makeZipLoader = async file => {
     const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } =
@@ -168,7 +179,7 @@ const fetchFile = async url => {
     return new File([await res.blob()], new URL(res.url).pathname)
 }
 
-export const makeBook = async file => {
+export const makeBook = async (file, options = {}) => {
     if (typeof file === 'string') file = await fetchFile(file)
     let book
     if (file.isDirectory) {
@@ -183,10 +194,10 @@ export const makeBook = async file => {
             const { makeComicBook } = await import('./comic-book.js')
             book = makeComicBook(loader, file)
         }
-        else if (isFBZ(file)) {
+        else if (isFBZ(file) || zipFb2Entry(loader.entries)) {
             const { makeFB2 } = await import('./fb2.js?v=paper-flow')
             const { entries } = loader
-            const entry = entries.find(entry => entry.filename.endsWith('.fb2'))
+            const entry = zipFb2Entry(entries)
             const blob = await loader.loadBlob((entry ?? entries[0]).filename)
             book = await makeFB2(blob)
         }
@@ -194,6 +205,14 @@ export const makeBook = async file => {
             const { EPUB } = await import('./epub.js')
             book = await new EPUB(loader).init()
         }
+    }
+    else if (await isPDF(file)) {
+        const { makePDF } = await import('./pdf.js')
+        book = await makePDF(file, options)
+    }
+    else if (isTXT(file)) {
+        const { makeTXT } = await import('./txt.js')
+        book = await makeTXT(file)
     }
     else {
         const { isMOBI, MOBI } = await import('./mobi.js')
@@ -316,10 +335,10 @@ export class View extends HTMLElement {
             this.renderer.goTo(resolved)
         })
     }
-    async open(book) {
+    async open(book, options) {
         if (typeof book === 'string'
         || typeof book.arrayBuffer === 'function'
-        || book.isDirectory) book = await makeBook(book)
+        || book.isDirectory) book = await makeBook(book, options)
         this.book = book
         this.language = languageInfo(book.metadata?.language)
 
@@ -346,8 +365,9 @@ export class View extends HTMLElement {
         if (this.isFixedLayout) {
             await import('./fixed-layout.js')
             this.renderer = document.createElement('foliate-fxl')
+            this.renderer.setAttribute('zoom', 'fit-page')
         } else {
-            await import('./paginator.js?v=swipe-4')
+            await import('./paginator.js?v=sel2')
             this.renderer = document.createElement('foliate-paginator')
         }
         this.renderer.setAttribute('exportparts', 'head,foot,filter,container')

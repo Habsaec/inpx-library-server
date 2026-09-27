@@ -8,6 +8,20 @@ import {
   formatLocaleDateShort, formatLocaleDateTimeShort, formatLanguageLabel,
   formatGenreLabel
 } from './shared.js';
+
+function renderCollapsibleAdminCard({ id, title, subtitle = '', body, open = false }) {
+  const openAttr = open ? ' open' : '';
+  return `
+    <details class="admin-card admin-card-collapsible" data-admin-collapse="${escapeHtml(id)}"${openAttr}>
+      <summary>
+        <div class="admin-card-title">${escapeHtml(title)}</div>
+        ${subtitle ? `<div class="admin-card-subtitle" style="margin-bottom:0;">${escapeHtml(subtitle)}</div>` : ''}
+      </summary>
+      <div class="admin-card-collapsible-body">
+        ${body}
+      </div>
+    </details>`;
+}
 import { getGenreGroups } from '../genre-map.js';
 import { config } from '../config.js';
 import {
@@ -217,7 +231,7 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
         })()}
         <span class="admin-chip" title="${escapeHtml(t('admin.statsLastIndexTitle'))}"><span data-operations-field="statsLastIndex">${escapeHtml(lastIndexSummary)}</span></span>
         <span class="admin-sep"></span>
-        <span class="admin-chip">${escapeHtml(tp('admin.uptime', { s: uptimeStr }))}</span>
+        <span class="admin-chip" data-operations-field="uptime">${escapeHtml(tp('admin.uptime', { s: uptimeStr }))}</span>
         <span class="admin-chip">${escapeHtml(tp('admin.ram', { mb: operations.memoryMB || t('common.dash') }))}</span>
         <span class="admin-chip">${escapeHtml(tp('admin.db', { mb: dbSizeMB }))}</span>
       </div>
@@ -310,7 +324,6 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
               </div>
             </div>
             <div class="monitor-foot">
-              <span class="muted" data-operations-field="monitorUptime">${escapeHtml(t('admin.monitor.uptime'))}: ${escapeHtml(uptimeStr)}</span>
               <span class="muted" data-operations-field="monitorUsers">${escapeHtml(t('admin.monitor.users'))}: ${escapeHtml(tp('admin.monitor.usersFmt', { total: (Number(operations.totalUsers) || 0).toLocaleString(loc), online: (Number(operations.onlineUsers) || 0).toLocaleString(loc) }))}</span>
             </div>
           </div>
@@ -358,11 +371,22 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
     <div class="admin-card">
       <div class="admin-card-title">${escapeHtml(t('admin.update.backupTitle'))}</div>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.update.backupSubtitle'))}</div>
-      <div class="admin-actions-row" style="margin-top:10px;">
+      <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
         <a class="button" href="/api/operations/backup">${escapeHtml(t('admin.update.downloadDb'))}</a>
+        <a class="button" href="/api/operations/users-export">${escapeHtml(t('admin.update.exportUsers'))}</a>
         <a class="button" href="/api/operations/settings-export?download=1">${escapeHtml(t('admin.update.exportJson'))}</a>
         <a class="button" href="/api/operations/settings-export" target="_blank" rel="noopener noreferrer">${escapeHtml(t('admin.update.openJson'))}</a>
       </div>
+      <form class="admin-field-group" style="margin-top:16px;" method="post" action="/api/operations/users-import" enctype="multipart/form-data" data-users-import>
+        ${csrfHiddenField(csrfToken)}
+        <span class="admin-field-hint">${escapeHtml(t('admin.update.importUsersHint'))}</span>
+        <div class="admin-actions-row" style="margin-top:8px;flex-wrap:wrap;">
+          <label for="users-import-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.update.importUsersPick'))}</label>
+          <input type="file" id="users-import-input" name="usersJson" accept="application/json,.json" style="display:none;">
+          <span id="users-import-name" class="muted"></span>
+          <button type="submit" id="users-import-btn" disabled>${escapeHtml(t('admin.update.importUsers'))}</button>
+        </div>
+      </form>
     </div>
     <div class="admin-card" style="margin-top:20px;">
       <div class="admin-card-title">${escapeHtml(t('admin.update.checkTitle'))}</div>
@@ -504,9 +528,12 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
       </form>
     </div>
 
-    <div class="admin-card">
-      <div class="admin-card-title">${escapeHtml(t('admin.oidc.title'))}</div>
-      <div class="admin-card-subtitle">${escapeHtml(t('admin.oidc.subtitle'))}</div>
+    ${renderCollapsibleAdminCard({
+      id: 'oidc',
+      title: t('admin.oidc.title'),
+      subtitle: t('admin.oidc.subtitle'),
+      open: Boolean(oidc?.enabled),
+      body: `
       <form method="POST" action="/admin/settings/oidc" data-track-dirty>
         ${csrfHiddenField(csrfToken)}
         <div class="admin-field-group" style="flex-direction:row;align-items:center;gap:10px;">
@@ -567,8 +594,8 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
         <div class="admin-actions-row">
           <button type="submit">${escapeHtml(t('admin.save'))}</button>
         </div>
-      </form>
-    </div>
+      </form>`
+    })}
 
     <div class="admin-card">
       <form method="post" action="/admin/settings/anonymous-access" class="admin-action-item" data-track-dirty>
@@ -798,7 +825,7 @@ export function renderAdminContent({
     return `
       <tr class="${checked ? '' : 'lang-row-disabled'}">
         <td data-label="" style="text-align:center">
-          <input type="checkbox" name="enabled_download_format" value="${escapeHtml(code)}" ${checked ? 'checked' : ''}>
+          <input type="checkbox" name="enabled_download_format" value="${escapeHtml(code)}" aria-label="${escapeHtml(FORMAT_LABELS[code] || code.toUpperCase())}" ${checked ? 'checked' : ''}>
         </td>
         <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(FORMAT_LABELS[code] || code.toUpperCase())}</td>
         <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(code)}</td>
@@ -811,7 +838,7 @@ export function renderAdminContent({
     return `
       <tr class="${checked ? '' : 'lang-row-disabled'}">
         <td data-label="" style="text-align:center">
-          <input type="checkbox" name="enabled_lang" value="${escapeHtml(lang.code)}" ${checked ? 'checked' : ''}>
+          <input type="checkbox" name="enabled_lang" value="${escapeHtml(lang.code)}" aria-label="${escapeHtml(label)}" ${checked ? 'checked' : ''}>
         </td>
         <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(label)}</td>
         <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(lang.code)}</td>
@@ -843,7 +870,7 @@ export function renderAdminContent({
       return `
         <tr class="${checked ? '' : 'lang-row-disabled'}">
           <td data-label="" style="text-align:center">
-            <input type="checkbox" name="enabled_genre" value="${escapeHtml(genre.code)}" ${checked ? 'checked' : ''}>
+            <input type="checkbox" name="enabled_genre" value="${escapeHtml(genre.code)}" aria-label="${escapeHtml(label)}" ${checked ? 'checked' : ''}>
           </td>
           <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(label)}</td>
           <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(genre.code)}</td>
@@ -853,7 +880,7 @@ export function renderAdminContent({
     genreGroupsHtml.push(`
       <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:6px">
         <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
-          <input type="checkbox" style="flex:none;width:auto" class="genre-group-toggle" data-group="${gid}" ${allChecked ? 'checked' : ''} ${!allChecked && !noneChecked ? 'data-indeterminate="1"' : ''} onclick="event.stopPropagation()">
+          <input type="checkbox" style="flex:none;width:auto" class="genre-group-toggle" data-group="${gid}" aria-label="${escapeHtml(t('admin.content.toggleAll'))}" ${allChecked ? 'checked' : ''} ${!allChecked && !noneChecked ? 'data-indeterminate="1"' : ''} onclick="event.stopPropagation()">
           <span style="flex:1 1 auto;font-weight:600;font-size:15px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escapeHtml(groupName)}</span>
           <span style="flex:none;font-size:13px;color:var(--muted)">${items.length}${excludedInGroup > 0 ? ' / -' + excludedInGroup : ''}</span>
           <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>
@@ -887,7 +914,7 @@ export function renderAdminContent({
       return `
         <tr class="${checked ? '' : 'lang-row-disabled'}">
           <td data-label="" style="text-align:center">
-            <input type="checkbox" name="enabled_genre" value="${escapeHtml(genre.code)}" ${checked ? 'checked' : ''}>
+            <input type="checkbox" name="enabled_genre" value="${escapeHtml(genre.code)}" aria-label="${escapeHtml(label)}" ${checked ? 'checked' : ''}>
           </td>
           <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(label)}</td>
           <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(genre.code)}</td>
@@ -897,7 +924,7 @@ export function renderAdminContent({
     genreGroupsHtml.push(`
       <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:6px">
         <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
-          <input type="checkbox" style="flex:none;width:auto" class="genre-group-toggle" data-group="${gid}" ${allChecked ? 'checked' : ''} ${!allChecked && !noneChecked ? 'data-indeterminate="1"' : ''} onclick="event.stopPropagation()">
+          <input type="checkbox" style="flex:none;width:auto" class="genre-group-toggle" data-group="${gid}" aria-label="${escapeHtml(t('admin.content.toggleAll'))}" ${allChecked ? 'checked' : ''} ${!allChecked && !noneChecked ? 'data-indeterminate="1"' : ''} onclick="event.stopPropagation()">
           <span style="flex:1 1 auto;font-weight:600;font-size:15px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escapeHtml(t('genre.other'))}</span>
           <span style="flex:none;font-size:13px;color:var(--muted)">${uncategorized.length}${excludedInGroup > 0 ? ' / -' + excludedInGroup : ''}</span>
           <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>

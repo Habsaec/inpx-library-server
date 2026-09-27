@@ -67,8 +67,8 @@ test('adjustLightTextForGlassOpacity subtly darkens text without shadow', () => 
 
 test('fontSizeToCssVars scales typography from base px', () => {
   const vars = fontSizeToCssVars(16);
-  assert.ok(vars.includes('--font-size-base:16px'));
-  assert.ok(vars.includes('--font-size-sm:14px'));
-  assert.ok(vars.includes('--font-size-lg:18px'));
-  assert.equal(fontSizeToCssVars(DEFAULT_FONT_SIZE_PX).includes('--font-size-base:14px'), true);
+  assert.ok(vars.includes('--font-size-base:1rem'));
+  assert.ok(vars.includes('--font-size-sm:0.875rem'));
+  assert.ok(vars.includes('--font-size-lg:1.125rem'));
+  assert.equal(fontSizeToCssVars(DEFAULT_FONT_SIZE_PX).includes('--font-size-base:0.875rem'), true);
 });

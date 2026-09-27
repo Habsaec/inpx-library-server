@@ -448,17 +448,20 @@ export function renderSortControl({ action, sort, order = '', options, query = '
   const natural = SORT_NATURAL_DIR[sort] || 'ASC';
   const effective = order === 'asc' ? 'ASC' : order === 'desc' ? 'DESC' : natural;
   const nextOrder = effective === 'ASC' ? 'desc' : 'asc';
-  const icon = effective === 'ASC' ? '▲' : '▼';
+  const toggleLabel = nextOrder === 'asc' ? t('sort.toggleAsc') : t('sort.toggleDesc');
+  const icon = effective === 'ASC'
+    ? '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>'
+    : '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M4 9l4 4 4-4"/></svg>';
   return `
-    <form class="search-form" action="${action}" method="get" style="max-width:340px;display:flex;gap:6px;align-items:center;">
+    <form class="search-form sort-control" action="${action}" method="get">
       ${query ? `<input type="hidden" name="q" value="${escapeHtml(query)}">` : ''}
       ${field ? `<input type="hidden" name="field" value="${escapeHtml(field)}">` : ''}
       ${genre ? `<input type="hidden" name="genre" value="${escapeHtml(genre)}">` : ''}
       ${extraFields}
-      <select name="sort" onchange="this.form.submit()" style="flex:1;">
+      <select name="sort" onchange="this.form.submit()" aria-label="${escapeHtml(t('sort.label'))}">
         ${options.map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === sort ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
       </select>
-      <button type="submit" name="order" value="${nextOrder}" class="button" style="padding:4px 10px;font-size:14px;line-height:1;" title="${escapeHtml(order === nextOrder ? '' : nextOrder === 'asc' ? 'По возрастанию' : 'По убыванию')}">${icon}</button>
+      <button type="submit" name="order" value="${nextOrder}" class="button sort-control-order" title="${escapeHtml(toggleLabel)}" aria-label="${escapeHtml(toggleLabel)}">${icon}</button>
     </form>`;
 }
 
@@ -954,17 +957,21 @@ export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', e
   }
   const isSeries = facetBasePath.includes('series');
   const seriesBadge = (name) => isSeries && readSeriesNames && readSeriesNames.has(name) ? `<span class="read-series-badge">${READ_CHECK_SVG}</span>` : '';
+  const isAuthors = facetBasePath.includes('/authors');
   return `
     <div class="table-list entity-list">
-      ${items.map((item) => `
+      ${items.map((item) => {
+        const rawLabel = item.displayName || item.name;
+        const label = isAuthors ? (formatSingleAuthorName(rawLabel) || rawLabel) : rawLabel;
+        return `
         <a class="table-row table-row-link" href="${facetBasePath}/${encodeURIComponent(item.name)}">
           <div style="display:flex;align-items:center">
-            <span><strong>${escapeHtml(item.displayName || item.name)}</strong><br>
+            <span><strong>${escapeHtml(label)}</strong><br>
             <span class="muted">${countLabel('book', item.bookCount)} ${escapeHtml(t('entity.inLibrary'))}</span></span>
             ${seriesBadge(item.name)}
           </div>
-        </a>
-      `).join('')}
+        </a>`;
+      }).join('')}
     </div>`;
 }
 

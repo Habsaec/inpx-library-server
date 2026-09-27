@@ -24,6 +24,10 @@ import {
   beginExclusiveOperation,
   endExclusiveOperation,
   refreshCatalogBookCounts,
+  adjustCatalogCountsForBook,
+  isBookInActiveView,
+  getLibraryStatsSnapshot,
+  writeLibraryStatsSnapshot,
   suppressBook,
   getSuppressedBookIds,
   invalidateReadCache,
@@ -54,7 +58,8 @@ import {
 } from './search-enhance.js';
 export { clearWarmSearchBooksPages, resolveSearchRouteField, warmupSearchFts };
 import { config } from './config.js';
-import { formatGenreLabel, formatGenreList } from './genre-map.js';
+import { PAGE_CACHE_TTL_MS } from './constants.js';
+import { formatGenreLabel, formatGenreList, capitalizeAuthorNamePart } from './genre-map.js';
 import { getAvailableDownloadFormats, FORMAT_LABELS } from './download-formats.js';
 import { t } from './i18n.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
@@ -124,12 +129,17 @@ const archiveStemLookupCache = new Map();
 /* ── Reset cached prepared statements when active_books VIEW is rebuilt ── */
 function resetInpxPreparedStatements() {
   _stmtGetBookById = null;
+  _browseTotalMemo = null;
+  _authorsTotalMemo.clear();
+  _recentCutoffMemo = null;
   _stmtGenresGroupedCount = null;
   _stmtGenresGroupedName = null;
   _stmtDupSummary = null;
   _dupSummaryCache = null;
-  _stmtDupGroupsAll = null;
-  _dupGroupsCache = null;
+  _stmtDupLibSummary = null;
+  _stmtDupTitlePairSummary = null;
+  _stmtDupAuthorTotal = null;
+  _stmtDupAuthorPage = null;
   _stmtLibSections = null;
   _stmtContinueCount = null;
   _stmtContinueItems = null;
@@ -145,7 +155,6 @@ function resetInpxPreparedStatements() {
   _stmtIsFavAuthor = null;
   _stmtIsFavSeries = null;
   _stmtIsBookmarked = null;
-  _stmtGetStats = null;
   _stmtIsBookRead = null;
   _stmtIsSeriesFullyRead = null;
   _stmtFacetCountLang = null;
@@ -222,7 +231,8 @@ export function invalidateDuplicatesCache() {
   facetBooksCache.clear();
   facetSummaryCache.clear();
   _dupSummaryCache = null;
-  _dupGroupsCache = null;
+  _browseTotalMemo = null;
+  _authorsTotalMemo.clear();
 }
 
 /**
@@ -256,14 +266,90 @@ export function repairBookJunctionLinks() {
 let _dupSummaryCache = null;
 const DUP_SUMMARY_TTL_MS = 60_000;
 let _stmtDupSummary = null;
+let _stmtDupLibSummary = null;
+let _stmtDupTitlePairSummary = null;
+let _stmtDupAuthorTotal = null;
+let _stmtDupAuthorPage = null;
 
-/* Кеш ВСЕХ групп дубликатов (без фильтра): один проход GROUP BY + join, затем
-   нарезка/фильтрация в памяти. Фильтр НЕ исполняется в SQL: lower_unicode() —
-   это JS-функция, и LIKE по ней вызывает JS на каждую строку таблицы, что на
-   больших библиотеках синхронно блокирует event loop. */
-let _dupGroupsCache = null;
-const DUP_GROUPS_TTL_MS = 30_000;
-let _stmtDupGroupsAll = null;
+const DUP_FORMAT_RANK_SQL = `CASE lower(COALESCE(ext, ''))
+  WHEN 'epub' THEN 1
+  WHEN 'fb2' THEN 2
+  WHEN 'mobi' THEN 3
+  WHEN 'azw3' THEN 4
+  WHEN 'djvu' THEN 5
+  WHEN 'pdf' THEN 6
+  WHEN 'doc' THEN 7
+  WHEN 'docx' THEN 8
+  WHEN 'rtf' THEN 9
+  WHEN 'txt' THEN 10
+  ELSE 99
+END`;
+
+const DUP_RANK_ORDER_SQL = `${DUP_FORMAT_RANK_SQL} ASC, COALESCE(source_id, 0) DESC, COALESCE(size, 0) DESC, id DESC`;
+
+/**
+ * Копии, которые автоочистка скроет: одинаковые title+author, тот же lib_id
+ * в двух источниках на одном томе архива, либо ровно две книги с одним
+ * названием из двух источников при разном авторе (Кова / Ковалькова).
+ */
+const DUP_LOSER_ROWS_SQL = `
+  SELECT id, COALESCE(title, '') AS title, COALESCE(authors, '') AS authors,
+         title_sort, COALESCE(author_sort, '') AS author_sort
+  FROM (
+    SELECT id, title, authors, title_sort, author_sort,
+           ROW_NUMBER() OVER (
+             PARTITION BY title_sort, COALESCE(author_sort, '')
+             ORDER BY ${DUP_RANK_ORDER_SQL}
+           ) AS rn
+    FROM active_books
+    WHERE title_sort IS NOT NULL AND title_sort != ''
+  ) ranked
+  WHERE rn > 1
+  UNION
+  SELECT id, COALESCE(title, '') AS title, COALESCE(authors, '') AS authors,
+         title_sort, COALESCE(author_sort, '') AS author_sort
+  FROM (
+    SELECT b.id, b.title, b.authors, b.title_sort, b.author_sort,
+           ROW_NUMBER() OVER (
+             PARTITION BY b.lib_id, archive_stem(b.archive_name)
+             ORDER BY ${DUP_FORMAT_RANK_SQL.replace(/\bext\b/g, 'b.ext')} ASC,
+                      COALESCE(b.source_id, 0) DESC, COALESCE(b.size, 0) DESC, b.id DESC
+           ) AS rn
+    FROM active_books b
+    JOIN (
+      SELECT lib_id, archive_stem(archive_name) AS stem
+      FROM active_books
+      WHERE lib_id IS NOT NULL AND TRIM(lib_id) != ''
+      GROUP BY lib_id, stem
+      HAVING COUNT(*) > 1 AND COUNT(DISTINCT source_id) > 1
+    ) k ON k.lib_id = b.lib_id
+       AND k.stem = archive_stem(b.archive_name)
+  ) ranked_lib
+  WHERE rn > 1
+  UNION
+  SELECT id, COALESCE(title, '') AS title, COALESCE(authors, '') AS authors,
+         title_sort, COALESCE(author_sort, '') AS author_sort
+  FROM (
+    SELECT b.id, b.title, b.authors, b.title_sort, b.author_sort,
+           ROW_NUMBER() OVER (
+             PARTITION BY b.title_sort
+             ORDER BY ${DUP_FORMAT_RANK_SQL.replace(/\bext\b/g, 'b.ext')} ASC,
+                      COALESCE(b.source_id, 0) DESC, COALESCE(b.size, 0) DESC, b.id DESC
+           ) AS rn
+    FROM active_books b
+    JOIN (
+      SELECT title_sort
+      FROM active_books
+      WHERE title_sort IS NOT NULL AND title_sort != ''
+      GROUP BY title_sort
+      HAVING COUNT(*) = 2
+         AND COUNT(DISTINCT source_id) = 2
+         AND COUNT(DISTINCT COALESCE(author_sort, '')) > 1
+    ) k ON k.title_sort = b.title_sort
+  ) ranked_title
+  WHERE rn > 1
+`;
+
 function getDuplicatesSummary() {
   if (_dupSummaryCache && Date.now() < _dupSummaryCache.expiresAt) {
     return _dupSummaryCache.value;
@@ -273,15 +359,44 @@ function getDuplicatesSummary() {
     FROM (
       SELECT COUNT(*) AS c FROM active_books
       WHERE title_sort IS NOT NULL AND title_sort != ''
-      GROUP BY title_sort, authors
+      GROUP BY title_sort, COALESCE(author_sort, '')
       HAVING COUNT(*) > 1
     )
   `);
-  const row = _stmtDupSummary.get() || { totalBooks: 0, totalGroups: 0 };
-  const value = {
-    totalBooks: Number(row.totalBooks) || 0,
-    totalGroups: Number(row.totalGroups) || 0
-  };
+  const ta = _stmtDupSummary.get() || { totalBooks: 0, totalGroups: 0 };
+  const enabledSources = Number(db.prepare('SELECT COUNT(*) AS c FROM sources WHERE enabled = 1').get()?.c) || 0;
+  let lib = { totalBooks: 0, totalGroups: 0 };
+  let pairs = { totalBooks: 0, totalGroups: 0 };
+  if (enabledSources >= 2) {
+    _stmtDupLibSummary ??= db.prepare(`
+      SELECT COALESCE(SUM(c), 0) AS totalBooks, COUNT(*) AS totalGroups
+      FROM (
+        SELECT COUNT(*) AS c FROM active_books
+        WHERE lib_id IS NOT NULL AND TRIM(lib_id) != ''
+        GROUP BY lib_id, archive_stem(archive_name)
+        HAVING COUNT(*) > 1 AND COUNT(DISTINCT source_id) > 1
+      )
+    `);
+    _stmtDupTitlePairSummary ??= db.prepare(`
+      SELECT COALESCE(SUM(c), 0) AS totalBooks, COUNT(*) AS totalGroups
+      FROM (
+        SELECT COUNT(*) AS c FROM active_books
+        WHERE title_sort IS NOT NULL AND title_sort != ''
+        GROUP BY title_sort
+        HAVING COUNT(*) = 2
+           AND COUNT(DISTINCT source_id) = 2
+           AND COUNT(DISTINCT COALESCE(author_sort, '')) > 1
+      )
+    `);
+    lib = _stmtDupLibSummary.get() || lib;
+    pairs = _stmtDupTitlePairSummary.get() || pairs;
+  }
+  const totalGroups = (Number(ta.totalGroups) || 0) + (Number(lib.totalGroups) || 0) + (Number(pairs.totalGroups) || 0);
+  const totalBooks = (Number(ta.totalBooks) || 0) + (Number(lib.totalBooks) || 0) + (Number(pairs.totalBooks) || 0);
+  const willDelete = Math.max(0, (Number(ta.totalBooks) || 0) - (Number(ta.totalGroups) || 0))
+    + Math.max(0, (Number(lib.totalBooks) || 0) - (Number(lib.totalGroups) || 0))
+    + Math.max(0, (Number(pairs.totalBooks) || 0) - (Number(pairs.totalGroups) || 0));
+  const value = { totalBooks, totalGroups, willDelete };
   _dupSummaryCache = { value, expiresAt: Date.now() + DUP_SUMMARY_TTL_MS };
   return value;
 }
@@ -396,10 +511,20 @@ export function formatSingleAuthorName(value = '') {
     .filter(Boolean);
 
   if (!parts.length) {
-    return raw;
+    return capitalizeAuthorNamePart(raw);
   }
 
-  return parts.join(' ');
+  return parts.map((part) => capitalizeAuthorNamePart(part)).join(' ');
+}
+
+function withAuthorDisplayNames(items) {
+  if (!Array.isArray(items)) return items;
+  for (const item of items) {
+    if (!item) continue;
+    const formatted = formatSingleAuthorName(item.displayName || item.name);
+    if (formatted) item.displayName = formatted;
+  }
+  return items;
 }
 
 export function splitAuthorValues(value) {
@@ -1346,7 +1471,7 @@ function paginateAuthorSearchMatches(matched, { offset, pageSize, sort, order, l
     total: rows.length,
     items: rows.slice(offset, offset + pageSize).map(({ name, displayName, sortKey, bookCount }) => ({
       name,
-      displayName,
+      displayName: formatSingleAuthorName(displayName || name) || displayName,
       sortKey,
       bookCount
     }))
@@ -1473,10 +1598,11 @@ function preferredAuthorAlias(name) {
   _stmtPreferredAuthorAlias ??= db.prepare(`
     SELECT a2.name AS name
     FROM authors a
-    JOIN authors a2 ON a2.search_name = a.search_name
+    JOIN authors a2 ON (
+      (a.search_name IS NOT NULL AND TRIM(a.search_name) != '' AND a2.search_name = a.search_name)
+      OR (a.sort_name IS NOT NULL AND TRIM(a.sort_name) != '' AND a2.sort_name = a.sort_name)
+    )
     WHERE a.name = ?
-      AND a.search_name IS NOT NULL
-      AND TRIM(a.search_name) != ''
       AND a2.book_count > 0
     ORDER BY a2.book_count DESC, length(a2.name) DESC
     LIMIT 1
@@ -1495,6 +1621,10 @@ function authorAliasMatchSql(table = 'a') {
         a_key.search_name IS NOT NULL AND TRIM(a_key.search_name) != ''
         AND a_alias.search_name = a_key.search_name
       )
+      OR (
+        a_key.sort_name IS NOT NULL AND TRIM(a_key.sort_name) != ''
+        AND a_alias.sort_name = a_key.sort_name
+      )
     )
     WHERE a_key.name = ?
   )`;
@@ -1502,19 +1632,28 @@ function authorAliasMatchSql(table = 'a') {
 
 /** Keep one row per search_name — the alias with more books (same order as preferredAuthorAlias). */
 function preferredAuthorRowSql(table = 'a') {
-  return `${table}.name = (
-    SELECT a_pref.name
-    FROM authors a_pref
-    WHERE a_pref.book_count > 0
-      AND (
-        a_pref.id = ${table}.id
-        OR (
-          ${table}.search_name IS NOT NULL AND TRIM(${table}.search_name) != ''
-          AND a_pref.search_name = ${table}.search_name
+  /* Сортирующий подзапрос нужен только у ~1% авторов с алиасами (одинаковый search_name);
+     для остальных достаточно одного probe по idx_authors_search_name — иначе листание
+     180k авторов стоило ~0.4 с на страницу (book_count > 0 гарантирует caller). */
+  return `(
+    ${table}.search_name IS NULL OR TRIM(${table}.search_name) = ''
+    OR NOT EXISTS (
+      SELECT 1 FROM authors a_other
+      WHERE a_other.search_name = ${table}.search_name
+        AND a_other.id != ${table}.id
+        AND a_other.book_count > 0
+    )
+    OR ${table}.name = (
+      SELECT a_pref.name
+      FROM authors a_pref
+      WHERE a_pref.book_count > 0
+        AND (
+          a_pref.id = ${table}.id
+          OR a_pref.search_name = ${table}.search_name
         )
-      )
-    ORDER BY a_pref.book_count DESC, length(a_pref.name) DESC
-    LIMIT 1
+      ORDER BY a_pref.book_count DESC, length(a_pref.name) DESC
+      LIMIT 1
+    )
   )`;
 }
 
@@ -3001,7 +3140,8 @@ function resolveSort(sort, order = '') {
     recent: 'COALESCE(NULLIF(date, \'\'), imported_at) DESC, imported_at DESC, id DESC',
     title: 'title_sort ASC, title COLLATE NOCASE ASC, id DESC',
     author: 'author_sort ASC, title_sort ASC, id DESC',
-    series: 'series_sort ASC, CAST(series_index AS INTEGER) ASC, title_sort ASC, id DESC',
+    /* без CAST: series_index — числовой INTEGER-столбец, а CAST ломает idx_books_series_full (полная сортировка) */
+    series: 'series_sort ASC, series_index ASC, title_sort ASC, id DESC',
     rating: 'lib_rate DESC, title_sort ASC, id DESC'
   };
   return applyOrder(sortMap[sort] || sortMap.title, order);
@@ -3012,10 +3152,16 @@ function resolveBookAliasSort(sort, alias = 'b', order = '') {
     recent: `COALESCE(NULLIF(${alias}.date, ''), ${alias}.imported_at) DESC, ${alias}.imported_at DESC, ${alias}.id DESC`,
     title: `${alias}.title_sort ASC, ${alias}.title COLLATE NOCASE ASC, ${alias}.id DESC`,
     author: `${alias}.author_sort ASC, ${alias}.title_sort ASC, ${alias}.id DESC`,
-    series: `${alias}.series_sort ASC, CAST(${alias}.series_index AS INTEGER) ASC, ${alias}.title_sort ASC, ${alias}.id DESC`,
+    series: `${alias}.series_sort ASC, ${alias}.series_index ASC, ${alias}.title_sort ASC, ${alias}.id DESC`,
     rating: `${alias}.lib_rate DESC, ${alias}.title_sort ASC, ${alias}.id DESC`
   };
   return applyOrder(sortMap[sort] || sortMap.title, order);
+}
+
+// INPX «0» в номере серии означает «без номера» — не показываем «#0».
+function normalizeSeriesNo(value) {
+  const s = String(value ?? '').trim();
+  return s === '' || /^0+(\.0+)?$/.test(s) ? '' : s;
 }
 
 function mapBookListRow(row) {
@@ -3026,7 +3172,7 @@ function mapBookListRow(row) {
   return {
     ...row,
     deleted: Number(row.deleted) ? 1 : 0,
-    seriesNo: row.seriesNo || '',
+    seriesNo: normalizeSeriesNo(row.seriesNo),
     genresList: splitFacetValues(row.genres),
     genresDisplayList: formatGenreList(row.genres),
     authorsList: splitAuthorValues(row.authors),
@@ -3047,12 +3193,14 @@ function attachSeriesListsToBooks(books) {
   const map = new Map();
   for (const r of rows) {
     if (!map.has(r.bookId)) map.set(r.bookId, []);
-    map.get(r.bookId).push({ name: r.name, displayName: r.displayName, seriesNo: r.seriesNo || '' });
+    map.get(r.bookId).push({ name: r.name, displayName: r.displayName, seriesNo: normalizeSeriesNo(r.seriesNo) });
   }
+  const sameSeries = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   for (const b of books) {
     b.seriesList = map.get(b.id) || [];
-    if (b.series && !b.seriesList.some((s) => s.name === b.series)) {
-      b.seriesList.push({ name: b.series, displayName: b.series, seriesNo: b.seriesNo || '' });
+    // books.series и series_catalog могут расходиться регистром/пробелами — иначе серия дублируется в UI.
+    if (b.series && !b.seriesList.some((s) => sameSeries(s.name, b.series) || sameSeries(s.displayName, b.series))) {
+      b.seriesList.push({ name: b.series, displayName: b.series, seriesNo: normalizeSeriesNo(b.seriesNo) });
     }
     if (!b.series && b.seriesList.length > 0) {
       b.series = b.seriesList[0].name;
@@ -3583,6 +3731,17 @@ function tryTypoCorrectedSearchBooks(args) {
   return null;
 }
 
+let _browseTotalMemo = null;
+/** listAuthors без поиска: total по букве → { total, at } */
+const _authorsTotalMemo = new Map();
+
+function enabledSourcesHaveMixedSidecarFlag() {
+  const n = db.prepare(`
+    SELECT COUNT(DISTINCT COALESCE(flibusta_sidecar, 0)) AS n FROM sources WHERE enabled = 1
+  `).get()?.n;
+  return Number(n) > 1;
+}
+
 export function searchBooks({
   query = '', page = 1, pageSize = 24, field = 'all', sort = 'title', order = '',
   genre = '', letter = '', lang = '', format = '', year = 0, minRate = 0, hasSeries = null,
@@ -3621,17 +3780,25 @@ export function searchBooks({
     for (const ef of extraFilters) { whereParts.push(ef.where.replace(/active_books\./g, 'b.')); whereParams.push(...ef.params); }
     const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     const gfParams = whereParams;
+    /* Ключ по s.flibusta_sidecar живёт в присоединённой таблице — с ним индекс books бесполезен и
+       каждая страница сортирует весь каталог (~1.2 с). Нужен он только если у включённых источников
+       флаг различается; при одном источнике ORDER BY совпадает с idx_books_recent_sort. */
     const listOrderBy =
-      sort === 'recent'
+      sort === 'recent' && enabledSourcesHaveMixedSidecarFlag()
         ? applyOrder('COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, \'\'), b.imported_at) DESC, b.imported_at DESC, b.id DESC', order)
         : resolveBookAliasSort(sort, 'b', order);
 
-    const { total } = resolveSqlTotal(
-      `SELECT COUNT(*) AS count FROM active_books b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
-      gfParams,
-      `SELECT 1 FROM active_books b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
-      gfParams
-    );
+    /* Без фильтров total одинаков для всех страниц листания — не считать 600k строк на каждую. */
+    const memoTotal = !whereSql && mode === 'exact';
+    const { total } = memoTotal && _browseTotalMemo && (Date.now() - _browseTotalMemo.at) < PAGE_CACHE_TTL_MS
+      ? _browseTotalMemo
+      : resolveSqlTotal(
+        `SELECT COUNT(*) AS count FROM active_books b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
+        gfParams,
+        `SELECT 1 FROM active_books b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
+        gfParams
+      );
+    if (memoTotal) _browseTotalMemo = { total, at: Date.now() };
 
     const items = db
       .prepare(
@@ -4087,6 +4254,8 @@ export function findDidYouMeanSuggestions(query = '', limit = 3) {
       `).all(prefix);
       for (const row of titleRows) {
         const part = String(row.token || '');
+        /* Стем-префикс введённого слова («плам» для «пламя») — не исправление опечатки. */
+        if (token.startsWith(part)) continue;
         const dist = levenshteinDistance(token, part);
         if (dist <= 0 || dist > maxDist) continue;
         const key = `title:${part}`;
@@ -4729,198 +4898,145 @@ export function getBookDuplicateCandidates(_bookId, _limit = 8) {
 
 // ─── Duplicate detection ─────────────────────────────────────────
 
-/* Фильтрация групп дубликатов в памяти. Один токен или несколько — все токены
-   должны присутствовать (AND) в названии ЛИБО в авторе. Фильтр работает на уровне
-   набора дубликатов (общий title_sort внутри автора): набор включается целиком,
-   если хотя бы одна его книга совпала. Чистый JS, без обращений к БД. */
-function filterDuplicateGroups(allGroups, normalizedFilter) {
-  const tokens = normalizedFilter.split(/\s+/).filter(Boolean);
-  if (!tokens.length) return allGroups;
-  const matchAll = (text) => {
-    const s = String(text || '').toLowerCase();
-    for (const tok of tokens) {
-      if (s.indexOf(tok) === -1) return false;
-    }
-    return true;
-  };
-  const out = [];
-  for (const g of allGroups) {
-    let keptItems = null;
-    let curKey = null;
-    let curSet = null;
-    let curMatch = false;
-    const flush = () => {
-      if (curSet && curMatch) {
-        if (!keptItems) keptItems = [];
-        for (const it of curSet) keptItems.push(it);
-      }
-    };
-    for (const it of g.items) {
-      const k = it.title_sort || '';
-      if (k !== curKey) { flush(); curKey = k; curSet = []; curMatch = false; }
-      curSet.push(it);
-      if (!curMatch && (matchAll(it.title) || matchAll(it.authors))) curMatch = true;
-    }
-    flush();
-    if (keptItems && keptItems.length) {
-      out.push({ key: g.key, title: g.title, authors: g.authors, items: keptItems });
-    }
-  }
-  return out;
-}
+const DUP_KEYS_CTE = `
+  dup_keys AS (
+    SELECT title_sort, COALESCE(author_sort, '') AS author_sort
+    FROM active_books
+    WHERE title_sort IS NOT NULL AND title_sort != ''
+    GROUP BY title_sort, COALESCE(author_sort, '')
+    HAVING COUNT(*) > 1
+  )`;
+
+const DUP_AUTHOR_FILTER_SQL = `(CAST(? AS INTEGER) = 0 OR instr(dk.author_sort, ?) > 0 OR instr(dk.title_sort, ?) > 0)`;
 
 export function getDuplicateGroups({ page = 1, pageSize = 50, filter = '' } = {}) {
-  const normalizedFilter = String(filter || '').trim().toLowerCase();
+  const needle = createSortKey(filter);
+  const hasFilter = needle ? 1 : 0;
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safePageSize = Math.max(1, Math.min(200, Math.floor(Number(pageSize) || 50)));
+  const offset = (safePage - 1) * safePageSize;
 
-  // Все группы (без фильтра) считаем один раз и кешируем. Сам фильтр применяем
-  // в памяти ниже — это исключает дорогие JS-вызовы lower_unicode() в SQL.
-  let allGroups;
-  if (_dupGroupsCache && Date.now() < _dupGroupsCache.expiresAt) {
-    allGroups = _dupGroupsCache.value;
-  } else {
-    _stmtDupGroupsAll ??= db.prepare(`
-      WITH dup_keys AS (
-        SELECT title_sort, COALESCE(authors, '') AS authors
-        FROM active_books
-        WHERE title_sort IS NOT NULL AND title_sort != ''
-        GROUP BY title_sort, authors
-        HAVING COUNT(*) > 1
-      )
-      SELECT b.id, b.title, b.authors, b.ext, b.lang, b.size, b.file_name, b.archive_name,
-             b.title_sort, b.source_id
-      FROM active_books b
-      JOIN dup_keys dk ON dk.title_sort = b.title_sort AND dk.authors = COALESCE(b.authors, '')
-      ORDER BY COALESCE(b.authors, '') ASC, b.title_sort ASC, b.ext ASC, b.id ASC
-    `);
-    const rows = _stmtDupGroupsAll.all();
-    allGroups = [];
-    let current = null;
-    for (const row of rows) {
-      const author = row.authors || '';
-      if (!current || current.key !== author) {
-        current = { key: author, title: author, authors: author, items: [] };
-        allGroups.push(current);
-      }
-      current.items.push(row);
+  /* Пагинация по авторам в SQL: раньше все дубликаты грузились в RAM
+     (на 400k копий страница админки зависала и кнопка автоочистки не появлялась). */
+  _stmtDupAuthorTotal ??= db.prepare(`
+    WITH ${DUP_KEYS_CTE}
+    SELECT COUNT(*) AS count FROM (
+      SELECT dk.author_sort FROM dup_keys dk
+      WHERE ${DUP_AUTHOR_FILTER_SQL}
+      GROUP BY dk.author_sort
+    )
+  `);
+  _stmtDupAuthorPage ??= db.prepare(`
+    WITH ${DUP_KEYS_CTE},
+    author_page AS (
+      SELECT dk.author_sort FROM dup_keys dk
+      WHERE ${DUP_AUTHOR_FILTER_SQL}
+      GROUP BY dk.author_sort
+      ORDER BY dk.author_sort ASC
+      LIMIT ? OFFSET ?
+    )
+    SELECT b.id, b.title, b.authors, b.ext, b.lang, b.size, b.file_name, b.archive_name,
+           b.title_sort, b.author_sort, b.source_id
+    FROM active_books b
+    JOIN dup_keys dk ON dk.title_sort = b.title_sort AND dk.author_sort = COALESCE(b.author_sort, '')
+    JOIN author_page ap ON ap.author_sort = dk.author_sort
+    ORDER BY COALESCE(b.author_sort, '') ASC, b.title_sort ASC, b.ext ASC, b.id ASC
+  `);
+
+  const total = Number(_stmtDupAuthorTotal.get(hasFilter, needle, needle)?.count) || 0;
+  const rows = _stmtDupAuthorPage.all(hasFilter, needle, needle, safePageSize, offset);
+  const groups = [];
+  let current = null;
+  for (const row of rows) {
+    const key = row.author_sort || '';
+    if (!current || current.key !== key) {
+      const authors = row.authors || '';
+      current = { key, title: authors, authors, items: [] };
+      groups.push(current);
     }
-    _dupGroupsCache = { value: allGroups, expiresAt: Date.now() + DUP_GROUPS_TTL_MS };
+    current.items.push(row);
   }
-
-  const filtered = normalizedFilter ? filterDuplicateGroups(allGroups, normalizedFilter) : allGroups;
-  const total = filtered.length;
-  const start = (page - 1) * pageSize;
-  return { total, groups: filtered.slice(start, start + pageSize) };
+  return { total, groups };
 }
 
 export function softDeleteBook(bookId) {
   const book = db.prepare('SELECT id, title, authors FROM books WHERE id = ? AND deleted = 0').get(String(bookId));
   if (!book) return 0;
+  /* Одна книга — точечный ±1 вместо полного пересчёта (минуты блокировки на большой БД). */
+  const wasVisible = isBookInActiveView(bookId);
   db.prepare('UPDATE books SET deleted = 1 WHERE id = ?').run(String(bookId));
   suppressBook(bookId, book.title || '', book.authors || '', 'user');
-  refreshCatalogBookCounts().catch(err => console.error('[refreshCatalogBookCounts] after softDeleteBook:', err));
+  if (wasVisible) adjustCatalogCountsForBook(bookId, -1);
   return 1;
 }
 
 /**
- * Автоочистка дубликатов: в каждой группе (title_sort + authors) оставляем лучшую копию,
- * остальные мягко удаляем. Ранжирование: формат (epub>fb2>mobi>djvu>pdf>doc>txt), затем размер.
+ * Автоочистка дубликатов: скрываем лишние копии, оставляя лучшую.
+ * Совпадения: title_sort+author_sort; тот же lib_id в разных источниках
+ * на одном томе архива; ровно две книги с одним названием из двух
+ * источников при разном авторе (переименование вроде Кова / Ковалькова).
+ * Ранжирование: формат, затем более новый source_id, затем размер.
+ *
+ * Этапы репортуются через onProgress, между ними — setImmediate, чтобы
+ * GET прогресса мог ответить. Сам SQL внутри этапа синхронный.
  */
-export function autoCleanDuplicates() {
-  const FORMAT_RANK = { epub: 1, fb2: 2, mobi: 3, azw3: 4, djvu: 5, pdf: 6, doc: 7, docx: 8, rtf: 9, txt: 10 };
-  const maxRank = 99;
-  /*
-   * Пагинация по ГРУППАМ через CTE (LIMIT ВНУТРИ CTE, не на внешнем SELECT) —
-   * это сохраняет корректность (группа целиком в одном батче, не режется по
-   * границе строк) и одновременно держит скорость: один запрос-джоин на батч,
-   * а не одна выборка ключей + N точечных лукапов на каждую группу.
-   *
-   * OFFSET не нужен: после soft-delete книги выпадают из HAVING COUNT(*) > 1,
-   * и следующий запрос с тем же LIMIT берёт оставшиеся группы естественно.
-   *
-   * GROUP_BATCH крупный, чтобы количество прогонов GROUP BY по active_books
-   * (это аггрегация по всей таблице) было минимальным — это самая дорогая
-   * операция всего цикла.
-   */
-  const GROUP_BATCH = 2000;
+export async function autoCleanDuplicates({ onProgress } = {}) {
+  const t0 = Date.now();
+  const report = (stage, extra = {}) => {
+    onProgress?.({ stage, ...extra });
+  };
+  const yieldLoop = () => new Promise((resolve) => setImmediate(resolve));
 
-  const batchStmt = db.prepare(`
-    WITH dup_keys AS (
-      SELECT title_sort, authors
-      FROM active_books
-      WHERE title_sort IS NOT NULL AND title_sort != ''
-      GROUP BY title_sort, authors
-      HAVING COUNT(*) > 1
-      ORDER BY title_sort ASC, authors ASC
-      LIMIT ?
-    )
-    SELECT b.id, b.ext, b.size, b.title_sort, b.authors
-    FROM active_books b
-    JOIN dup_keys dk ON dk.title_sort = b.title_sort AND dk.authors = b.authors
-    ORDER BY b.title_sort ASC, b.authors ASC, b.id ASC
-  `);
-  const delStmt = db.prepare('UPDATE books SET deleted = 1 WHERE id = ? AND deleted = 0');
-  const suppressStmt = db.prepare(`INSERT INTO suppressed_books(book_id, title, authors, reason) VALUES(?, ?, ?, 'auto_clean')
-    ON CONFLICT(book_id) DO UPDATE SET reason = 'auto_clean', suppressed_at = CURRENT_TIMESTAMP`);
+  report('prepare', { percent: 2, deleted: 0, total: 0, groups: 0 });
+  await yieldLoop();
 
-  let totalDeleted = 0;
-  let groupsCleaned = 0;
-  let safety = 100_000; // страховка от теоретического бесконечного цикла
+  db.exec('DROP TABLE IF EXISTS dup_losers');
+  try {
+    report('rank', { percent: 8 });
+    await yieldLoop();
+    db.exec(`
+      CREATE TEMP TABLE dup_losers AS
+      ${DUP_LOSER_ROWS_SQL}
+    `);
+    const total = Number(db.prepare('SELECT COUNT(*) AS c FROM dup_losers').get()?.c) || 0;
+    report('rank', { percent: 48, total, deleted: 0 });
+    await yieldLoop();
 
-  for (;;) {
-    if (--safety < 0) {
-      console.error('[autoCleanDuplicates] safety guard tripped — aborting');
-      break;
-    }
+    report('hide', { percent: 52, total });
+    const totalDeleted = db.prepare(`
+      UPDATE books SET deleted = 1
+      WHERE deleted = 0 AND id IN (SELECT id FROM dup_losers)
+    `).run().changes;
+    report('hide', { percent: 62, total, deleted: totalDeleted });
+    await yieldLoop();
 
-    const rows = batchStmt.all(GROUP_BATCH);
-    if (!rows.length) break;
+    report('suppress', { percent: 65, total, deleted: totalDeleted });
+    db.exec(`
+      INSERT INTO suppressed_books(book_id, title, authors, reason)
+      SELECT id, title, authors, 'auto_clean' FROM dup_losers
+      WHERE true
+      ON CONFLICT(book_id) DO UPDATE SET
+        reason = 'auto_clean',
+        suppressed_at = CURRENT_TIMESTAMP
+    `);
+    const groupsCleaned = db.prepare(`
+      SELECT COUNT(*) AS c FROM (
+        SELECT 1 FROM dup_losers GROUP BY title_sort, author_sort
+      )
+    `).get()?.c || 0;
+    report('suppress', { percent: 72, total, deleted: totalDeleted, groups: groupsCleaned });
+    await yieldLoop();
 
-    /* Группируем подряд идущие строки одного (title_sort, authors).
-       Гарантия целостности группы: LIMIT стоит в CTE по уникальным ключам,
-       поэтому внешний JOIN всегда возвращает ВСЕ книги выбранных групп. */
-    const groups = [];
-    let cur = null;
-    for (const r of rows) {
-      const key = `${r.title_sort}\0${r.authors}`;
-      if (!cur || cur.key !== key) {
-        cur = { key, items: [] };
-        groups.push(cur);
-      }
-      cur.items.push(r);
-    }
-
-    let deletedThisBatch = 0;
-    const doClean = db.transaction(() => {
-      for (const g of groups) {
-        if (g.items.length < 2) continue;
-        g.items.sort((a, b) => {
-          const fa = FORMAT_RANK[(a.ext || '').toLowerCase()] || maxRank;
-          const fb = FORMAT_RANK[(b.ext || '').toLowerCase()] || maxRank;
-          if (fa !== fb) return fa - fb;
-          return (b.size || 0) - (a.size || 0);
-        });
-        for (let i = 1; i < g.items.length; i++) {
-          const item = g.items[i];
-          const changes = delStmt.run(item.id).changes;
-          if (changes) {
-            suppressStmt.run(item.id, item.title_sort || '', item.authors || '');
-            totalDeleted += changes;
-            deletedThisBatch += changes;
-          }
-        }
-        groupsCleaned++;
-      }
+    await refreshCatalogBookCounts({
+      onProgress: (p) => report(p.stage, { ...p, total, deleted: totalDeleted, groups: groupsCleaned })
     });
-    doClean();
 
-    /* Если за итерацию ничего не удалили (например, кто-то параллельно
-       поправил данные, или группа из 1 книги попала из-за гонки) — выходим,
-       иначе при тех же входных данных получим бесконечный цикл. */
-    if (!deletedThisBatch) break;
+    console.log(`[autoCleanDuplicates] groups=${groupsCleaned} deleted=${totalDeleted} in ${Date.now() - t0}ms`);
+    report('done', { percent: 100, total, deleted: totalDeleted, groups: groupsCleaned });
+    return { groupsCleaned, totalDeleted };
+  } finally {
+    try { db.exec('DROP TABLE IF EXISTS dup_losers'); } catch { /* ignore */ }
   }
-
-  refreshCatalogBookCounts().catch(err => console.error('[refreshCatalogBookCounts] after autoCleanDuplicates:', err));
-  return { groupsCleaned, totalDeleted };
 }
 
 /** Preview: how many books would be deleted by auto-clean */
@@ -4930,24 +5046,14 @@ export function previewAutoClean() {
    * что давало O(N²) и подвешивало процессор на больших библиотеках.
    * Заменено на один проход GROUP BY (через общий кеш сводки).
    */
-  const { totalGroups, totalBooks } = getDuplicatesSummary();
-  return { totalGroups, totalBooks, willDelete: Math.max(0, totalBooks - totalGroups) };
+  const { totalGroups, totalBooks, willDelete } = getDuplicatesSummary();
+  return { totalGroups, totalBooks, willDelete: Math.max(0, willDelete) };
 }
 
-let _stmtGetStats;
-
 export function getStats() {
-  if (!_stmtGetStats) {
-    _stmtGetStats = db.prepare(`
-      SELECT
-        (SELECT COUNT(*) FROM active_books) AS totalBooks,
-        (SELECT COUNT(*) FROM authors) AS totalAuthors,
-        (SELECT COUNT(*) FROM series_catalog) AS totalSeries,
-        (SELECT COUNT(*) FROM genres_catalog) AS totalGenres,
-        (SELECT COUNT(DISTINCT NULLIF(lang, '')) FROM active_books) AS totalLanguages
-    `);
-  }
-  return _stmtGetStats.get();
+  const cached = getLibraryStatsSnapshot();
+  if (cached) return cached;
+  return writeLibraryStatsSnapshot();
 }
 
 export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name', order = '', startsWith = false, letter = '', skipTotal = false }) {
@@ -4986,9 +5092,14 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
       whereParams.push(`${letterNorm}%`);
     }
     const whereClause = `WHERE ${whereParts.join(' AND ')}`;
-    const total = db.prepare(`
-      SELECT COUNT(*) AS count FROM authors a ${whereClause}
-    `).get(...whereParams).count;
+    /* total не зависит от страницы/сортировки — не сканировать 180k авторов на каждую страницу. */
+    const memo = _authorsTotalMemo.get(letterNorm);
+    const total = memo && (Date.now() - memo.at) < PAGE_CACHE_TTL_MS
+      ? memo.total
+      : db.prepare(`
+        SELECT COUNT(*) AS count FROM authors a ${whereClause}
+      `).get(...whereParams).count;
+    _authorsTotalMemo.set(letterNorm, { total, at: Date.now() });
     const items = db.prepare(`
       SELECT a.name AS name,
              COALESCE(a.display_name, a.name) AS displayName,
@@ -4999,7 +5110,7 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `).all(...whereParams, pageSize, offset);
-    return { total, items };
+    return { total, items: withAuthorDisplayNames(items) };
   }
 
   const surnameExpr = `SUBSTR(COALESCE(a.sort_name, ''), 1, INSTR(COALESCE(a.sort_name, '') || ' ', ' ') - 1)`;
@@ -5064,14 +5175,14 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
     LIMIT ? OFFSET ?
   `).all(...whereParams, ...rankParams, pageSize, offset);
 
-  if (skipTotal) return { total: offset + items.length, items };
+  if (skipTotal) return { total: offset + items.length, items: withAuthorDisplayNames(items) };
 
   const total = db.prepare(`
     SELECT COUNT(*) AS count FROM authors a
     WHERE (${whereSQL}) AND a.book_count > 0 AND ${preferredAuthorRowSql('a')}
   `).get(...whereParams).count;
 
-  return { total, items };
+  return { total, items: withAuthorDisplayNames(items) };
 }
 
 /**
@@ -6280,15 +6391,23 @@ const ISO_DATE_PRED = (alias = '') => {
   return `${col} IS NOT NULL AND LENGTH(TRIM(${col})) >= 10 AND SUBSTR(${col}, 1, 10) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`;
 };
 
+let _recentCutoffMemo = null;
+
+/* Самая новая дата каталога меняется только при индексации; memo сбрасывается вместе
+   с prepared statements (view rebuild) и по TTL — иначе это полный скан на каждую страницу новинок. */
 function resolveRecentCatalogCutoff() {
+  if (_recentCutoffMemo && (Date.now() - _recentCutoffMemo.at) < PAGE_CACHE_TTL_MS) return _recentCutoffMemo.bounds;
   const maxDate = db.prepare(`
     SELECT MAX(SUBSTR(date, 1, 10)) AS d
     FROM active_books
     WHERE ${ISO_DATE_PRED()}
   `).get()?.d;
-  if (!maxDate) return null;
-  const cutoff = db.prepare(`SELECT date(?, ?) AS d`).get(maxDate, `-${RECENT_ARRIVAL_WINDOW_DAYS} days`)?.d;
-  return cutoff ? { maxDate, cutoff } : null;
+  const cutoff = maxDate
+    ? db.prepare(`SELECT date(?, ?) AS d`).get(maxDate, `-${RECENT_ARRIVAL_WINDOW_DAYS} days`)?.d
+    : null;
+  const bounds = maxDate && cutoff ? { maxDate, cutoff } : null;
+  _recentCutoffMemo = { bounds, at: Date.now() };
+  return bounds;
 }
 
 /**
@@ -7023,8 +7142,13 @@ export function getFavoriteAuthors(username, limit = 20, sort = 'name', order = 
         .replace('#ASC#', 'DESC').replace('#DESC#', 'ASC');
     }
   }
+  /* bookCount как коррелированный подзапрос: LEFT JOIN active_books заставлял SQLite
+     материализовать всю view (полный скан books, ~1.6 с на 600k) даже для двух избранных. */
   return db.prepare(`
-    SELECT a.name, COALESCE(a.display_name, a.name) AS displayName, COUNT(ab.id) AS bookCount,
+    SELECT a.name, COALESCE(a.display_name, a.name) AS displayName,
+           (SELECT COUNT(*) FROM book_authors ba
+            JOIN active_books ab ON ab.id = ba.book_id
+            WHERE ba.author_id = a.id) AS bookCount,
            (SELECT ab2.id FROM book_authors ba2
             JOIN active_books ab2 ON ab2.id = ba2.book_id
             WHERE ba2.author_id = a.id
@@ -7032,10 +7156,7 @@ export function getFavoriteAuthors(username, limit = 20, sort = 'name', order = 
             LIMIT 1) AS coverBookId
     FROM favorite_authors fa
     JOIN authors a ON a.id = fa.author_id
-    LEFT JOIN book_authors ba ON ba.author_id = a.id
-    LEFT JOIN active_books ab ON ab.id = ba.book_id
     WHERE fa.username = ?
-    GROUP BY a.id, a.name, a.display_name
     ORDER BY ${orderBy}
     LIMIT ?
   `).all(username, limit);
@@ -7057,7 +7178,10 @@ export function getFavoriteSeries(username, limit = 20, sort = 'name', order = '
     }
   }
   const rows = db.prepare(`
-    SELECT s.name, COALESCE(s.display_name, s.name) AS displayName, COUNT(ab.id) AS bookCount,
+    SELECT s.name, COALESCE(s.display_name, s.name) AS displayName,
+           (SELECT COUNT(*) FROM book_series bs
+            JOIN active_books ab ON ab.id = bs.book_id
+            WHERE bs.series_id = s.id) AS bookCount,
            (SELECT GROUP_CONCAT(sb.id, '|') FROM (
               SELECT ab2.id
               FROM book_series bs2
@@ -7068,10 +7192,7 @@ export function getFavoriteSeries(username, limit = 20, sort = 'name', order = '
            ) sb) AS previewBookIds
     FROM favorite_series fs
     JOIN series_catalog s ON s.id = fs.series_id
-    LEFT JOIN book_series bs ON bs.series_id = s.id
-    LEFT JOIN active_books ab ON ab.id = bs.book_id
     WHERE fs.username = ?
-    GROUP BY s.id, s.name, s.display_name
     ORDER BY ${orderBy}
     LIMIT ?
   `).all(username, limit);
@@ -7479,7 +7600,8 @@ export function getSuggestions(query, limit = 5, field = 'books') {
         id: row.id,
         title: row.title,
         authors: row.authors,
-        series: row.series
+        series: row.series,
+        seriesNo: row.seriesNo || ''
       }));
   }
 

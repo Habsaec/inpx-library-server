@@ -406,6 +406,18 @@ export function formatGenreList(value = '') {
   return parseGenreCodes(value).map((code) => formatGenreLabel(code));
 }
 
+export function capitalizeAuthorNamePart(part = '') {
+  const trimmed = String(part || '').trim();
+  if (!trimmed) return '';
+  return trimmed
+    .split(/([\s-])/g)
+    .map((seg) => {
+      if (!seg || /^[\s-]$/.test(seg)) return seg;
+      return seg.charAt(0).toLocaleUpperCase('ru-RU') + seg.slice(1).toLocaleLowerCase('ru-RU');
+    })
+    .join('');
+}
+
 export function formatAuthorLabel(value = '') {
   const raw = String(value || '').trim();
   if (!raw) {
@@ -413,7 +425,7 @@ export function formatAuthorLabel(value = '') {
   }
   const authors = raw
     .split(':')
-    .map((author) => author.split(',').map((part) => part.trim()).filter(Boolean).join(' '))
+    .map((author) => author.split(',').map((part) => capitalizeAuthorNamePart(part.trim())).filter(Boolean).join(' '))
     .filter(Boolean);
   if (!authors.length) {
     return raw;

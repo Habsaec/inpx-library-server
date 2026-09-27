@@ -49,8 +49,8 @@ import {
   getOidcSettings, setOidcSettings,
   getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser, getUserByTelegramId, normalizeTelegramId, setUserTelegramId, setUserTelegramBotAllowed, setUserEreaderEmailAllowed, setUserEreaderEmail, getEreaderEmail,
   db, getDistinctLanguages, getDistinctGenres, rebuildActiveBooksView, refreshCatalogBookCounts,
-  getSuppressedBooks, unsuppressBook, unsuppressAll, getScheduleLog,
-  setMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache
+  getSuppressedBooks, unsuppressBook, unsuppressAll, getScheduleLog, adjustCatalogCountsForBook, isBookInActiveView,
+  setMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache, getDbBreakdown
 } from '../db.js';
 import {
   getBookById, getIndexStatus, getConfiguredInpxFile, setConfiguredInpxFile,
@@ -72,6 +72,7 @@ import { clearOidcDiscoveryCache } from '../services/oidc.js';
 import {
   SYSTEM_EVENTS_MAX_COUNT, SYSTEM_EVENTS_RETAIN_COUNT, SAFE_ADMIN_REDIRECTS
 } from '../constants.js';
+import { exportUsersBackup, importUsersBackup } from '../services/user-backup.js';
 
 function lastFormFieldValue(value) {
   return Array.isArray(value) ? value[value.length - 1] : value;
@@ -636,6 +637,7 @@ export function registerAdminRoutes(app, deps) {
 
   app.get('/admin', requireAdminWeb, (req, res) => {
     const stats = getCachedStats();
+    try { getDbBreakdown({ compute: true }); } catch { /* stacked bar is optional */ }
     res.send(renderOperations({
       user: req.user, stats, indexStatus: getIndexStatus(),
       operations: getOperationsSnapshot(), flash: String(req.query.flash || ''),
@@ -1239,6 +1241,9 @@ export function registerAdminRoutes(app, deps) {
       if (operationsState.sidecarRunning) {
         return res.status(409).json({ ok: false, error: 'Sidecar rebuild is in progress' });
       }
+      if (operationsState.dupCleanRunning) {
+        return res.status(409).json({ ok: false, error: t('admin.duplicates.autoCleanInProgress') });
+      }
       const source = getSourceById(id);
       if (!source) {
         return res.status(404).json({ ok: false, error: t('admin.sources.notFound') });
@@ -1481,6 +1486,37 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
+  app.get('/api/operations/users-export', requireAdminApi, (req, res) => {
+    const payload = exportUsersBackup();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    logSystemEvent('info', 'operations', 'users export', {
+      user: req.user.username,
+      count: payload.users.length
+    });
+    res.setHeader('Content-Disposition', `attachment; filename="inpx-users-${stamp}.json"`);
+    res.type('application/json; charset=utf-8');
+    res.send(`${JSON.stringify(payload, null, 2)}\n`);
+  });
+
+  app.post('/api/operations/users-import', requireAdminApi, (req, res) => {
+    try {
+      const summary = importUsersBackup(req.body);
+      logSystemEvent('info', 'operations', 'users import', {
+        user: req.user.username,
+        created: summary.created,
+        skipped: summary.skipped,
+        favorites: summary.favorites,
+        invalid: summary.invalid
+      });
+      res.json({ ok: true, ...summary });
+    } catch (error) {
+      if (error?.code === 'INVALID_BACKUP') {
+        return apiFail(res, 400, ApiErrorCode.VALIDATION, t('admin.update.importUsersInvalid'));
+      }
+      throw error;
+    }
+  });
+
   app.get('/api/operations/settings-export', requireAdminApi, (req, res) => {
     const payload = buildPublicSettingsExport();
     const wantDownload = ['1', 'true', 'yes'].includes(String(req.query.download || '').toLowerCase());
@@ -1499,6 +1535,9 @@ export function registerAdminRoutes(app, deps) {
     const force = mode === 'full';
     if (operationsState.sourceDeleteRunning) {
       return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.sources.deleteInProgress'));
+    }
+    if (operationsState.dupCleanRunning) {
+      return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.duplicates.autoCleanInProgress'));
     }
     if (operationsState.sidecarRunning) {
       return apiFail(res, 409, ApiErrorCode.CONFLICT, 'Sidecar rebuild is in progress');
@@ -1561,6 +1600,9 @@ export function registerAdminRoutes(app, deps) {
     }
     if (operationsState.sourceDeleteRunning) {
       return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.sources.deleteInProgress'));
+    }
+    if (operationsState.dupCleanRunning) {
+      return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.duplicates.autoCleanInProgress'));
     }
     if (getIndexStatus().active) {
       return apiFail(res, 409, ApiErrorCode.CONFLICT, 'Operation is blocked during indexing');
@@ -1839,6 +1881,35 @@ export function registerAdminRoutes(app, deps) {
 
   // --- Duplicates ---
 
+  function serializeDupCleanProgress() {
+    const running = Boolean(operationsState.dupCleanRunning);
+    const p = operationsState.dupCleanProgress || {};
+    const startedAt = Number(p.startedAt) || 0;
+    return {
+      running,
+      stage: p.stage || (running ? 'prepare' : 'idle'),
+      mode: p.mode === 'restore' ? 'restore' : 'clean',
+      percent: Math.max(0, Math.min(100, Number(p.percent) || 0)),
+      restored: Number(p.restored) || 0,
+      deleted: Number(p.deleted) || 0,
+      total: Number(p.total) || 0,
+      groups: Number(p.groups) || 0,
+      startedAt,
+      elapsedMs: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
+      error: p.error || ''
+    };
+  }
+
+  function dupCleanConflict(res) {
+    if (!operationsState.dupCleanRunning) return false;
+    res.status(409).json({
+      ok: false,
+      error: t('admin.duplicates.autoCleanInProgress'),
+      cleanProgress: serializeDupCleanProgress()
+    });
+    return true;
+  }
+
   app.get('/admin/duplicates', requireAdminWeb, (req, res) => {
     res.send(renderAdminDuplicates({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
@@ -1850,9 +1921,21 @@ export function registerAdminRoutes(app, deps) {
     const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
     const pageSize = 50;
     const filter = String(req.query.filter || '').trim();
+    const cleanProgress = serializeDupCleanProgress();
+    if (cleanProgress.running) {
+      return res.json({
+        ok: true, groups: [], total: 0, page, pageSize, filter,
+        preview: { totalGroups: 0, totalBooks: 0, willDelete: 0 },
+        cleanProgress
+      });
+    }
     const result = getDuplicateGroups({ page, pageSize, filter });
     const preview = previewAutoClean();
-    res.json({ ok: true, groups: result.groups, total: result.total, page, pageSize, filter, preview });
+    res.json({ ok: true, groups: result.groups, total: result.total, page, pageSize, filter, preview, cleanProgress });
+  });
+
+  app.get('/api/admin/duplicates/auto-clean/progress', requireAdminApi, (req, res) => {
+    res.json(serializeDupCleanProgress());
   });
 
   app.post('/api/admin/duplicates/delete', requireAdminApi, (req, res) => {
@@ -1861,6 +1944,7 @@ export function registerAdminRoutes(app, deps) {
     if (getIndexStatus().active) {
       return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
     }
+    if (dupCleanConflict(res)) return;
     const bookId = String(req.body.bookId || '').trim();
     if (!bookId) return res.status(400).json({ ok: false, error: 'Missing book ID' });
     try {
@@ -1876,42 +1960,81 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/api/admin/duplicates/auto-clean', requireAdminApi, (req, res) => {
+  app.post('/api/admin/duplicates/auto-clean', requireAdminApi, async (req, res) => {
     if (getIndexStatus().active) {
       return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
     }
+    if (operationsState.sourceDeleteRunning || operationsState.sidecarRunning) {
+      return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') });
+    }
+    if (operationsState.dupCleanRunning) {
+      return res.json({ ok: true, started: true, alreadyRunning: true, cleanProgress: serializeDupCleanProgress() });
+    }
+    operationsState.dupCleanRunning = true;
+    operationsState.dupCleanProgress = {
+      stage: 'prepare', percent: 1, deleted: 0, total: 0, groups: 0,
+      mode: 'clean', startedAt: Date.now(), error: ''
+    };
+    req.setTimeout(0);
+    res.setTimeout(0);
+    res.json({ ok: true, started: true, cleanProgress: serializeDupCleanProgress() });
+
     try {
-      const result = autoCleanDuplicates();
+      const result = await autoCleanDuplicates({
+        onProgress(p) {
+          operationsState.dupCleanProgress = { ...operationsState.dupCleanProgress, ...p, error: '' };
+        }
+      });
+      operationsState.dupCleanProgress = {
+        ...operationsState.dupCleanProgress,
+        stage: 'done',
+        percent: 100,
+        deleted: result.totalDeleted,
+        groups: result.groupsCleaned,
+        error: ''
+      };
       invalidateDuplicatesCache();
       clearPageDataCache();
       logSystemEvent('info', 'operations', 'auto-clean duplicates', {
         actor: req.user.username, groupsCleaned: result.groupsCleaned, totalDeleted: result.totalDeleted
       });
-      const msg = tp('admin.duplicates.autoCleanDone', { groups: result.groupsCleaned, deleted: result.totalDeleted });
-      res.json({ ok: true, message: msg, groupsCleaned: result.groupsCleaned, totalDeleted: result.totalDeleted });
     } catch (error) {
-      res.status(500).json({ ok: false, error: error.message });
+      operationsState.dupCleanProgress = {
+        ...operationsState.dupCleanProgress,
+        stage: 'error',
+        error: error.message || String(error)
+      };
+      logSystemEvent('error', 'operations', 'auto-clean duplicates failed', {
+        actor: req.user.username, error: error.message
+      });
+    } finally {
+      operationsState.dupCleanRunning = false;
     }
   });
 
   app.get('/api/admin/suppressed', requireAdminApi, (req, res) => {
     const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
     const filter = String(req.query.filter || '').trim();
+    const cleanProgress = serializeDupCleanProgress();
+    if (cleanProgress.running) {
+      return res.json({ ok: true, total: 0, totalBooks: 0, rows: [], page, pageSize: 50, filter, cleanProgress });
+    }
     const result = getSuppressedBooks({ page, pageSize: 50, filter });
-    res.json({ ok: true, ...result, page, pageSize: 50, filter });
+    res.json({ ok: true, ...result, page, pageSize: 50, filter, cleanProgress });
   });
 
   app.post('/api/admin/duplicates/unsuppress', requireAdminApi, (req, res) => {
     if (getIndexStatus().active) {
       return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
     }
+    if (dupCleanConflict(res)) return;
     const bookId = String(req.body.bookId || '').trim();
     if (!bookId) return res.status(400).json({ ok: false, error: 'Missing book ID' });
     try {
       const restored = unsuppressBook(bookId);
       if (restored) {
         invalidateDuplicatesCache();
-        refreshCatalogBookCounts().catch(err => console.error('[refreshCatalogBookCounts] after unsuppressBook:', err));
+        if (isBookInActiveView(bookId)) adjustCatalogCountsForBook(bookId, 1);
       }
       clearPageDataCache();
       logSystemEvent('info', 'operations', 'book unsuppressed', { actor: req.user.username, bookId });
@@ -1921,21 +2044,56 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/api/admin/duplicates/unsuppress-all', requireAdminApi, (req, res) => {
+  app.post('/api/admin/duplicates/unsuppress-all', requireAdminApi, async (req, res) => {
     if (getIndexStatus().active) {
       return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
     }
+    if (operationsState.sourceDeleteRunning || operationsState.sidecarRunning) {
+      return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') });
+    }
+    if (operationsState.dupCleanRunning) {
+      return res.json({ ok: true, started: true, alreadyRunning: true, cleanProgress: serializeDupCleanProgress() });
+    }
+    operationsState.dupCleanRunning = true;
+    operationsState.dupCleanProgress = {
+      mode: 'restore', stage: 'prepare', percent: 1, deleted: 0, restored: 0, total: 0, groups: 0,
+      startedAt: Date.now(), error: ''
+    };
+    req.setTimeout(0);
+    res.setTimeout(0);
+    res.json({ ok: true, started: true, cleanProgress: serializeDupCleanProgress() });
+
     try {
-      const count = unsuppressAll();
-      if (count > 0) {
-        invalidateDuplicatesCache();
-        refreshCatalogBookCounts().catch(err => console.error('[refreshCatalogBookCounts] after unsuppressAll:', err));
-      }
+      const count = await unsuppressAll({
+        onProgress(p) {
+          operationsState.dupCleanProgress = { ...operationsState.dupCleanProgress, ...p, mode: 'restore', error: '' };
+        }
+      });
+      operationsState.dupCleanProgress = {
+        ...operationsState.dupCleanProgress,
+        mode: 'restore',
+        stage: 'done',
+        percent: 100,
+        restored: count,
+        deleted: count,
+        groups: count,
+        error: ''
+      };
+      invalidateDuplicatesCache();
       clearPageDataCache();
       logSystemEvent('info', 'operations', 'all books unsuppressed', { actor: req.user.username, count });
-      res.json({ ok: true, message: tp('admin.duplicates.flashUnsuppressedAll', { n: count }), count });
     } catch (error) {
-      res.status(500).json({ ok: false, error: error.message });
+      operationsState.dupCleanProgress = {
+        ...operationsState.dupCleanProgress,
+        mode: 'restore',
+        stage: 'error',
+        error: error.message || String(error)
+      };
+      logSystemEvent('error', 'operations', 'unsuppress-all failed', {
+        actor: req.user.username, error: error.message
+      });
+    } finally {
+      operationsState.dupCleanRunning = false;
     }
   });
 

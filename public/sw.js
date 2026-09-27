@@ -3,7 +3,7 @@
  */
 // IMPORTANT: Bump this version when deploying new assets to invalidate browser caches
 const CACHE_VERSION = 4;
-const CACHE_NAME = `inpx-v1-f683deb9`;
+const CACHE_NAME = `inpx-v1-ecb07a15`;
 const COVER_CACHE_NAME = 'inpx-covers-v1';
 const MAX_COVER_CACHE_ENTRIES = 500;
 
@@ -25,9 +25,14 @@ const STATIC_ASSETS = [
   '/book-fallback.png'
 ];
 
+// `cache: 'reload'` — мимо HTTP-кэша браузера. Старые версии сервера отдавали
+// JS/CSS с `immutable, max-age=365d`; обычный addAll брал оттуда протухший
+// position-sync.js, и новый reader.js падал на импорте («Загрузка книги…» навечно).
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(STATIC_ASSETS.map((asset) => new Request(asset, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -59,28 +64,26 @@ self.addEventListener('fetch', (event) => {
   // Skip cross-origin requests (e.g. Google Fonts)
   if (url.origin !== self.location.origin) return;
 
-  // Static assets: для версионированных URL (?v=) — network-first (новые версии сразу),
-  // для не-версионированных — stale-while-revalidate (отдаём кэш, в фоне обновляем).
+  // Static assets: network-first (сервер отдаёт их с `no-cache` → дешёвый 304),
+  // кэш SW — только офлайн-фолбэк. `cache: 'no-cache'` заставляет браузер
+  // ревалидировать даже записи HTTP-кэша с устаревшим `immutable`, иначе
+  // reader.js?v=new импортировал бы старый position-sync.js и не открывал книгу.
   if (STATIC_ASSETS.some((a) => url.pathname === a)) {
-    event.respondWith(
-      caches.match(event.request, { ignoreSearch: true }).then((cached) => {
-        const network = fetch(event.request).then((resp) => {
-          if (resp.ok) {
-            const clone = resp.clone();
-            const normalizedUrl = new URL(event.request.url);
-            normalizedUrl.search = '';
-            const normalizedReq = new Request(normalizedUrl.href);
-            caches.open(CACHE_NAME).then((c) => c.put(normalizedReq, clone));
-          }
-          return resp;
-        }).catch(() => cached);
-        // Версионированный ассет — сеть в приоритете, чтобы новые ?v= подхватывались сразу
-        if (url.searchParams.has('v')) {
-          return network;
+    event.respondWith((async () => {
+      try {
+        const resp = await fetch(new Request(event.request, { cache: 'no-cache' }));
+        if (resp.ok) {
+          const clone = resp.clone();
+          const normalizedUrl = new URL(event.request.url);
+          normalizedUrl.search = '';
+          event.waitUntil(caches.open(CACHE_NAME).then((c) => c.put(new Request(normalizedUrl.href), clone)));
         }
-        return cached || network;
-      })
-    );
+        return resp;
+      } catch {
+        const cached = await caches.match(event.request, { ignoreSearch: true });
+        return cached || Response.error();
+      }
+    })());
     return;
   }
 

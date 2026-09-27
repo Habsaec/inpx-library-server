@@ -195,13 +195,18 @@ export async function listArchiveFiles(archivePath) {
 
 /**
  * Прочитать один файл из ZIP или 7z (как readBookBuffer).
+ * `listFallback: false` — не запускать `7z l` на промахе. Нужно для обложек/портретов:
+ * листинг covers/*.7z на десятки тысяч файлов блокирует event loop и срывает
+ * Android-клиент (таймаут 8–20 с → «сервер отвалился»).
  */
-export async function readArchiveEntryBuffer(archivePath, entryPath) {
+export async function readArchiveEntryBuffer(archivePath, entryPath, options = {}) {
+  const listFallback = options.listFallback !== false;
   const normalized = normalizeEntryKey(entryPath);
   if (isSevenZipPath(archivePath)) {
     try {
       return await readSevenZipEntry(archivePath, normalized, config.sevenZipPath);
     } catch (first) {
+      if (!listFallback) throw first;
       const entries = await getSevenZipEntriesCached(archivePath);
       const hit = findEntryInSevenList(entries, normalized);
       if (!hit) throw first;
