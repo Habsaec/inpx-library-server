@@ -12,6 +12,10 @@
 
 **INPX Library Server** — self-hosted веб-сервер для электронных библиотек на базе INPX/FB2. Каталог, поиск, чтение в браузере, OPDS для KOReader и отправка книг на Kindle/Kobo по почте — на NAS, Raspberry Pi или обычном ПК.
 
+<p align="center">
+  <a href="https://boosty.to/habsaec/donate">Поддержать проект</a>
+</p>
+
 ---
 
 <p align="center">
