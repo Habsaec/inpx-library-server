@@ -1103,20 +1103,31 @@ export function unblockUser(username) {
 }
 
 /** Триггеры синхронизации fts5 (content='books') с таблицей books. */
+/*
+ * Для fts5 с content='books' токены строятся из значений, переданных в INSERT/'delete'.
+ * Вставка без колонок (INSERT INTO books_fts(rowid) VALUES (?)) создаёт строку в docsize,
+ * но НЕ индексирует текст — MATCH ничего не находит, поиск молча уходит в LIKE по всей таблице.
+ */
+const BOOKS_FTS_COLUMNS = 'id, title_search, authors_search, genres_search, series_search, keywords_search';
+const BOOKS_FTS_NEW_VALUES = 'new.id, new.title_search, new.authors_search, new.genres_search, new.series_search, new.keywords_search';
+const BOOKS_FTS_OLD_VALUES = 'old.id, old.title_search, old.authors_search, old.genres_search, old.series_search, old.keywords_search';
+
 const BOOKS_FTS_TRIGGERS_SQL = `
-  CREATE TRIGGER IF NOT EXISTS books_ai AFTER INSERT ON books BEGIN
-    INSERT INTO books_fts(rowid) VALUES (new.rowid);
+  CREATE TRIGGER books_ai AFTER INSERT ON books BEGIN
+    INSERT INTO books_fts(rowid, ${BOOKS_FTS_COLUMNS}) VALUES (new.rowid, ${BOOKS_FTS_NEW_VALUES});
   END;
-  CREATE TRIGGER IF NOT EXISTS books_ad AFTER DELETE ON books BEGIN
-    INSERT INTO books_fts(books_fts, rowid) VALUES('delete', old.rowid);
+  CREATE TRIGGER books_ad AFTER DELETE ON books BEGIN
+    INSERT INTO books_fts(books_fts, rowid, ${BOOKS_FTS_COLUMNS}) VALUES('delete', old.rowid, ${BOOKS_FTS_OLD_VALUES});
   END;
-  CREATE TRIGGER IF NOT EXISTS books_au AFTER UPDATE ON books BEGIN
-    INSERT INTO books_fts(books_fts, rowid) VALUES('delete', old.rowid);
-    INSERT INTO books_fts(rowid) VALUES (new.rowid);
+  CREATE TRIGGER books_au AFTER UPDATE OF ${BOOKS_FTS_COLUMNS} ON books BEGIN
+    INSERT INTO books_fts(books_fts, rowid, ${BOOKS_FTS_COLUMNS}) VALUES('delete', old.rowid, ${BOOKS_FTS_OLD_VALUES});
+    INSERT INTO books_fts(rowid, ${BOOKS_FTS_COLUMNS}) VALUES (new.rowid, ${BOOKS_FTS_NEW_VALUES});
   END;
 `;
 
 export function ensureBooksFtsTriggers() {
+  // Старые БД содержат триггеры без значений колонок — пересоздаём, а не IF NOT EXISTS.
+  dropBooksFtsTriggers();
   db.exec(BOOKS_FTS_TRIGGERS_SQL);
 }
 
@@ -1362,13 +1373,15 @@ export async function rebuildBooksFtsFromContent(options = {}) {
 
     const total = db.prepare('SELECT COUNT(*) AS c FROM books').get()?.c ?? 0;
     // Адаптивный размер батча: меньше для крупных библиотек, чтобы не блокировать HTTP
-    const BATCH = total > 500_000 ? 1000 : 2000;
+    // Каждая строка токенизируется (слабый CPU NAS: ~1000 строк = секунды блокировки) — батчи небольшие.
+    const BATCH = total > 500_000 ? 300 : 500;
     const sel = db.prepare(`
       SELECT rowid FROM books
       WHERE rowid > ? ORDER BY rowid LIMIT ?
     `);
     const ins = db.prepare(`
-      INSERT INTO books_fts(rowid) VALUES (?)
+      INSERT INTO books_fts(rowid, ${BOOKS_FTS_COLUMNS})
+      SELECT rowid, ${BOOKS_FTS_COLUMNS} FROM books WHERE rowid = ?
     `);
     let done = resuming ? db.prepare('SELECT COUNT(*) AS c FROM books WHERE rowid <= ?').get(lastRowid)?.c ?? 0 : 0;
     let batchNum = 0;
@@ -1816,6 +1829,21 @@ function countBooksFtsDocs() {
 }
 
 /**
+ * false — в docsize есть строки, но инвертированный индекс пуст (сборка без значений колонок):
+ * MATCH ничего не находит, а счётчик строк выглядит «здоровым».
+ */
+function booksFtsHasTokens() {
+  try {
+    return Boolean(db.prepare('SELECT 1 FROM books_fts_idx LIMIT 1').get());
+  } catch {
+    return true;
+  }
+}
+
+/** До этого размера восстановление FTS — один синхронный rebuild; больше — поэтапно, без блокировки HTTP. */
+const FTS_SYNC_REBUILD_MAX_BOOKS = 50_000;
+
+/**
  * FTS health for admin / search hot path.
  * status: ok | dirty | rebuilding | desynced | empty
  * @param {{ force?: boolean, recover?: boolean }} [opts]
@@ -1835,7 +1863,7 @@ export function getBooksFtsStatus({ force = false, recover = false } = {}) {
   if (dirty && rebuildProgress) status = 'rebuilding';
   else if (dirty) status = 'dirty';
   else if (booksCount === 0) status = 'empty';
-  else if (ftsDocCount === 0 || ftsDocCount < Math.floor(booksCount * 0.5)) status = 'desynced';
+  else if (ftsDocCount === 0 || ftsDocCount < Math.floor(booksCount * 0.5) || !booksFtsHasTokens()) status = 'desynced';
 
   const snapshot = {
     status,
@@ -1886,14 +1914,16 @@ export function scheduleBootFtsRecoveryIfNeeded() {
   if (!isBootFtsRecoveryPending()) return;
   if (_ftsRebuildScheduled) return;
   _ftsRebuildScheduled = true;
-  setImmediate(() => {
+  setImmediate(async () => {
     console.warn('[boot] FTS index marked dirty — rebuilding in background…');
     import('./services/system-events.js').then((m) => {
       m.logSystemEvent('info', 'database', 'FTS boot recovery started');
     }).catch(() => {});
     const t0 = Date.now();
     try {
-      rebuildBooksFtsFromContentSync();
+      const booksCount = Number(db.prepare('SELECT COUNT(*) AS c FROM books').get()?.c) || 0;
+      if (booksCount > FTS_SYNC_REBUILD_MAX_BOOKS) await rebuildBooksFtsFromContent();
+      else rebuildBooksFtsFromContentSync();
       db.prepare(`INSERT INTO meta(key, value) VALUES('books_fts_dirty', '0') ON CONFLICT(key) DO UPDATE SET value = '0'`).run();
       try { db.prepare('DELETE FROM meta WHERE key = ?').run(FTS_REBUILD_PROGRESS_KEY); } catch { /* ignore */ }
       invalidateBooksFtsHealthCache();
@@ -2506,7 +2536,8 @@ export function setMeta(key, value) {
 const LIBRARY_STATS_META_KEY = 'library_stats_snapshot';
 let _stmtLibraryStats = null;
 
-/** Дешёвые счётчики дашборда: без COUNT(DISTINCT) по VIEW на миллионах строк. */
+/** Дешёвые счётчики дашборда: без COUNT(DISTINCT) по VIEW на миллионах строк.
+ *  Тот же SQL пишет поток обслуживания (db-maintenance-worker.js) — не дублировать врозь. */
 export function writeLibraryStatsSnapshot() {
   _stmtLibraryStats ??= db.prepare(`
     SELECT
@@ -2530,6 +2561,12 @@ export function writeLibraryStatsSnapshot() {
     totalLanguages: Number(row?.totalLanguages) || 0
   };
   setMeta(LIBRARY_STATS_META_KEY, JSON.stringify(snapshot));
+  setMeta('catalog_distinct_langs', JSON.stringify(
+    db.prepare(`SELECT DISTINCT lang FROM books WHERE lang != '' ORDER BY lang`).all().map((row) => row.lang)
+  ));
+  setMeta('catalog_distinct_exts', JSON.stringify(
+    db.prepare(`SELECT DISTINCT ext FROM books WHERE ext != '' ORDER BY ext`).all().map((row) => row.ext)
+  ));
   return snapshot;
 }
 
@@ -2866,6 +2903,20 @@ async function runCatalogCountsWorker(onProgress) {
   return _catalogCountsInflight;
 }
 
+async function writeLibraryStatsSnapshotOffThread() {
+  try {
+    const { runDbMaintenance } = await import('./services/db-maintenance.js');
+    await runDbMaintenance('stats');
+  } catch (err) {
+    console.warn('[index] catalog: stats worker failed:', err.message);
+    try {
+      writeLibraryStatsSnapshot();
+    } catch (fallbackErr) {
+      console.warn('[index] catalog: stats snapshot failed:', fallbackErr.message);
+    }
+  }
+}
+
 export async function refreshCatalogBookCounts({ onProgress } = {}) {
   console.log('[index] catalog: пересчёт book_count (authors, series, genres)…');
   const t0 = Date.now();
@@ -2876,11 +2927,7 @@ export async function refreshCatalogBookCounts({ onProgress } = {}) {
     try {
       const timings = await runCatalogCountsWorker(onProgress);
       console.log(`[index] catalog: worker done in ${((Date.now() - t0) / 1000).toFixed(1)} s ${JSON.stringify(timings)}`);
-      try {
-        writeLibraryStatsSnapshot();
-      } catch (err) {
-        console.warn('[index] catalog: stats snapshot failed:', err.message);
-      }
+      await writeLibraryStatsSnapshotOffThread();
       return;
     } catch (err) {
       console.warn('[index] catalog: worker failed, inline fallback:', err.message);
@@ -2936,11 +2983,7 @@ export async function refreshCatalogBookCounts({ onProgress } = {}) {
   })();
   await new Promise(r => setImmediate(r));
   console.log(`[index] catalog: genres done in ${((Date.now() - t2) / 1000).toFixed(1)} s, total ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-  try {
-    writeLibraryStatsSnapshot();
-  } catch (err) {
-    console.warn('[index] catalog: stats snapshot failed:', err.message);
-  }
+  await writeLibraryStatsSnapshotOffThread();
 }
 
 export function getSmtpSettings() {
@@ -4038,6 +4081,7 @@ export function getOidcSettings() {
     scopes: String(getSetting('oidc_scopes') || 'openid profile email').trim() || 'openid profile email',
     adminClaim: String(getSetting('oidc_admin_claim') || '').trim(),
     adminValue: String(getSetting('oidc_admin_value') || '').trim(),
+    usernameClaim: String(getSetting('oidc_username_claim') || '').trim(),
     blockLocalRegister: getSetting('oidc_block_local_register') === '1',
     requireEmailVerified: getSetting('oidc_require_email_verified') !== '0'
   };
@@ -4052,6 +4096,7 @@ export function setOidcSettings({
   scopes,
   adminClaim,
   adminValue,
+  usernameClaim,
   blockLocalRegister,
   requireEmailVerified
 } = {}) {
@@ -4068,6 +4113,7 @@ export function setOidcSettings({
   }
   if (adminClaim !== undefined) setSetting('oidc_admin_claim', String(adminClaim || '').trim());
   if (adminValue !== undefined) setSetting('oidc_admin_value', String(adminValue || '').trim());
+  if (usernameClaim !== undefined) setSetting('oidc_username_claim', String(usernameClaim || '').trim());
   if (blockLocalRegister !== undefined) {
     setSetting('oidc_block_local_register', blockLocalRegister ? '1' : '0');
   }
@@ -4215,7 +4261,7 @@ export function oidcAdminClaimMatches(claims, claimName, claimValue) {
 }
 
 /** Resolve local user from OIDC claims. Throws Error with code in message for known cases. */
-export function resolveOrProvisionOidcUser(claims, { adminClaim = '', adminValue = '', requireEmailVerified = true } = {}) {
+export function resolveOrProvisionOidcUser(claims, { adminClaim = '', adminValue = '', usernameClaim = '', requireEmailVerified = true } = {}) {
   const sub = String(claims?.sub || '').trim();
   if (!sub) throw new Error('OIDC_MISSING_SUB');
 
@@ -4244,12 +4290,19 @@ export function resolveOrProvisionOidcUser(claims, { adminClaim = '', adminValue
     }
   }
 
-  const preferred =
-    String(claims.preferred_username || '').trim()
-    || String(claims.nickname || '').trim()
-    || email
-    || `user_${sub.slice(0, 8)}`;
-  const displayName = String(claims.name || claims.preferred_username || '').trim();
+  // Configured claim first; then preferred_username (Authentik), username (Synology SSO), nickname.
+  const customClaim = String(usernameClaim || '').trim();
+  const claimText = (key) => {
+    const v = claims[key];
+    return typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '';
+  };
+  const claimUsername =
+    (customClaim && claimText(customClaim))
+    || claimText('preferred_username')
+    || claimText('username')
+    || claimText('nickname');
+  const preferred = claimUsername || email || `user_${sub.slice(0, 8)}`;
+  const displayName = String(claims.name || claimUsername).trim();
   const wantAdmin = oidcAdminClaimMatches(claims, adminClaim, adminValue);
   const user = createOidcUser({
     preferredUsername: preferred,
@@ -4515,30 +4568,40 @@ export function getDbBreakdown({ compute = true } = {}) {
   }
 
   if (!_dbStatSupported) {
-    const value = { supported: false, total: 0, segments: [] };
-    _dbBreakdownCache = { value, expiresAt: now + DB_BREAKDOWN_TTL_MS };
-    return value;
+    return markDbBreakdownUnsupported();
   }
 
-  const buckets = Object.create(null);
-  let total = 0;
   try {
     _stmtDbStat ??= db.prepare('SELECT name, SUM(pgsize) AS bytes FROM dbstat GROUP BY name');
-    for (const row of _stmtDbStat.iterate()) {
-      const bytes = Number(row.bytes) || 0;
-      if (bytes <= 0) continue;
-      const category = classifyDbObject(String(row.name || ''));
-      buckets[category] = (buckets[category] || 0) + bytes;
-      total += bytes;
-    }
+    return storeDbBreakdownFromStatRows(_stmtDbStat.all());
   } catch (err) {
     console.warn('[db] getDbBreakdown failed:', err.message);
     _dbStatSupported = false;
-    const value = { supported: false, total: 0, segments: [] };
-    _dbBreakdownCache = { value, expiresAt: now + DB_BREAKDOWN_TTL_MS };
-    return value;
+    return markDbBreakdownUnsupported();
   }
+}
 
+export function isDbBreakdownFresh() {
+  return Boolean(_dbBreakdownCache && Date.now() < _dbBreakdownCache.expiresAt);
+}
+
+export function markDbBreakdownUnsupported() {
+  const value = { supported: false, total: 0, segments: [] };
+  _dbBreakdownCache = { value, expiresAt: Date.now() + DB_BREAKDOWN_TTL_MS };
+  return value;
+}
+
+/** Собрать полоску дашборда из строк dbstat. Вызывается после скана в отдельном потоке. */
+export function storeDbBreakdownFromStatRows(rows) {
+  const buckets = Object.create(null);
+  let total = 0;
+  for (const row of rows || []) {
+    const bytes = Number(row.bytes) || 0;
+    if (bytes <= 0) continue;
+    const category = classifyDbObject(String(row.name || ''));
+    buckets[category] = (buckets[category] || 0) + bytes;
+    total += bytes;
+  }
   const segments = DB_CATEGORY_ORDER
     .map((key) => ({
       key,
@@ -4546,9 +4609,8 @@ export function getDbBreakdown({ compute = true } = {}) {
       pct: total > 0 ? ((buckets[key] || 0) / total) * 100 : 0
     }))
     .filter((s) => s.bytes > 0);
-
   const value = { supported: true, total, segments };
-  _dbBreakdownCache = { value, expiresAt: now + DB_BREAKDOWN_TTL_MS };
+  _dbBreakdownCache = { value, expiresAt: Date.now() + DB_BREAKDOWN_TTL_MS };
   return value;
 }
 

@@ -326,11 +326,13 @@ export function registerLibraryRoutes(app, deps) {
     const bookSorts = ['recent', 'title', 'author', 'series', 'rating'];
     const entitySorts = ['name', 'count'];
     const allowedSorts = isBookField ? bookSorts : entitySorts;
-    const sort = allowedSorts.includes(String(req.query.sort || '')) ? String(req.query.sort) : (isBookField ? 'title' : 'name');
+    const requestedSort = String(req.query.sort || '');
+    const entityDefault = String(query || '').trim() ? 'count' : 'name';
+    const sort = allowedSorts.includes(requestedSort) ? requestedSort : (isBookField ? 'title' : entityDefault);
     const order = String(req.query.order || '');
     const page = safePage(req.query.page);
     const pageSize = 24;
-    const cacheKey = `catalog:v2:${field}:${sort}:${order}:${genre}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}`;
+    const cacheKey = `catalog:v3:${field}:${sort}:${order}:${genre}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}`;
     const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, order, genre, letter, lang, format, year, minRate, hasSeries }));
     const langs = getDistinctLanguages();
     const formats = getDistinctFormats();
@@ -621,7 +623,8 @@ export function registerLibraryRoutes(app, deps) {
   // --- Facet pages ---
   app.get('/facet/authors/:value/outside-series', requireBrowseAuth, async (req, res, next) => {
     try {
-      const sort = String(req.query.sort || 'title');
+      const requestedSort = String(req.query.sort || 'title');
+      const sort = requestedSort === 'recent' ? 'recent' : 'title';
       const order = String(req.query.order || '');
       const stats = getCachedStats();
       const value = String(req.params.value || '');
@@ -662,7 +665,7 @@ export function registerLibraryRoutes(app, deps) {
   app.get('/facet/:facet/:value', requireBrowseAuth, async (req, res, next) => {
     try {
       const facetType = String(req.params.facet || '');
-      const sort = String(req.query.sort || (facetType === 'series' ? 'series' : 'title'));
+      const sort = String(req.query.sort || (facetType === 'series' || facetType === 'authors' ? 'series' : 'title'));
       const order = String(req.query.order || '');
       const page = safePage(req.query.page);
       const pageSize = 24;
@@ -719,6 +722,7 @@ export function registerLibraryRoutes(app, deps) {
       const facetPath = `/facet/${encodeURIComponent(facet)}/${encodeURIComponent(value)}`;
 
       if (facet === 'authors') {
+        const authorSort = ['recent', 'series', 'count'].includes(sort) ? sort : 'series';
         const flibSourceId = getAuthorFlibustaSourceId(value);
         const facetRoot = flibSourceId != null ? getSourceRoot(flibSourceId) : '';
         const p = safePage(req.query.page, 1);
@@ -726,7 +730,7 @@ export function registerLibraryRoutes(app, deps) {
         const authorView = isListBrowseView({ username, queryView: req.query.view, scope: 'catalog' }) ? 'list' : 'series';
 
         const [grouped, fullSummary, authorPortraitUrl, authorBioHtml] = await Promise.all([
-          getAuthorBooksGroupedCoalesced(value, sort, order, { page: p, pageSize }),
+          getAuthorBooksGroupedCoalesced(value, authorSort, order, { page: p, pageSize }),
           Promise.resolve(getFacetSummary(facet, value)),
           flibSourceId != null
             ? promiseWithTimeout(
@@ -755,7 +759,7 @@ export function registerLibraryRoutes(app, deps) {
             standaloneBooks: grouped.standaloneBooks,
             total: grouped.total,
             user: req.user || null, stats, facetPath,
-            indexStatus: getIndexStatus(), sort, order, view: authorView, breadcrumbs, summary,
+            indexStatus: getIndexStatus(), sort: authorSort, order, view: authorView, breadcrumbs, summary,
             facetValue: value, favorite, authorPortraitUrl, authorBioHtml,
             csrfToken: req.csrfToken || '',
             page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,

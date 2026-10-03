@@ -568,6 +568,11 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
             <input type="text" name="scopes" value="${escapeHtml(oidc?.scopes || 'openid profile email')}" autocomplete="off">
           </div>
           <div class="admin-field-group">
+            <label>${escapeHtml(t('admin.oidc.usernameClaim'))}</label>
+            <input type="text" name="usernameClaim" value="${escapeHtml(oidc?.usernameClaim || '')}" placeholder="preferred_username" autocomplete="off">
+            <span class="admin-field-hint">${escapeHtml(t('admin.oidc.usernameClaimHint'))}</span>
+          </div>
+          <div class="admin-field-group">
             <label>${escapeHtml(t('admin.oidc.adminClaim'))}</label>
             <input type="text" name="adminClaim" value="${escapeHtml(oidc?.adminClaim || '')}" placeholder="groups" autocomplete="off">
             <span class="admin-field-hint">${escapeHtml(t('admin.oidc.adminClaimHint'))}</span>

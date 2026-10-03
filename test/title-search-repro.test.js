@@ -110,6 +110,58 @@ before(() => {
   rebuildTitleTokenDictionary({ force: true });
 });
 
+test('exact multi-word title outranks a keyword-only hit', () => {
+  const id = 'peshkom-keyword-distractor';
+  db.prepare('DELETE FROM books WHERE id = ?').run(id);
+  const enriched = enrichBookRow({
+    title: 'Заметки читателя',
+    authors: 'Другой Автор',
+    genres: '',
+    series: '',
+    seriesNo: '',
+    keywords: TITLE,
+    date: ''
+  });
+  db.prepare(`
+    INSERT INTO books (
+      id, title, authors, genres, series, series_no, title_sort, author_sort,
+      series_sort, series_index, title_search, authors_search, series_search,
+      genres_search, keywords_search, file_name, archive_name, size, lib_id, deleted,
+      ext, date, lang, keywords, lib_rate, source_id
+    ) VALUES (
+      ?, ?, ?, '', '', '', ?, ?,
+      '', 0, ?, ?, '',
+      '', ?, 'k.fb2', 'a.zip', 1, ?, 0,
+      'fb2', '', 'ru', ?, 0, NULL
+    )
+  `).run(
+    id,
+    'Заметки читателя',
+    'Другой Автор',
+    enriched.titleSort,
+    enriched.authorSort,
+    enriched.titleSearch,
+    enriched.authorsSearch,
+    enriched.keywordsSearch,
+    id,
+    TITLE
+  );
+  rebuildBooksFtsFromContentSync();
+  setMeta('books_fts_dirty', '0');
+  invalidateBooksFtsHealthCache();
+  try {
+    const result = searchBooks({ query: TITLE, page: 1, pageSize: 24, field: 'all' });
+    const ids = result.items.map((row) => row.id);
+    assert.ok(ids.includes(id), 'keyword hit must still be recalled');
+    assert.equal(ids[0], BOOK_ID, 'exact title must stay ahead of a keyword-only hit');
+  } finally {
+    db.prepare('DELETE FROM books WHERE id = ?').run(id);
+    rebuildBooksFtsFromContentSync();
+    setMeta('books_fts_dirty', '0');
+    invalidateBooksFtsHealthCache();
+  }
+});
+
 test('exact multi-word title is found via default search', () => {
   const result = searchBooks({ query: TITLE, page: 1, pageSize: 24, field: 'all' });
   const ids = result.items.map((row) => row.id);

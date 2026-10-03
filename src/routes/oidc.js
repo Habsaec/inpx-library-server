@@ -102,6 +102,7 @@ export function registerOidcRoutes(app) {
       const user = resolveOrProvisionOidcUser(claims, {
         adminClaim: settings.adminClaim,
         adminValue: settings.adminValue,
+        usernameClaim: settings.usernameClaim,
         requireEmailVerified: settings.requireEmailVerified
       });
 

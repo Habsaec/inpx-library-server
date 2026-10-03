@@ -401,7 +401,7 @@ export function renderCatalog({
         { value: 'rating', label: t('sort.byRating') }
       ]
     : [
-        { value: 'count', label: t('sort.popularFirst') },
+        { value: 'count', label: t('sort.byBookCount') },
         { value: 'name', label: t('sort.byName') }
       ];
   const catalogParams = buildCatalogQueryParams({
@@ -1194,17 +1194,18 @@ export function renderAuthorFacetPage({
           sort,
           order,
           options: [
-            { value: 'recent', label: t('sort.recentFirst') },
-            { value: 'title', label: t('sort.byTitle') },
-            { value: 'series', label: t('sort.bySeries') }
+            { value: 'series', label: t('sort.bySeries') },
+            { value: 'count', label: t('sort.byBookCountAlt') },
+            { value: 'recent', label: t('sort.recentFirst') }
           ]
         })}
       </div>
     </section>`;
 
   const anyBooks = series.some((s) => (Number(s.bookCount) || 0) > 0 || (Array.isArray(s.books) && s.books.length)) || standaloneBooks.length > 0;
+  const outsideSeriesSort = sort === 'recent' ? 'recent' : 'title';
   const outsideSeriesHref = facetValue
-    ? `/facet/authors/${encodeURIComponent(facetValue)}/outside-series?sort=${encodeURIComponent(sort || 'recent')}`
+    ? `/facet/authors/${encodeURIComponent(facetValue)}/outside-series?sort=${encodeURIComponent(outsideSeriesSort)}`
     : '';
   const seriesListHtml = (series.length || standaloneBooks.length)
     ? `<section class="library-shelf library-shelf-secondary author-facet-series-block">${renderAuthorFacetSeriesList(series, standaloneBooks.length ? { href: outsideSeriesHref, label: t('authorPage.outsideSeries'), bookCount: standaloneBooks.length } : null, readSeriesNames, facetValue)}</section>`

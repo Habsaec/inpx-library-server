@@ -54,7 +54,8 @@ import { startTelegramBot, stopTelegramBot, restartTelegramBot, isTelegramBotRun
 import {
   STATS_CACHE_TTL_MS, HOME_SECTIONS_CACHE_TTL_MS
 } from './constants.js';
-import { db, getUserByUsername, hasAdminUser, initDb, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus, tryIdleWalTruncate, compactWalExclusive } from './db.js';
+import { db, getUserByUsername, hasAdminUser, initDb, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, isDbBreakdownFresh, storeDbBreakdownFromStatRows, markDbBreakdownUnsupported, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus, tryIdleWalTruncate, getLibraryStatsSnapshot } from './db.js';
+import { runDbMaintenance, stopDbMaintenance, shouldRunDbMaintenanceInThisProcess } from './services/db-maintenance.js';
 import {
   backfillCatalogSearchFields,
   getConfiguredInpxFile,
@@ -284,6 +285,7 @@ export function gracefulExit(code = 0) {
   stopTelegramBot();
   const server = app.get('httpServer');
   const closeDb = () => {
+    stopDbMaintenance();
     try { tryIdleWalTruncate(); } catch { /* ignore */ }
     try { db.close(); } catch {}
   };
@@ -341,7 +343,20 @@ function warmSharedPageCaches() {
       console.error(`Failed to warm ${label} cache`, error);
     }
   };
-  const statsTimer = setTimeout(() => warm(() => getCachedStats(), 'stats'), 1_500);
+  const statsTimer = setTimeout(() => {
+    (async () => {
+      if (!shouldRunDbMaintenanceInThisProcess()) {
+        if (getLibraryStatsSnapshot()) warm(() => getCachedStats(), 'stats');
+        return;
+      }
+      try {
+        await runDbMaintenance('stats');
+        warm(() => getCachedStats(), 'stats');
+      } catch (error) {
+        console.error('Failed to warm stats cache', error);
+      }
+    })();
+  }, 1_500);
   const sectionsTimer = setTimeout(
     () => warm(
       () => getCachedPageData('home:sections', () => getLibrarySections(), HOME_SECTIONS_CACHE_TTL_MS),
@@ -455,6 +470,22 @@ let _stmtTotalUsers;
 
 let _opsCountsCache = { at: 0, value: null };
 const OPS_COUNTS_TTL_MS = 30_000;
+let _dbBreakdownRefresh = null;
+
+function refreshDbBreakdownInBackground() {
+  if (_dbBreakdownRefresh) return;
+  _dbBreakdownRefresh = runDbMaintenance('dbstat').then((result) => {
+    if (result?.supported === false) markDbBreakdownUnsupported();
+    else storeDbBreakdownFromStatRows(result?.rows || []);
+    if ((result?.ms || 0) >= 500) {
+      console.log(`[db] dbstat ${result.ms}ms (worker)`);
+    }
+  }).catch((err) => {
+    console.warn('[ops snapshot] db breakdown worker failed:', err.message);
+  }).finally(() => {
+    _dbBreakdownRefresh = null;
+  });
+}
 
 function getOperationsSnapshot() {
   const dbStats = fs.existsSync(config.dbPath) ? fs.statSync(config.dbPath) : null;
@@ -506,7 +537,10 @@ function getOperationsSnapshot() {
   const suppressedCount = _opsCountsCache.value.suppressedCount;
   const deletedCount = _opsCountsCache.value.deletedCount;
   let dbBreakdown = null;
-  try { dbBreakdown = getDbBreakdown({ compute: false }); } catch (err) {
+  try {
+    dbBreakdown = getDbBreakdown({ compute: false });
+    if (!isDbBreakdownFresh()) refreshDbBreakdownInBackground();
+  } catch (err) {
     console.warn('[ops snapshot] getDbBreakdown failed:', err.message);
   }
   const coverSegBytes = Number((dbBreakdown?.segments || []).find((s) => s.key === 'covers')?.bytes) || 0;
@@ -1074,7 +1108,7 @@ app.use((error, req, res, next) => {
   res.status(500).send(t('errors.internal'));
 });
 
-/** После окончания индекса: задержка → checkpoint → ANALYZE по таблицам с уступкой циклу → кэш и backfill. */
+/** После окончания индекса: задержка → checkpoint и ANALYZE в отдельном потоке → кэш и backfill. */
 function isBackfillEnabled() {
   const raw = String(process.env.ENABLE_SEARCH_BACKFILL || '').trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(raw);
@@ -1089,82 +1123,93 @@ function schedulePostIndexMaintenance() {
       delayMs,
       walCheckpoint: 'PASSIVE'
     });
-    try {
-      db.pragma('wal_checkpoint(PASSIVE)');
-    } catch (err) {
-      console.error('[index] post-index wal_checkpoint:', err.message);
-      logSystemEvent('warn', 'index', 'post-index WAL checkpoint failed', { error: err.message });
-    }
-    appendIndexDiaryLine('ANALYZE после индексации (по таблицам с уступкой циклу)…');
-    console.log('[analyze] post-index ANALYZE (yielding)…');
     const a0 = Date.now();
-    analyzeDatabaseYielding()
-      .then(() => {
-        postIndexMaintenanceRunning = false;
-        const sec = ((Date.now() - a0) / 1000).toFixed(1);
-        console.log(`[analyze] post-index готово за ${sec} с`);
-        appendIndexDiaryLine(`ANALYZE готово за ${Date.now() - a0} ms`);
-        logSystemEvent('info', 'index', 'post-index ANALYZE completed', { seconds: Number(sec) });
-        clearPageDataCache();
-        warmSharedPageCaches();
-        import('./inpx.js').then((m) => {
-          try { m.clearWarmSearchBooksPages?.(); } catch { /* ignore */ }
-          try {
-            const warm = m.warmupSearchFts?.();
-            if (warm?.ok) {
-              console.log(`[search] FTS warmup after index (${warm.probes} probes)`);
-            }
-          } catch (err) {
-            console.warn('[search] FTS warmup failed:', err.message);
-          }
-        }).catch(() => {});
-        if (isBackfillEnabled()) {
-          try {
-            backfillCatalogSearchFields();
-            logSystemEvent('info', 'index', 'catalog search backfill ran after index');
-          } catch (err) {
-            console.error('[backfill] post-index error:', err.message);
-            logSystemEvent('warn', 'index', 'catalog search backfill failed', { error: err.message });
-          }
+    (async () => {
+      try {
+        await runDbMaintenance('checkpoint');
+      } catch (err) {
+        console.error('[index] post-index wal_checkpoint:', err.message);
+        logSystemEvent('warn', 'index', 'post-index WAL checkpoint failed', { error: err.message });
+        try { db.pragma('wal_checkpoint(PASSIVE)'); } catch (fallbackErr) {
+          console.error('[index] post-index wal_checkpoint fallback:', fallbackErr.message);
         }
-      })
-      .catch((err) => {
-        postIndexMaintenanceRunning = false;
-        console.error('[analyze] post-index error:', err.message);
-        logSystemEvent('error', 'index', 'post-index ANALYZE failed', { error: err.message });
-      });
+      }
+      appendIndexDiaryLine('ANALYZE после индексации (отдельный поток)…');
+      console.log('[analyze] post-index ANALYZE (worker)…');
+      try {
+        await runDbMaintenance('analyze');
+      } catch (err) {
+        console.warn('[analyze] worker failed, inline fallback:', err.message);
+        await analyzeDatabaseYielding();
+      }
+      postIndexMaintenanceRunning = false;
+      const sec = ((Date.now() - a0) / 1000).toFixed(1);
+      console.log(`[analyze] post-index готово за ${sec} с`);
+      appendIndexDiaryLine(`ANALYZE готово за ${Date.now() - a0} ms`);
+      logSystemEvent('info', 'index', 'post-index ANALYZE completed', { seconds: Number(sec) });
+      clearPageDataCache();
+      warmSharedPageCaches();
+      import('./inpx.js').then((m) => {
+        try { m.clearWarmSearchBooksPages?.(); } catch { /* ignore */ }
+        try {
+          const warm = m.warmupSearchFts?.();
+          if (warm?.ok) {
+            console.log(`[search] FTS warmup after index (${warm.probes} probes)`);
+          }
+        } catch (err) {
+          console.warn('[search] FTS warmup failed:', err.message);
+        }
+      }).catch(() => {});
+      if (isBackfillEnabled()) {
+        try {
+          backfillCatalogSearchFields();
+          logSystemEvent('info', 'index', 'catalog search backfill ran after index');
+        } catch (err) {
+          console.error('[backfill] post-index error:', err.message);
+          logSystemEvent('warn', 'index', 'catalog search backfill failed', { error: err.message });
+        }
+      }
+    })().catch((err) => {
+      postIndexMaintenanceRunning = false;
+      console.error('[analyze] post-index error:', err.message);
+      logSystemEvent('error', 'index', 'post-index ANALYZE failed', { error: err.message });
+    });
   }, delayMs);
 }
 
 function scheduleDeferredOptimize() {
   const delayMs = 45_000;
   const t = setTimeout(() => {
-    try {
-      if (getIndexStatus().active) {
-        scheduleDeferredOptimize();
-        return;
-      }
-      db.pragma('optimize');
-    } catch (err) {
-      console.warn('[db] deferred optimize:', err.message);
+    if (getIndexStatus().active) {
+      scheduleDeferredOptimize();
+      return;
     }
+    runDbMaintenance('optimize').catch((err) => {
+      console.warn('[db] deferred optimize:', err.message);
+    });
   }, delayMs);
   if (typeof t.unref === 'function') t.unref();
 }
 
-/** Периодический PASSIVE checkpoint; при раздутом WAL — короткий TRUNCATE без ожидания читателей. */
+/** Периодический PASSIVE checkpoint в отдельном потоке; TRUNCATE только если читателей нет. */
 function schedulePeriodicWalCheckpoint() {
-  const delayMs = 2 * 60 * 1000; // 2 минуты — чаще при простое, PASSIVE не блокирует
+  const delayMs = 2 * 60 * 1000;
   const t = setTimeout(() => {
-    try {
-      if (!getIndexStatus().active) {
-        db.pragma('wal_checkpoint(PASSIVE)');
-        tryIdleWalTruncate();
+    (async () => {
+      if (!shouldRunDbMaintenanceInThisProcess() || getIndexStatus().active) return;
+      try {
+        const result = await runDbMaintenance('checkpoint');
+        if ((result.ms || 0) >= 500) {
+          console.log(`[db] WAL checkpoint ${result.ms}ms (worker)`);
+        }
+        const trunc = result.truncate;
+        if (trunc && !trunc.skipped && trunc.ok) {
+          console.log(`[db] WAL TRUNCATE ${trunc.size} → ${trunc.newSize} bytes`);
+        }
+      } catch (err) {
+        console.warn('[db] WAL checkpoint не удался:', err.message);
       }
-    } catch (err) {
-      console.warn('[db] WAL checkpoint не удался:', err.message);
-    }
-    schedulePeriodicWalCheckpoint();
+    })().finally(() => schedulePeriodicWalCheckpoint());
   }, delayMs);
   if (typeof t.unref === 'function') t.unref();
 }
@@ -1222,12 +1267,20 @@ async function bootstrap() {
     console.log(`Library root: ${getLibraryRoot()}`);
     logSystemEvent('info', 'server', 'server started', { port: config.port, libraryRoot: getLibraryRoot() });
     warmSharedPageCaches();
-    // WAL в несколько ГБ нельзя ужимать до listen: health и логин молчат десятки минут.
-    setImmediate(() => {
-      try { compactWalExclusive(); } catch (err) {
-        console.warn('[db] WAL TRUNCATE after listen failed:', err?.message || err);
-      }
-    });
+    // WAL в несколько ГБ нельзя ужимать в потоке HTTP: health и логин молчат десятки минут.
+    if (shouldRunDbMaintenanceInThisProcess()) {
+      setImmediate(() => {
+        runDbMaintenance('truncate').then((result) => {
+          if (result?.skipped) return;
+          console.log(`[db] WAL TRUNCATE ${result.ms}ms busy=${result.busy ?? '?'} ${result.size} → ${result.newSize} bytes`);
+          if (result.busy !== 0) {
+            console.warn('[db] WAL TRUNCATE не завершён (busy). Файл может остаться большим.');
+          }
+        }).catch((err) => {
+          console.warn('[db] WAL TRUNCATE after listen failed:', err?.message || err);
+        });
+      });
+    }
   });
   httpServer.on('error', (err) => {
     if (err?.code === 'EADDRINUSE') {

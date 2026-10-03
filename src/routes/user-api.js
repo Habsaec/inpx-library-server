@@ -17,7 +17,8 @@ import {
   getBookmarksPage,
   isBookmarked, toggleBookmark, addBookmarksIfMissing,
   toggleFavoriteAuthor, toggleFavoriteSeries, getAllBookIdsByFacet,
-  toggleReadBook, addReadBooksIfMissing, isSeriesFullyRead, removeReadBooksForSeries
+  toggleReadBook, addReadBooksIfMissing, isSeriesFullyRead, removeReadBooksForSeries,
+  removeReadBookIfPresent,
 } from '../inpx.js';
 import { safePage } from '../utils/safe-int.js';
 import { resolveDownload } from '../conversion.js';
@@ -28,6 +29,7 @@ import { logSystemEvent } from '../services/system-events.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX } from '../constants.js';
 import { normalizeBatchIdsParam, resolveAdhocBookIdsFromClientList, resolveBatchScopeBookIds } from './download.js';
+import { decodeBookRef } from '../utils/book-ref.js';
 
 /**
  * User-facing API routes: bookmarks, shelves, favorites, e-reader, history.
@@ -137,6 +139,17 @@ export function registerUserApiRoutes(app, deps) {
     invalidateUserPageCaches(req.user.username);
     invalidateRecommendationsCache(req.user.username);
     res.json({ read });
+  });
+
+  app.delete('/api/read/:id', requireApiAuth, (req, res) => {
+    const book = getBookById(req.params.id);
+    if (!book) {
+      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    }
+    removeReadBookIfPresent(req.user.username, book.id);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
+    res.json({ read: false });
   });
 
   app.post('/api/bookmarks/batch', requireApiAuth, (req, res) => {
@@ -260,6 +273,15 @@ export function registerUserApiRoutes(app, deps) {
     const book = getBookById(String(req.body.bookId || ''));
     if (!book) return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
     addBookToShelf(shelf.id, book.id);
+    res.json({ ok: true });
+  });
+
+  app.delete('/api/shelves/:id/books/b64/:ref', requireApiAuth, (req, res) => {
+    const shelf = getShelfById(Number(req.params.id), req.user.username);
+    if (!shelf) return apiFail(res, 404, ApiErrorCode.SHELF_NOT_FOUND, t('shelf.notFound'));
+    const bookId = decodeBookRef(String(req.params.ref || ''));
+    if (!bookId) return apiFail(res, 400, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    removeBookFromShelf(shelf.id, bookId);
     res.json({ ok: true });
   });
 

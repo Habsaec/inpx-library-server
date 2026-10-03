@@ -27,7 +27,11 @@ export function stemRussianToken(token = '') {
 }
 
 /**
- * Expand each token to [original, stem?] for FTS OR-groups.
+ * One FTS prefix per token.
+ * A stem of 4+ characters is a prefix of the surface form, so `stem*` matches
+ * both the original token and the indexed stem. OR-ing `token*` with `stem*`
+ * only unions two posting lists. Stems shorter than 4 stay as the surface
+ * token — a 3-letter prefix matches too much.
  * @param {string[]} tokens
  * @returns {string[][]}
  */
@@ -35,12 +39,11 @@ export function expandSearchTokenVariants(tokens = []) {
   return tokens.map((token) => {
     const t = String(token || '').trim();
     if (!t) return [];
-    const variants = [t];
-    if (t.length >= 4) {
+    if (t.length >= 5) {
       const stem = stemRussianToken(t);
-      if (stem && stem !== t && stem.length >= 3) variants.push(stem);
+      if (stem && stem !== t && stem.length >= 4) return [stem];
     }
-    return variants;
+    return [t];
   }).filter((group) => group.length > 0);
 }
 

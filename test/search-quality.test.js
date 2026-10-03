@@ -11,6 +11,7 @@ import {
   findDidYouMeanSuggestions,
   listSearchGenres
 } from '../src/inpx.js';
+import { clearWarmSearchBooksPages, takeWarmSearchBooksPage } from '../src/search-enhance.js';
 
 const AUTHOR_NAME = 'булычев,кир';
 const SERIES_NAME = 'алиса';
@@ -171,6 +172,25 @@ test('searchOverview reuses precomputed books total', () => {
   assert.equal(overview.books.total, 42);
   assert.equal(overview.books.capped, false);
   assert.equal(overview.routeField, null);
+});
+
+test('searchOverview warms the first books page only when it had to count books itself', async () => {
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const opts = { sort: 'title', page: 1, pageSize: 24 };
+
+  /* Прогревы предыдущих тестов ещё могут стоять в очереди setImmediate. */
+  await tick();
+  await tick();
+  clearWarmSearchBooksPages();
+  searchOverview({ query: 'Булычев', booksTotal: 42, booksCapped: false });
+  await tick();
+  await tick();
+  assert.equal(takeWarmSearchBooksPage('Булычев', opts), null, '/catalog already has the page; no second search');
+
+  searchOverview({ query: 'Булычев' });
+  await tick();
+  await tick();
+  assert.ok(takeWarmSearchBooksPage('Булычев', opts), '/api/search still warms the page for the next catalog request');
 });
 
 test('listSearchGenres returns scoped genres for a book query', () => {

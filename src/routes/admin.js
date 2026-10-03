@@ -50,7 +50,7 @@ import {
   getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser, getUserByTelegramId, normalizeTelegramId, setUserTelegramId, setUserTelegramBotAllowed, setUserEreaderEmailAllowed, setUserEreaderEmail, getEreaderEmail,
   db, getDistinctLanguages, getDistinctGenres, rebuildActiveBooksView, refreshCatalogBookCounts,
   getSuppressedBooks, unsuppressBook, unsuppressAll, getScheduleLog, adjustCatalogCountsForBook, isBookInActiveView,
-  setMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache, getDbBreakdown
+  setMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache
 } from '../db.js';
 import {
   getBookById, getIndexStatus, getConfiguredInpxFile, setConfiguredInpxFile,
@@ -637,7 +637,6 @@ export function registerAdminRoutes(app, deps) {
 
   app.get('/admin', requireAdminWeb, (req, res) => {
     const stats = getCachedStats();
-    try { getDbBreakdown({ compute: true }); } catch { /* stacked bar is optional */ }
     res.send(renderOperations({
       user: req.user, stats, indexStatus: getIndexStatus(),
       operations: getOperationsSnapshot(), flash: String(req.query.flash || ''),
@@ -682,6 +681,7 @@ export function registerAdminRoutes(app, deps) {
         scopes: String(last(req.body.scopes) || 'openid profile email'),
         adminClaim: String(last(req.body.adminClaim) || ''),
         adminValue: String(last(req.body.adminValue) || ''),
+        usernameClaim: String(last(req.body.usernameClaim) || ''),
         blockLocalRegister: isFormFlagEnabled(req.body.blockLocalRegister),
         requireEmailVerified: isFormFlagEnabled(req.body.requireEmailVerified)
       });

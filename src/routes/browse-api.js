@@ -46,7 +46,13 @@ export function registerBrowseApiRoutes(app) {
     const field = ['books', 'authors', 'series'].includes(String(req.query.field || ''))
       ? String(req.query.field)
       : 'books';
-    res.json(getSuggestions(q, 5, field));
+    /* Подсказки на каждый ввод: повтор префикса (backspace, повторный фокус, другой пользователь)
+       не должен снова проходить FTS и каталоги авторов/серий. */
+    res.json(getCachedPageData(
+      `api:search:suggest:${field}:${q.toLowerCase()}`,
+      () => getSuggestions(q, 5, field),
+      PAGE_CACHE_TTL_MS
+    ));
   });
 
   /** Search section totals (books / authors / series). `routeField` is always null. */
@@ -218,7 +224,7 @@ export function registerBrowseApiRoutes(app) {
       let value = decodeURIComponent(String(req.params.value || '')).trim();
       const resolved = resolveAuthorName(value);
       if (resolved) value = resolved;
-      const sort = ['recent', 'title', 'author', 'series', 'rating'].includes(String(req.query.sort || ''))
+      const sort = ['recent', 'title', 'author', 'series', 'count', 'rating'].includes(String(req.query.sort || ''))
         ? String(req.query.sort)
         : 'title';
       const order = String(req.query.order || '');
@@ -275,6 +281,7 @@ export function registerBrowseApiRoutes(app) {
       const year = Number(req.query.year) || 0;
       const minRate = Math.min(5, Math.max(0, Math.floor(Number(req.query.minRate) || 0)));
       const hasSeries = parseHasSeries(req.query.hasSeries);
+      const genre = parseGenreList(req.query.genre).join(',');
       const allowed = new Set(['authors', 'series', 'genres', 'languages']);
       if (!allowed.has(facet) || !value) {
         return apiFail(res, 400, ApiErrorCode.FACET_INVALID, t('api.facet.invalid'), { items: [], total: 0, page, pageSize });
@@ -286,7 +293,7 @@ export function registerBrowseApiRoutes(app) {
       }
       const result = await getBooksByFacetCoalesced({
         facet, value, page, pageSize, sort, order, author,
-        lang, format, year, minRate, hasSeries
+        lang, format, year, minRate, hasSeries, genre
       });
       res.json({ items: result.items, total: result.total, page, pageSize });
     } catch (error) {

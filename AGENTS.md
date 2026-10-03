@@ -29,6 +29,7 @@ Key endpoints for reader:
 - `PATCH /api/books/:id/annotations/:aid` — update a highlight note and/or color (`note`, `color`)
 - `GET /api/favorites` — favorite authors (`name`, `displayName`, `bookCount`, `coverBookId`) and series (`name`, `displayName`, `bookCount`, `previewBookIds`)
 - `GET /api/reader-activity-sync-meta` — read-state and reading-history revs
+- `DELETE /api/read/:id` — idempotent unmark (`{ read: false }` even when the book was not marked); `POST /api/read/batch` marks, `POST /api/read/:id` still toggles
 - `POST /api/reading-history/:id` — record `lastOpenedAt` when a book is opened
 - `DELETE /api/reading-history/:id` — remove a reading-history entry
 - «Читаю» / «Продолжить чтение» (`reading_history`) не показывают книги из `read_books`; при снятии «Прочитано» (в т.ч. при progress ниже 95%) снова появляются там. Раздел «Прочитано» отдельный.
@@ -39,7 +40,7 @@ Key endpoints for reader:
 - `GET /api/catalog` — lists books even without `q`/filters (paginated browse); additive filters (AND): `genre` (single/CSV/repeated; multi = OR), `lang`, `format`, `year`, `minRate` (1–5), `hasSeries` (`1`/`0`), plus `q` / `letter` / `field` / `sort`; empty/weak may include additive `searchHints` (`tip`, `didYouMean`, `weak?`)
 - `GET /api/library/recent` — novinki by INPX catalog `date` (30 days before the newest dated book in the DB, paginated); not full catalog / not reindex `imported_at` stamps; additive filters like catalog: `genre` (CSV/repeated, OR), `lang`, `format`, `year`, `minRate`, `hasSeries` (1/0)
 - `GET /api/library/recommended` — personalized pool + same additive filters (`genre`, `format`, `year`, `minRate`, `hasSeries`)
-- `GET /api/facet-books` — books by facet (`authors`/`series`/`genres`/`languages`); additive filters: `format`, `year`, `minRate`, `hasSeries` (1/0), `lang`
+- `GET /api/facet-books` — books by facet (`authors`/`series`/`genres`/`languages`); additive filters: `genre` (CSV/repeated, OR), `format`, `year`, `minRate`, `hasSeries` (1/0), `lang`
 - Web catalog / search / novinki support `?view=list` (Flibusta-style rows) alongside the default cover grid
 - `GET /api/browse/authors/:value/grouped` — author series + `standaloneBooks` + `books[]` per series (Flibusta-style list); `lean=1` omits `books[]` (name/displayName/bookCount only); `resolveAuthorName` picks the `authors` alias with the same `search_name` and higher `book_count` (INPX Latin vs Cyrillic duplicate)
 - Book search: SQLite FTS5, stem expand, title boost (exact/ordered/prefix), author+title split, phrase OR, stopword-aware AND, catalog-layer typo retry on miss, page-level edition dedupe, LIKE fallback when dirty/desynced. Dirty/desync auto-rebuild; post-index FTS warmup. Admin/ops: additive `ftsStatus`, `POST /api/operations/fts-rebuild`

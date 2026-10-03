@@ -174,6 +174,19 @@ describe('OIDC resolveOrProvisionOidcUser', () => {
     assert.equal(getOauthUser(OIDC_PROVIDER, OIDC_SUB), undefined);
   });
 
+  it('uses Synology `username` claim and configurable usernameClaim instead of sub', () => {
+    const synology = resolveOrProvisionOidcUser({ sub: 'user_c4f4abcdef', username: 'synologyreader' });
+    created.push(synology.username);
+    assert.equal(synology.username, 'synologyreader');
+
+    const custom = resolveOrProvisionOidcUser(
+      { sub: 'user_c4f4fedcba', preferred_username: 'ignoredname', login: 'customloginname' },
+      { usernameClaim: 'login' }
+    );
+    created.push(custom.username);
+    assert.equal(custom.username, 'customloginname');
+  });
+
   it('promotes to admin when claim matches, never demotes', () => {
     const user = resolveOrProvisionOidcUser(
       {

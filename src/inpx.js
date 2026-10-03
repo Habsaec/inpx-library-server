@@ -81,8 +81,9 @@ const MAX_INPX_LINE_CHARS = 256 * 1024;
 /**
  * Memory-budget constants for INPX/.inp buffering.
  *
- * MAX_INP_ENTRY_BYTES (80 MB) — single .inp files larger than this are skipped.
- *   Flibusta's biggest .inp is ~60 MB; 80 MB gives headroom without risking OOM.
+ * MAX_INP_ENTRY_BYTES (256 MB) — single .inp files larger than this are skipped.
+ *   Flibusta's biggest .inp is ~60 MB; Libruks online.inp is ~103 MB.
+ *   The uncompressed entry is held in RAM only while that archive is parsed.
  *
  * HEAP_WARNING_THRESHOLD_MB (600 MB) — when V8 heap exceeds this during indexing
  *   we emit a system-level warning.  For libraries with >500 000 books the Node
@@ -94,7 +95,7 @@ const MAX_INPX_LINE_CHARS = 256 * 1024;
  *   • 100–500 K     — 1 GB
  *   • >500 K         — 1.5 GB+  (set --max-old-space-size accordingly)
  */
-const MAX_INP_ENTRY_BYTES = 80 * 1024 * 1024;
+const MAX_INP_ENTRY_BYTES = 256 * 1024 * 1024;
 const HEAP_WARNING_THRESHOLD_MB = 600;
 const FACET_CACHE_TTL_MS = 120_000; // 20с → 120с: меньше запросов на страницах фасетов/серий/авторов
 /** COUNT дедупа по фасету не зависит от страницы — кешируем отдельно, чтобы «далее» не гоняло тяжёлый подсчёт. */
@@ -1457,15 +1458,17 @@ function paginateAuthorSearchMatches(matched, { offset, pageSize, sort, order, l
     rows = rows.filter((row) => String(row.sortKey || '').startsWith(letterNorm));
   }
   rows.sort((a, b) => {
-    const scoreA = scoreKey ? (a[scoreKey] || 0) : 0;
-    const scoreB = scoreKey ? (b[scoreKey] || 0) : 0;
-    if (scoreB !== scoreA) return scoreB - scoreA;
     if (sort === 'count') {
-      const countCmp = (b.bookCount || 0) - (a.bookCount || 0);
-      if (countCmp !== 0) return order === 'desc' ? -countCmp : countCmp;
+      const countCmp = (Number(a.bookCount) || 0) - (Number(b.bookCount) || 0);
+      const directed = order === 'asc' ? countCmp : -countCmp;
+      if (directed !== 0) return directed;
+    } else {
+      const scoreA = scoreKey ? (a[scoreKey] || 0) : 0;
+      const scoreB = scoreKey ? (b[scoreKey] || 0) : 0;
+      if (scoreB !== scoreA) return scoreB - scoreA;
     }
     const nameCmp = String(a.sortKey || '').localeCompare(String(b.sortKey || ''), 'ru');
-    return order === 'desc' ? -nameCmp : nameCmp;
+    return order === 'desc' && sort !== 'count' ? -nameCmp : nameCmp;
   });
   return {
     total: rows.length,
@@ -1508,18 +1511,39 @@ function findAuthorNamesForBookSearch(query = '') {
   return [];
 }
 
+/** Next string after `prefix` in code-point order, so `col >= prefix AND col < upper` is a prefix range. */
+function textPrefixUpperBound(prefix = '') {
+  const chars = Array.from(String(prefix || ''));
+  if (!chars.length) return '';
+  const last = chars.pop();
+  const next = last.codePointAt(0) + 1;
+  if (next > 0x10FFFF) return '';
+  return chars.join('') + String.fromCodePoint(next);
+}
+
+function authorColumnPrefixClause(column, word) {
+  const upper = textPrefixUpperBound(word);
+  if (!upper) return { sql: `${column} >= ?`, params: [word] };
+  return { sql: `${column} >= ? AND ${column} < ?`, params: [word, upper] };
+}
+
 /** Authors whose sort_name first token equals the given surname token. */
 function findAuthorsBySurnameToken(token = '') {
   const key = String(token || '').trim();
   if (!key) return [];
+  /* «фамилия» или «фамилия …» — диапазон по idx_authors_sort_name, без SUBSTR по всей таблице. */
+  const spaced = `${key} `;
+  const upper = textPrefixUpperBound(spaced);
+  const rangeSql = upper ? `OR (sort_name >= ? AND sort_name < ?)` : `OR sort_name >= ?`;
+  const rangeParams = upper ? [spaced, upper] : [spaced];
   return db.prepare(`
     SELECT name, COALESCE(display_name, name) AS displayName, sort_name, book_count
     FROM authors
     WHERE book_count > 0
-      AND SUBSTR(COALESCE(sort_name, ''), 1, INSTR(COALESCE(sort_name, '') || ' ', ' ') - 1) = ?
+      AND (sort_name = ? ${rangeSql})
     ORDER BY book_count DESC
     LIMIT 24
-  `).all(key);
+  `).all(key, ...rangeParams);
 }
 
 function matchAuthorsFromQueryTokens(authorTokens = []) {
@@ -3419,6 +3443,19 @@ function buildCatalogExtraFilters({ lang = '', format = '', year = 0, minRate = 
 }
 
 const DISTINCT_CACHE_TTL = 60_000; // 60 seconds
+const DISTINCT_LANGS_META = 'catalog_distinct_langs';
+const DISTINCT_EXTS_META = 'catalog_distinct_exts';
+
+function readDistinctMeta(key) {
+  const raw = getMeta(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 let _stmtDistinctLangs = null;
 let _distinctLangsCache = null;
@@ -3429,10 +3466,20 @@ export function getDistinctLanguages() {
   if (_distinctLangsCache && now - _distinctLangsCacheTime < DISTINCT_CACHE_TTL) {
     return _distinctLangsCache;
   }
-  _stmtDistinctLangs ??= db.prepare(`SELECT DISTINCT lang FROM books WHERE lang != '' AND deleted = 0 ORDER BY lang`);
-  _distinctLangsCache = _stmtDistinctLangs.all().map(r => r.lang);
+  const persisted = readDistinctMeta(DISTINCT_LANGS_META);
+  if (persisted) {
+    _distinctLangsCache = persisted;
+    _distinctLangsCacheTime = now;
+    return persisted;
+  }
+  /* Без deleted = 0 планировщик берёт idx_books_lang. Фильтр по deleted
+     заставлял читать всю таблицу books (~5–7 с на NAS при холодном кэше). */
+  _stmtDistinctLangs ??= db.prepare(`SELECT DISTINCT lang FROM books WHERE lang != '' ORDER BY lang`);
+  const langs = _stmtDistinctLangs.all().map((row) => row.lang);
+  setMeta(DISTINCT_LANGS_META, JSON.stringify(langs));
+  _distinctLangsCache = langs;
   _distinctLangsCacheTime = now;
-  return _distinctLangsCache;
+  return langs;
 }
 
 let _stmtDistinctFormats = null;
@@ -3444,10 +3491,18 @@ export function getDistinctFormats() {
   if (_distinctFormatsCache && now - _distinctFormatsCacheTime < DISTINCT_CACHE_TTL) {
     return _distinctFormatsCache;
   }
-  _stmtDistinctFormats ??= db.prepare(`SELECT DISTINCT ext FROM books WHERE ext != '' AND deleted = 0 ORDER BY ext`);
-  _distinctFormatsCache = _stmtDistinctFormats.all().map(r => r.ext);
+  const persisted = readDistinctMeta(DISTINCT_EXTS_META);
+  if (persisted) {
+    _distinctFormatsCache = persisted;
+    _distinctFormatsCacheTime = now;
+    return persisted;
+  }
+  _stmtDistinctFormats ??= db.prepare(`SELECT DISTINCT ext FROM books WHERE ext != '' ORDER BY ext`);
+  const exts = _stmtDistinctFormats.all().map((row) => row.ext);
+  setMeta(DISTINCT_EXTS_META, JSON.stringify(exts));
+  _distinctFormatsCache = exts;
   _distinctFormatsCacheTime = now;
-  return _distinctFormatsCache;
+  return exts;
 }
 
 function buildAuthorWhereForBooks(query) {
@@ -3602,7 +3657,7 @@ function resolveAuthorTitleSplit(query = '') {
 
 /**
  * Build books_fts MATCH string.
- * Default operator → prefix (`token*`) with light Russian stem OR-expand;
+ * Default operator → one prefix per token (`stem*` when the stem is 4+ chars);
  * `=` → exact token; `*` → signal LIKE fallback.
  * Multi-token also ORs an exact phrase MATCH for ranking/recall.
  * @returns {{ mode: 'fts', match: string } | { mode: 'like' } | null}
@@ -3706,6 +3761,275 @@ function finalizeSearchBookPage(items, pageSize) {
   const list = dedupeSearchBookItems(items || []);
   if (pageSize > 0 && list.length > pageSize) return list.slice(0, pageSize);
   return list;
+}
+
+/** FTS5 fast rank window. Deeper pages fall back to a full SQL sort. */
+const FTS_RANK_WINDOW = 400;
+
+const FTS_BOOK_PAGE_COLUMNS = `
+  b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang,
+  b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted,
+  b.title_search AS titleSearch, b.title_sort AS titleSort, b.author_sort AS authorSort,
+  b.date AS bookDate, b.imported_at AS importedAt
+`;
+
+let _stmtFtsRankWindow = null;
+
+function ftsRankWindow(match, limit, offset = 0) {
+  _stmtFtsRankWindow ??= db.prepare(`
+    SELECT id, rank AS ftsRank
+    FROM books_fts
+    WHERE books_fts MATCH ?
+    ORDER BY rank
+    LIMIT ? OFFSET ?
+  `);
+  return _stmtFtsRankWindow.all(match, limit, offset);
+}
+
+function loadActiveBooksByIds(ids) {
+  const out = [];
+  const chunkSize = 400;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const slice = ids.slice(i, i + chunkSize);
+    if (!slice.length) continue;
+    const placeholders = slice.map(() => '?').join(',');
+    out.push(...db.prepare(`
+      SELECT ${FTS_BOOK_PAGE_COLUMNS}
+      FROM active_books b
+      WHERE b.id IN (${placeholders})
+    `).all(...slice));
+  }
+  return out;
+}
+
+function titleHasOrderedTokens(title, contentTokens) {
+  const parts = (Array.isArray(contentTokens) ? contentTokens : [])
+    .map((tok) => String(tok || '').trim().toLowerCase())
+    .filter((tok) => tok.length >= 3);
+  if (parts.length < 2) return false;
+  let from = 0;
+  for (const tok of parts) {
+    const idx = title.indexOf(tok, from);
+    if (idx < 0) return false;
+    from = idx + tok.length;
+  }
+  return true;
+}
+
+/** Same bands as buildTitleBoostExpr: exact -2000, ordered -1500, prefix -1000. */
+function titleBoostRank(titleSearch, needleKey, contentTokens) {
+  const title = String(titleSearch || '').toLowerCase();
+  const needle = String(needleKey || '').toLowerCase();
+  if (!needle) return 0;
+  if (title === needle || title.startsWith(`${needle} `)) return -2000;
+  if (titleHasOrderedTokens(title, contentTokens)) return -1500;
+  if (title.startsWith(needle)) return -1000;
+  return 0;
+}
+
+function compareSearchTie(a, b, sort, order) {
+  const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+  const text = (value) => String(value || '');
+  let primary = 0;
+  if (sort === 'recent') {
+    const aKey = text(a.bookDate).trim() || text(a.importedAt);
+    const bKey = text(b.bookDate).trim() || text(b.importedAt);
+    primary = cmp(bKey, aKey);
+    if (!primary) primary = cmp(text(b.importedAt), text(a.importedAt));
+  } else if (sort === 'author') {
+    primary = cmp(text(a.authorSort), text(b.authorSort));
+  } else if (sort === 'rating') {
+    primary = (Number(b.libRate) || 0) - (Number(a.libRate) || 0);
+  } else {
+    primary = cmp(text(a.titleSort), text(b.titleSort));
+  }
+  const natural = (sort === 'recent' || sort === 'rating') ? 'desc' : 'asc';
+  if ((order === 'asc' || order === 'desc') && order !== natural && primary) primary = -primary;
+  if (primary) return primary;
+  if (sort === 'author' || sort === 'rating' || sort === 'recent') {
+    const titleCmp = cmp(text(a.titleSort), text(b.titleSort));
+    if (titleCmp) return titleCmp;
+  } else {
+    const titleCmp = cmp(text(a.title).toLowerCase(), text(b.title).toLowerCase());
+    if (titleCmp) return titleCmp;
+  }
+  return cmp(text(b.id), text(a.id));
+}
+
+function stripSearchRankFields(row) {
+  const copy = { ...row };
+  delete copy.titleSearch;
+  delete copy.titleSort;
+  delete copy.authorSort;
+  delete copy.bookDate;
+  delete copy.importedAt;
+  delete copy.ftsRank;
+  return copy;
+}
+
+function sliceRankedFtsHits(rows, { needleKey, contentTokens, sort, order, pageSize, offset }) {
+  const decorated = rows.map((row) => ({
+    ...row,
+    titleBoost: titleBoostRank(row.titleSearch, needleKey, contentTokens),
+    ftsRank: Number.isFinite(Number(row.ftsRank)) ? Number(row.ftsRank) : 0
+  }));
+  decorated.sort((a, b) => {
+    if (a.titleBoost !== b.titleBoost) return a.titleBoost - b.titleBoost;
+    if (a.ftsRank !== b.ftsRank) return a.ftsRank - b.ftsRank;
+    return compareSearchTie(a, b, sort, order);
+  });
+  const deduped = dedupeSearchBookItems(
+    decorated.map((row) => mapBookListRow(stripSearchRankFields(row)))
+  );
+  return deduped.slice(offset, offset + pageSize);
+}
+
+function loadExactTitlePins(needleKey, filterParts, filterParams) {
+  const needle = String(needleKey || '');
+  if (!needle.includes(' ')) return [];
+  const parts = ['(b.title_search = ? OR b.title_search LIKE ?)'];
+  const params = [needle, `${needle} %`];
+  if (filterParts?.length) {
+    parts.push(...filterParts);
+    params.push(...filterParams);
+  }
+  return db.prepare(`
+    SELECT ${FTS_BOOK_PAGE_COLUMNS}
+    FROM active_books b
+    WHERE ${parts.join(' AND ')}
+    LIMIT 64
+  `).all(...params);
+}
+
+function mergeExactTitlePins(hits, needleKey, filterParts, filterParams) {
+  const pins = loadExactTitlePins(needleKey, filterParts, filterParams);
+  if (!pins.length) return hits;
+  const seen = new Set(hits.map((row) => row.id));
+  const merged = hits.slice();
+  for (const pin of pins) {
+    if (!pin?.id || seen.has(pin.id)) continue;
+    seen.add(pin.id);
+    merged.push({ ...pin, ftsRank: 0 });
+  }
+  return merged;
+}
+
+/**
+ * Ranked book page for an FTS MATCH.
+ * Fast path avoids sorting every hit. Returns null to keep the SQL ORDER BY.
+ */
+function queryFtsBookPage({
+  match,
+  whereSql,
+  whereParams,
+  needleKey,
+  contentTokens,
+  sort,
+  order,
+  pageSize,
+  offset,
+  authorNames = null,
+  filterParts = [],
+  filterParams = []
+}) {
+  if (!(pageSize > 0)) return [];
+  const fast = tryFastFtsBookPage({
+    match,
+    needleKey,
+    contentTokens,
+    sort,
+    order,
+    pageSize,
+    offset,
+    authorNames,
+    filterParts,
+    filterParams
+  });
+  if (fast) return fast;
+  return queryLegacyFtsPage({
+    whereSql,
+    whereParams,
+    needleKey,
+    contentTokens,
+    sort,
+    order,
+    pageSize,
+    offset
+  });
+}
+
+function tryFastFtsBookPage({
+  match,
+  needleKey,
+  contentTokens,
+  sort,
+  order,
+  pageSize,
+  offset,
+  authorNames,
+  filterParts,
+  filterParams
+}) {
+  if (sort === 'series' || !match) return null;
+  /* Author+title stays on SQL: an external-content FTS table does not honor
+     `rowid = ? AND MATCH` (a miss still returns some other hit). */
+  if (authorNames?.length || filterParts.length) return null;
+  if (offset + pageSize > FTS_RANK_WINDOW) return null;
+
+  /* Окно в 400 хитов, среди которых много deleted, раньше срывалось в ORDER BY bm25
+     по всем совпадениям. Добираем следующие окна, пока не наберётся страница. */
+  const rankById = new Map();
+  const books = [];
+  const seen = new Set();
+  const batch = 400;
+  const maxScan = 1600;
+  let fetched = 0;
+  while (fetched < maxScan && books.length < offset + pageSize) {
+    const ranked = ftsRankWindow(match, batch, fetched);
+    if (!ranked.length) break;
+    const ids = [];
+    for (const row of ranked) {
+      rankById.set(row.id, Number(row.ftsRank));
+      ids.push(row.id);
+    }
+    for (const book of loadActiveBooksByIds(ids)) {
+      if (seen.has(book.id)) continue;
+      seen.add(book.id);
+      books.push(book);
+    }
+    fetched += ranked.length;
+    if (ranked.length < batch) break;
+  }
+  let hits = books.map((row) => ({ ...row, ftsRank: rankById.get(row.id) }));
+  hits = mergeExactTitlePins(hits, needleKey, filterParts, filterParams);
+  if (!hits.length) return null;
+  return sliceRankedFtsHits(hits, { needleKey, contentTokens, sort, order, pageSize, offset });
+}
+
+function queryLegacyFtsPage({
+  whereSql,
+  whereParams,
+  needleKey,
+  contentTokens,
+  sort,
+  order,
+  pageSize,
+  offset
+}) {
+  const boost = buildTitleBoostExpr('b.title_search', needleKey, contentTokens);
+  const listOrderBy = resolveBookAliasSort(sort, 'b', order);
+  const rankedOrderBy = sort === 'series'
+    ? `${listOrderBy}, ${boost.sql} ASC, bm25(books_fts) ASC`
+    : `${boost.sql} ASC, bm25(books_fts) ASC, ${listOrderBy}`;
+  return finalizeSearchBookPage(db.prepare(`
+    SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang,
+           b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
+    FROM books_fts
+    JOIN active_books b ON b.id = books_fts.id
+    WHERE ${whereSql}
+    ORDER BY ${rankedOrderBy}
+    LIMIT ? OFFSET ?
+  `).all(...whereParams, ...boost.params, pageSize, offset).map(mapBookListRow), pageSize);
 }
 
 function tryTypoCorrectedSearchBooks(args) {
@@ -3889,24 +4213,20 @@ export function searchBooks({
         }
         if (ftsHit) {
           const contentTokens = filterSearchContentTokens(String(titleNeedle || '').split(/\s+/));
-          const boost = buildTitleBoostExpr('b.title_search', titleNeedle, contentTokens);
-          const titleBoost = boost.sql;
-          const titleBoostParams = boost.params;
-          const listOrderBy = resolveBookAliasSort(sort, 'b', order);
-          const rankedOrderBy = sort === 'series'
-            ? `${listOrderBy}, ${titleBoost} ASC, bm25(books_fts) ASC`
-            : `${titleBoost} ASC, bm25(books_fts) ASC, ${listOrderBy}`;
-          const items = pageSize > 0
-            ? finalizeSearchBookPage(db.prepare(`
-              SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang,
-                     b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
-              FROM books_fts
-              JOIN active_books b ON b.id = books_fts.id
-              WHERE ${whereSql}
-              ORDER BY ${rankedOrderBy}
-              LIMIT ? OFFSET ?
-            `).all(...whereParams, ...titleBoostParams, pageSize, offset).map(mapBookListRow), pageSize)
-            : [];
+          const items = queryFtsBookPage({
+            match: titlePlan.match,
+            whereSql,
+            whereParams,
+            needleKey: titleNeedle,
+            contentTokens,
+            sort,
+            order,
+            pageSize,
+            offset,
+            authorNames: split.authorNames,
+            filterParts,
+            filterParams
+          });
           attachSeriesListsToBooks(items);
           const outTotal = mode === 'omit' ? items.length : total;
           return capped ? { total: outTotal, items, capped: true } : { total: outTotal, items };
@@ -3942,17 +4262,21 @@ export function searchBooks({
         LIMIT 1
       `).get(...whereParams));
     } else {
+      /* Без фильтров не джойнить active_books: VIEW читает полную строку books
+         до 10001 раза и на NAS это несколько секунд. Удалённые чуть завышают cap. */
       const counted = resolveSqlTotal(
         `SELECT COUNT(*) AS count
          FROM books_fts
          JOIN active_books b ON b.id = books_fts.id
          WHERE ${whereSql}`,
         whereParams,
-        `SELECT 1
-         FROM books_fts
-         JOIN active_books b ON b.id = books_fts.id
-         WHERE ${whereSql}`,
-        whereParams
+        filterParts.length
+          ? `SELECT 1
+             FROM books_fts
+             JOIN active_books b ON b.id = books_fts.id
+             WHERE ${whereSql}`
+          : `SELECT 1 FROM books_fts WHERE books_fts MATCH ?`,
+        filterParts.length ? whereParams : [ftsPlan.match]
       );
       total = counted.total;
       capped = counted.capped;
@@ -3963,26 +4287,20 @@ export function searchBooks({
     // If MATCH finds nothing, fall through to LIKE instead of a false "0 results".
     if (ftsHit) {
       const contentTokens = filterSearchContentTokens(String(needleKey || '').split(/\s+/));
-      const boost = buildTitleBoostExpr('b.title_search', needleKey, contentTokens);
-      const titleBoost = boost.sql;
-      const titleBoostParams = boost.params;
-      const listOrderBy = resolveBookAliasSort(sort, 'b', order);
       /* Exact/phrase/ordered title beat bm25 so multi-word titles land on page 1. */
-      const rankedOrderBy = sort === 'series'
-        ? `${listOrderBy}, ${titleBoost} ASC, bm25(books_fts) ASC`
-        : `${titleBoost} ASC, bm25(books_fts) ASC, ${listOrderBy}`;
-
-      const items = pageSize > 0
-        ? finalizeSearchBookPage(db.prepare(`
-        SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang,
-               b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
-        FROM books_fts
-        JOIN active_books b ON b.id = books_fts.id
-        WHERE ${whereSql}
-        ORDER BY ${rankedOrderBy}
-        LIMIT ? OFFSET ?
-      `).all(...whereParams, ...titleBoostParams, pageSize, offset).map(mapBookListRow), pageSize)
-        : [];
+      const items = queryFtsBookPage({
+        match: ftsPlan.match,
+        whereSql,
+        whereParams,
+        needleKey,
+        contentTokens,
+        sort,
+        order,
+        pageSize,
+        offset,
+        filterParts,
+        filterParams
+      });
 
       attachSeriesListsToBooks(items);
       const outTotal = mode === 'omit' ? items.length : total;
@@ -4444,6 +4762,15 @@ export function listSearchGenres({
  * `routeField` is always null (web Enter opens books; no smart redirect).
  * Pass `booksTotal` when the books page was already loaded to skip a second COUNT.
  */
+/** Лог только медленных поисковых вызовов: по строке видно, какой шаг тормозит на конкретной машине. */
+const SLOW_SEARCH_LOG_MS = Number(process.env.SLOW_SEARCH_LOG_MS) || 300;
+function logSlowSearchSteps(label, query, steps) {
+  const total = steps.reduce((sum, [, ms]) => sum + ms, 0);
+  if (total < SLOW_SEARCH_LOG_MS) return;
+  const detail = steps.map(([name, ms]) => `${name}=${ms}ms`).join(' ');
+  console.warn(`[perf] slow ${label} q="${String(query).slice(0, 60)}" total=${total}ms ${detail}`);
+}
+
 export function searchOverview({
   query = '',
   booksTotal: booksTotalIn = null,
@@ -4462,7 +4789,9 @@ export function searchOverview({
   }
   let bookTotal;
   let booksCapped;
-  if (booksTotalIn != null && Number.isFinite(Number(booksTotalIn))) {
+  const booksPrecomputed = booksTotalIn != null && Number.isFinite(Number(booksTotalIn));
+  const tOverview = Date.now();
+  if (booksPrecomputed) {
     bookTotal = Math.max(0, Math.floor(Number(booksTotalIn) || 0));
     booksCapped = Boolean(booksCappedIn);
   } else {
@@ -4479,8 +4808,11 @@ export function searchOverview({
     bookTotal = Math.max(0, Math.floor(Number(books.total) || 0));
     booksCapped = Boolean(books.capped);
   }
+  const tBooks = Date.now();
   const authors = listAuthors({ query: q, page: 1, pageSize: 1, sort: 'count' });
+  const tAuthors = Date.now();
   const series = listSeries({ query: q, page: 1, pageSize: 3, sort: 'count', nameOnly: true });
+  logSlowSearchSteps('overview', q, [['books', tBooks - tOverview], ['authors', tAuthors - tBooks], ['series', Date.now() - tAuthors]]);
   const authorsTotal = Math.max(0, Math.floor(Number(authors.total) || 0));
   const seriesTotal = Math.max(0, Math.floor(Number(series.total) || 0));
   const preferredField = detectPreferredSearchField({
@@ -4490,23 +4822,28 @@ export function searchOverview({
     seriesTotal,
     seriesSamples: series.items || []
   });
-  const warmQuery = q;
-  setImmediate(() => {
-    try {
-      const page = searchBooks({
-        query: warmQuery,
-        page: 1,
-        pageSize: 24,
-        field: 'all',
-        sort: 'title',
-        totalMode: 'capped',
-        allowTypoRetry: false
-      });
-      rememberWarmSearchBooksPage(warmQuery, 'title', { ...page, field: 'books' });
-    } catch {
-      /* warmup best-effort */
-    }
-  });
+  /* Прогрев первой страницы нужен только для /api/search (клиент потом откроет каталог).
+     Когда книги уже посчитаны вызывающим (/catalog), это был бы повтор той же выдачи
+     и второй блокирующий проход по FTS сразу после ответа. */
+  if (!booksPrecomputed) {
+    const warmQuery = q;
+    setImmediate(() => {
+      try {
+        const page = searchBooks({
+          query: warmQuery,
+          page: 1,
+          pageSize: 24,
+          field: 'all',
+          sort: 'title',
+          totalMode: 'capped',
+          allowTypoRetry: false
+        });
+        rememberWarmSearchBooksPage(warmQuery, 'title', { ...page, field: 'books' });
+      } catch {
+        /* warmup best-effort */
+      }
+    });
+  }
   return {
     query: q,
     books: {
@@ -4599,6 +4936,7 @@ export function searchCatalog({
   const hasGenre = parseGenreList(genre).length > 0;
   const seriesFlag = parseHasSeries(hasSeries);
   const hasMinRate = Math.floor(Number(minRate) || 0) >= 1;
+  const tCatalog = Date.now();
   let result;
   if (normalizedField === 'authors') {
     result = { ...listAuthors({ page, pageSize, query, sort: sort === 'name' ? 'name' : 'count', order, letter }), field: normalizedField };
@@ -4653,6 +4991,7 @@ export function searchCatalog({
   }
 
   const q = String(query || '').trim();
+  const tMain = Date.now();
   const hintField = normalizedField === 'authors' || normalizedField === 'series' ? normalizedField : 'books';
   if (q && result.total === 0) {
     result.searchHints = buildSearchRecoveryHints({ query: q, field: hintField });
@@ -4670,6 +5009,7 @@ export function searchCatalog({
     };
   }
 
+  logSlowSearchSteps('catalog', q, [['main', tMain - tCatalog], ['hints', Date.now() - tMain]]);
   return result;
 }
 
@@ -5118,15 +5458,45 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
   const rankCases = [];
   const rankParams = [];
   let whereSQL;
+  /** Indexed surname prefix already counted; skip the second full COUNT. */
+  let knownTotal = null;
+
+  const countAuthorMatches = (sql, params) => Number(db.prepare(`
+    SELECT COUNT(*) AS count FROM authors a
+    WHERE (${sql}) AND a.book_count > 0 AND ${preferredAuthorRowSql('a')}
+  `).get(...params).count) || 0;
 
   if (needleTokens.length === 1) {
     const word = needleTokens[0];
     if (parsed.operator === '=') {
       whereSQL = `COALESCE(a.search_name, '') = ?`;
       whereParams.push(word);
-    } else {
+    } else if (parsed.operator === '*') {
       whereSQL = `COALESCE(a.search_name, '') LIKE ?`;
       whereParams.push(`%${word}%`);
+    } else {
+      /* Фамилия — префикс sort_name. Диапазон >= / < берёт idx_authors_sort_name.
+         LIKE '%фамилия%' с параметром индекс не использует и читает всех авторов дважды. */
+      const sortPrefix = authorColumnPrefixClause('a.sort_name', word);
+      whereSQL = sortPrefix.sql;
+      whereParams.push(...sortPrefix.params);
+      const sortTotal = countAuthorMatches(whereSQL, whereParams);
+      if (sortTotal > 0) {
+        knownTotal = sortTotal;
+      } else {
+        const searchPrefix = authorColumnPrefixClause('a.search_name', word);
+        const searchTotal = countAuthorMatches(searchPrefix.sql, searchPrefix.params);
+        if (searchTotal > 0) {
+          whereSQL = searchPrefix.sql;
+          whereParams.length = 0;
+          whereParams.push(...searchPrefix.params);
+          knownTotal = searchTotal;
+        } else {
+          whereSQL = `COALESCE(a.search_name, '') LIKE ?`;
+          whereParams.length = 0;
+          whereParams.push(`%${word}%`);
+        }
+      }
     }
 
     rankCases.push(`WHEN ${surnameExpr} = ? THEN 0`);
@@ -5162,7 +5532,7 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
 
   const orderBy = sort === 'name'
     ? applyOrder(`${rankSQL} ASC, COALESCE(a.sort_name, LOWER(a.name)) ASC`, order)
-    : applyOrder(`${rankSQL} ASC, bookCount DESC, COALESCE(a.sort_name, LOWER(a.name)) ASC`, order);
+    : applyOrder(`bookCount DESC, ${rankSQL} ASC, COALESCE(a.sort_name, LOWER(a.name)) ASC`, order);
 
   const items = db.prepare(`
     SELECT a.name AS name,
@@ -5177,10 +5547,12 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
 
   if (skipTotal) return { total: offset + items.length, items: withAuthorDisplayNames(items) };
 
-  const total = db.prepare(`
-    SELECT COUNT(*) AS count FROM authors a
-    WHERE (${whereSQL}) AND a.book_count > 0 AND ${preferredAuthorRowSql('a')}
-  `).get(...whereParams).count;
+  const total = knownTotal != null
+    ? knownTotal
+    : db.prepare(`
+      SELECT COUNT(*) AS count FROM authors a
+      WHERE (${whereSQL}) AND a.book_count > 0 AND ${preferredAuthorRowSql('a')}
+    `).get(...whereParams).count;
 
   return { total, items: withAuthorDisplayNames(items) };
 }
@@ -5227,7 +5599,28 @@ export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'name',
     return { total, items };
   }
 
-  const nameSearch = buildCatalogSearchSql('s.search_name', query);
+  let nameSearch = null;
+  let seriesKnownTotal = null;
+  if (needleTokens.length === 1 && parsed.operator !== '=' && parsed.operator !== '*') {
+    const word = needleTokens[0];
+    const probeSeriesPrefix = (column) => {
+      const clause = authorColumnPrefixClause(column, word);
+      const total = Number(db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM series_catalog s
+        WHERE ${clause.sql} AND s.book_count > 0
+      `).get(...clause.params).count) || 0;
+      return total > 0 ? { clause, total } : null;
+    };
+    /* Одно слово — диапазон по idx_series_catalog_sort_name.
+       LIKE '%слово%' индекс не берёт и на слабом CPU читает весь каталог серий. */
+    const hit = probeSeriesPrefix('s.sort_name') || probeSeriesPrefix('s.search_name');
+    if (hit) {
+      nameSearch = { where: hit.clause.sql, params: hit.clause.params };
+      seriesKnownTotal = hit.total;
+    }
+  }
+  if (!nameSearch) nameSearch = buildCatalogSearchSql('s.search_name', query);
 
   /*
    * Режим «Серии» ищет по названию серии. Дополнительно (если !nameOnly):
@@ -5304,7 +5697,7 @@ export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'name',
 
   const orderBy = sort === 'name'
     ? applyOrder(`${rankSQL} ASC, COALESCE(s.sort_name, LOWER(s.name)) ASC`, order)
-    : applyOrder(`${rankSQL} ASC, s.book_count DESC, COALESCE(s.sort_name, LOWER(s.name)) ASC`, order);
+    : applyOrder(`s.book_count DESC, ${rankSQL} ASC, COALESCE(s.sort_name, LOWER(s.name)) ASC`, order);
 
   const items = db.prepare(`
     SELECT s.name AS name,
@@ -5319,10 +5712,12 @@ export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'name',
 
   if (skipTotal) return { total: offset + items.length, items };
 
-  const total = db.prepare(`
-    SELECT COUNT(*) AS count FROM series_catalog s
-    WHERE (${combinedWhere}) AND s.book_count > 0
-  `).get(...mainWhereParams).count;
+  const total = seriesKnownTotal != null
+    ? seriesKnownTotal
+    : db.prepare(`
+      SELECT COUNT(*) AS count FROM series_catalog s
+      WHERE (${combinedWhere}) AND s.book_count > 0
+    `).get(...mainWhereParams).count;
 
   return { total, items };
 }
@@ -5665,12 +6060,17 @@ export function getBooksByFacetLight(facet, value, limit = 8, sort = 'rating') {
   return stmt.all(resolved, limit).map(mapBookListRow);
 }
 
-function buildFacetExtraWhere({ lang = '', format = '', year = 0, minRate = 0, hasSeries = null } = {}) {
+function buildFacetExtraWhere({ lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genre = '' } = {}) {
   const parts = [];
   const params = [];
   for (const ef of buildCatalogExtraFilters({ lang, format, year, minRate, hasSeries })) {
     parts.push(ef.where.replace(/active_books\./g, 'b.'));
     params.push(...ef.params);
+  }
+  const genreFilter = buildGenreFilterSql(genre);
+  if (genreFilter) {
+    parts.push(genreFilter.where.replace(/active_books\./g, 'b.'));
+    params.push(...genreFilter.params);
   }
   return {
     sql: parts.length ? ` AND ${parts.join(' AND ')}` : '',
@@ -5681,10 +6081,10 @@ function buildFacetExtraWhere({ lang = '', format = '', year = 0, minRate = 0, h
 
 function getBooksByFacetFiltered({
   facet, value, page = 1, pageSize = 24, sort = 'title', order = '', author = '',
-  lang = '', format = '', year = 0, minRate = 0, hasSeries = null
+  lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genre = ''
 }) {
   const offset = (page - 1) * pageSize;
-  const extra = buildFacetExtraWhere({ lang, format, year, minRate, hasSeries });
+  const extra = buildFacetExtraWhere({ lang, format, year, minRate, hasSeries, genre });
   const rankOrder = "COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, ''), b.imported_at) DESC, b.imported_at DESC, b.id DESC";
   const listOrder = sort === 'recent'
     ? rankOrder
@@ -5748,7 +6148,7 @@ function getBooksByFacetFiltered({
 
 export function getBooksByFacet({
   facet, value, page = 1, pageSize = 24, sort = 'title', order = '', author = '',
-  lang = '', format = '', year = 0, minRate = 0, hasSeries = null
+  lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genre = ''
 } = {}) {
   if (facet === 'series') {
     value = resolveSeriesCatalogName(String(value || ''));
@@ -5756,8 +6156,9 @@ export function getBooksByFacet({
     value = resolveAuthorName(String(value || '')) || String(value || '');
   }
   const seriesFlag = hasSeries === 0 || hasSeries === 1 ? hasSeries : parseHasSeries(hasSeries);
-  const extra = buildFacetExtraWhere({ lang, format, year, minRate, hasSeries: seriesFlag });
-  const filterKey = `${lang}|${format}|${year}|${minRate}|${seriesFlag ?? ''}`;
+  const genreKey = parseGenreList(genre).join(',');
+  const extra = buildFacetExtraWhere({ lang, format, year, minRate, hasSeries: seriesFlag, genre: genreKey });
+  const filterKey = `${lang}|${format}|${year}|${minRate}|${seriesFlag ?? ''}|${genreKey}`;
   const cacheKey = `${facet}|${value}|${sort}|${order}|${page}|${pageSize}|${author}|f:${filterKey}`;
   const cached = readTimedCache(facetBooksCache, cacheKey);
   if (cached) return cached;
@@ -5766,7 +6167,7 @@ export function getBooksByFacet({
   if (extra.active) {
     const result = getBooksByFacetFiltered({
       facet, value, page, pageSize, sort, order, author,
-      lang, format, year, minRate, hasSeries: seriesFlag
+      lang, format, year, minRate, hasSeries: seriesFlag, genre: genreKey
     });
     writeTimedCache(facetBooksCache, cacheKey, result, FACET_CACHE_TTL_MS, 120);
     return result;
@@ -5818,7 +6219,7 @@ export function getBooksByFacet({
  */
 export async function getBooksByFacetCoalesced({
   facet, value, page = 1, pageSize = 24, sort = 'title', order = '', author = '',
-  lang = '', format = '', year = 0, minRate = 0, hasSeries = null
+  lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genre = ''
 } = {}) {
   let v = String(value || '');
   if (facet === 'series') {
@@ -5827,7 +6228,8 @@ export async function getBooksByFacetCoalesced({
     v = resolveAuthorName(v) || v;
   }
   const seriesFlag = hasSeries === 0 || hasSeries === 1 ? hasSeries : parseHasSeries(hasSeries);
-  const filterKey = `${lang}|${format}|${year}|${minRate}|${seriesFlag ?? ''}`;
+  const genreKey = parseGenreList(genre).join(',');
+  const filterKey = `${lang}|${format}|${year}|${minRate}|${seriesFlag ?? ''}|${genreKey}`;
   const cacheKey = `${facet}|${v}|${sort}|${order}|${page}|${pageSize}|${author}|f:${filterKey}`;
   const cached = readTimedCache(facetBooksCache, cacheKey);
   if (cached) return cached;
@@ -5838,7 +6240,7 @@ export async function getBooksByFacetCoalesced({
         try {
           resolve(getBooksByFacet({
             facet, value: v, page, pageSize, sort, order, author,
-            lang, format, year, minRate, hasSeries: seriesFlag
+            lang, format, year, minRate, hasSeries: seriesFlag, genre: genreKey
           }));
         } catch (err) {
           reject(err);
@@ -5910,9 +6312,12 @@ function stripAuthorPageBookMeta(book) {
   return rest;
 }
 
-function buildAuthorSeriesGroupEntry(name, displayNameFromOrder, g, sort) {
+function buildAuthorSeriesGroupEntry(name, displayNameFromOrder, g, sort, order = '') {
   if (!g?.books?.length) return null;
-  const sorted = applyAuthorPageBookSort(g.books, sort);
+  // «По количеству» меняет порядок серий, книги внутри серии остаются по номеру тома.
+  const bookSort = sort === 'count' ? 'series' : sort;
+  const bookOrder = sort === 'count' ? '' : order;
+  const sorted = applyAuthorPageBookSort(g.books, bookSort, bookOrder);
   const latestMs = Math.max(0, ...sorted.map((b) => Date.parse(String(b._sortDate || '')) || 0));
   const books = sorted.map(stripAuthorPageBookMeta);
   const displayName = displayNameFromOrder || g.displayName;
@@ -5935,25 +6340,28 @@ function getAuthorGroupedFetchLimit(authorName, totalBooks) {
   return Math.min(AUTHOR_GROUPED_FETCH_CAP, Math.max(expanded, totalBooks, 1));
 }
 
-function orderAuthorSeriesGroups(series, sort) {
-  if (sort === 'title' || sort === 'author') {
-    return [...series].sort((a, b) =>
-      String(a.displayName || a.name).localeCompare(String(b.displayName || b.name), undefined, {
-        sensitivity: 'base',
-        numeric: true
-      })
+function authorSeriesNameCmp(a, b) {
+  return String(a.displayName || a.name).localeCompare(String(b.displayName || b.name), undefined, {
+    sensitivity: 'base',
+    numeric: true
+  });
+}
+
+function orderAuthorSeriesGroups(series, sort, order = '') {
+  if (sort === 'count') {
+    const dir = order === 'asc' ? 1 : -1;
+    return [...series].sort(
+      (a, b) => dir * ((a.books?.length || 0) - (b.books?.length || 0)) || authorSeriesNameCmp(a, b)
     );
   }
   if (sort === 'recent') {
+    const dir = order === 'asc' ? 1 : -1;
     return [...series].sort(
-      (a, b) =>
-        b._latestMs - a._latestMs ||
-        String(a.displayName || a.name).localeCompare(String(b.displayName || b.name), undefined, {
-          numeric: true
-        })
+      (a, b) => dir * (a._latestMs - b._latestMs) || authorSeriesNameCmp(a, b)
     );
   }
-  return series;
+  const dir = order === 'desc' ? -1 : 1;
+  return [...series].sort((a, b) => dir * authorSeriesNameCmp(a, b));
 }
 
 /** Книги автора: серии (по порядку каталога) и книги вне серий. */
@@ -6051,17 +6459,17 @@ export function getAuthorBooksGrouped(authorName, sort = 'title', order = '', { 
   }
 
   let series = seriesOrder
-    .map(({ name, displayName }) => buildAuthorSeriesGroupEntry(name, displayName, bySeries.get(name), sort))
+    .map(({ name, displayName }) => buildAuthorSeriesGroupEntry(name, displayName, bySeries.get(name), sort, order))
     .filter(Boolean);
 
   const orderedNames = new Set(series.map((s) => s.name));
   const extraNames = [...bySeries.keys()].filter((n) => !orderedNames.has(n)).sort();
   for (const name of extraNames) {
-    const entry = buildAuthorSeriesGroupEntry(name, null, bySeries.get(name), sort);
+    const entry = buildAuthorSeriesGroupEntry(name, null, bySeries.get(name), sort, order);
     if (entry) series.push(entry);
   }
 
-  series = orderAuthorSeriesGroups(series, sort);
+  series = orderAuthorSeriesGroups(series, sort, order);
   /* Additive `books` on each series — used by Flibusta-style list view; series cards use bookCount. */
   const seriesOut = series.map(({ name, displayName, books, _latestMs: _m }) => ({
     name,
@@ -7563,6 +7971,9 @@ export function getSuggestions(query, limit = 5, field = 'books') {
   let books = [];
   let authors = [];
   let seriesItems = [];
+  const tStart = Date.now();
+  let tAuthors = tStart;
+  let tSeries = tStart;
 
   if (scope === 'books' || scope === 'authors') {
     authors = listAuthors({ query: raw, page: 1, pageSize: n, sort: 'count', skipTotal: true }).items
@@ -7571,6 +7982,7 @@ export function getSuggestions(query, limit = 5, field = 'books') {
         displayName: row.displayName || row.name,
         bookCount: row.bookCount
       }));
+    tAuthors = Date.now();
   }
 
   if (scope === 'books' || scope === 'series') {
@@ -7580,6 +7992,7 @@ export function getSuggestions(query, limit = 5, field = 'books') {
         displayName: row.displayName || row.name,
         bookCount: row.bookCount
       }));
+    tSeries = Date.now();
   }
 
   if (scope === 'books') {
@@ -7605,5 +8018,10 @@ export function getSuggestions(query, limit = 5, field = 'books') {
       }));
   }
 
+  logSlowSearchSteps('suggest', raw, [
+    ['authors', tAuthors - tStart],
+    ['series', tSeries - tAuthors],
+    ['books', Date.now() - tSeries]
+  ]);
   return { books, authors, series: seriesItems };
 }

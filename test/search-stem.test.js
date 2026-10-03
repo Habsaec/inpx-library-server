@@ -13,8 +13,9 @@ test('stemRussianToken keeps short tokens', () => {
   assert.equal(stemRussianToken('мир'), 'мир');
 });
 
-test('expandSearchTokenVariants adds stem beside original', () => {
-  const groups = expandSearchTokenVariants(['облаками', 'над']);
-  assert.deepEqual(groups[0], ['облаками', 'облак']);
+test('expandSearchTokenVariants uses one long stem prefix', () => {
+  const groups = expandSearchTokenVariants(['облаками', 'над', 'небо']);
+  assert.deepEqual(groups[0], ['облак']);
   assert.deepEqual(groups[1], ['над']);
+  assert.deepEqual(groups[2], ['небо']);
 });
