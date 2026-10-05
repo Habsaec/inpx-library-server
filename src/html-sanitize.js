@@ -5,6 +5,54 @@
 
 const VOID_HTML_TAGS = new Set(['br', 'hr', 'img']);
 
+const REAL_MARKUP_RE = /<\/?[a-z][^>]*>/i;
+/** Flibusta `etc/annotations.7z` stores the annotation as XML text: `&lt;p&gt;…&lt;/p&gt;`. */
+const ESCAPED_MARKUP_RE = /&(?:amp;)*(?:lt|#60|#x3c);\s*\/?[a-z]/i;
+
+function decodeXmlEntitiesOnce(value) {
+  return String(value)
+    .replace(/&#(\d+);/g, (all, n) => {
+      const code = Number(n);
+      return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : all;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (all, hex) => {
+      const code = parseInt(hex, 16);
+      return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : all;
+    })
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/gi, '&');
+}
+
+/**
+ * Turn a fully entity-encoded fragment into real tags.
+ * Leaves markup that already contains real tags untouched, so an intentional
+ * `&lt;` inside HTML stays escaped.
+ */
+export function unwrapEscapedMarkup(html) {
+  let s = String(html || '');
+  if (!s || !ESCAPED_MARKUP_RE.test(s)) return s;
+  for (let i = 0; i < 2; i++) {
+    if (REAL_MARKUP_RE.test(s) || !ESCAPED_MARKUP_RE.test(s)) break;
+    const next = decodeXmlEntitiesOnce(s);
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
+/** Cached annotations may store Flibusta markup still entity-encoded. */
+export function normalizeCachedAnnotation(annotation, annotationIsHtml = false) {
+  const raw = String(annotation || '');
+  const text = unwrapEscapedMarkup(raw);
+  const gainedTags = text !== raw && REAL_MARKUP_RE.test(text);
+  const isHtml = Boolean(annotationIsHtml) || gainedTags;
+  return { annotation: isHtml ? text : raw, annotationIsHtml: isHtml };
+}
+
 /**
  * Flibusta/FLibrary author & annotation markup uses image slots like:
  *   [float=right]$$0$$[/float]

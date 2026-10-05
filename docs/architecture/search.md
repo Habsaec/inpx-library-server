@@ -25,7 +25,7 @@ User query
   → typeahead: GET /api/search/suggest (web dropdown + Android)
   → GET /api/catalog?field=authors|series from chips
   → empty: recovery hints + one typo retry; weak: ≤1 did-you-mean
-  → paginated page (edition dedupe by title+author)
+  → paginated page (edition dedupe: same title, author, series, year, and format)
 ```
 
 | Mode | Matcher |
@@ -60,9 +60,9 @@ Enter always opens **books** (Flibusta-like). Authors / series are chips above r
 1a. `/api/search/suggest` is cached per query (`PAGE_CACHE_TTL_MS`); calls slower than `SLOW_SEARCH_LOG_MS` (default 300) log `[perf] slow suggest|overview|catalog q="…" authors=…ms series=…ms books=…ms`
 2. No typo dictionary on suggest / overview
 3. No alternate-mode rescans except empty catalog results
-4. Suggest: `totalMode: 'omit'`; multi-word book suggest uses `field: 'title'`
+4. Suggest: title prefix on `idx_books_title_search` (no FTS `ORDER BY rank`); authors/series are `sort_name` ranges. FTS fill only when every content token is 4+ characters and the prefix list is short
 5. FTS when healthy; LIKE only on miss/dirty/`*`
-6. Unfiltered book totals count FTS rows only (cap 10k), without joining `active_books`
+6. Book totals join `active_books` (cap 10k) so excluded languages, genres, and deleted books are not counted
 7. Language/format dropdowns read `catalog_distinct_langs` / `catalog_distinct_exts`, not `SELECT DISTINCT` over `books` on each search
 
 ## FTS reliability
@@ -83,7 +83,7 @@ Authors + series + `search_title_tokens` (≤50k). Empty catalog → full `searc
 2. Ordered token contains (`%a%b%c%`)
 3. Prefix phrase
 4. `bm25` / author rank
-5. Catalog sort; page-level edition dedupe
+5. Catalog sort; page-level edition dedupe (series, year, and format stay separate)
 
 Unfiltered book search (not an author+title split, not series sort, first ~16 pages) takes the FTS5 `ORDER BY rank LIMIT` window, pins multi-word exact titles via `idx_books_title_search`, then applies the same boost in JS. Series sort, author+title splits, catalog filters, and deeper pages keep the SQL `ORDER BY`.
 

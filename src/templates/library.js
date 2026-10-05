@@ -1954,7 +1954,7 @@ export function renderProfileSettings({
     <div class="table-list profile-tab-panel">
       <div class="table-row table-row-stack profile-form-row">
         <div>
-          ${renderAppPairWidget('panel')}
+          ${renderAppPairWidget()}
         </div>
       </div>
       <div class="table-row table-row-stack profile-form-row">

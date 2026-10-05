@@ -58,9 +58,30 @@ export function clearWarmSearchBooksPages() {
   booksPageWarmCache.clear();
 }
 
+function editionTextKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** INPX date is YYYY, YYYY-MM-DD, or empty. Only the year distinguishes editions. */
+function editionYear(item) {
+  const raw = String(item?.bookDate || item?.date || '').trim();
+  const match = raw.match(/^(\d{4})/);
+  return match ? match[1] : '';
+}
+
+function editionSeriesNo(value) {
+  const s = String(value ?? '').trim();
+  return s === '' || /^0+(\.0+)?$/.test(s) ? '' : s;
+}
+
 /**
- * Dedupe near-identical editions on a result page (title+first author).
- * Keeps higher libRate, then prefers non-empty archiveName stability by id.
+ * Collapse only copies of the same edition on a result page.
+ * Same title and author in another series, year, format, or language stay visible.
+ * Keeps higher libRate, then the smaller id.
  */
 export function dedupeSearchBookItems(items = []) {
   if (!Array.isArray(items) || items.length <= 1) return items || [];
@@ -68,19 +89,18 @@ export function dedupeSearchBookItems(items = []) {
   const order = [];
   for (const item of items) {
     if (!item?.id) continue;
-    const titleKey = String(item.title || '')
-      .toLowerCase()
-      .replace(/ё/g, 'е')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const titleKey = editionTextKey(item.title);
     const authorRaw = String(item.authors || '').split(/[:;]/)[0] || '';
-    const authorKey = authorRaw
-      .toLowerCase()
-      .replace(/ё/g, 'е')
-      .replace(/,/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const key = `${titleKey}|${authorKey}`;
+    const authorKey = editionTextKey(authorRaw).replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+    const key = [
+      titleKey,
+      authorKey,
+      editionTextKey(item.series),
+      editionSeriesNo(item.seriesNo),
+      editionYear(item),
+      editionTextKey(item.ext),
+      editionTextKey(item.lang)
+    ].join('|');
     if (!best.has(key)) {
       best.set(key, item);
       order.push(key);

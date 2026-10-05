@@ -152,6 +152,8 @@ test('getSuggestions authors match listAuthors', () => {
 test('getSuggestions books scope returns FTS books', () => {
   const suggested = getSuggestions('девочка', 5, 'books');
   assert.ok(suggested.books.some((row) => row.id === BOOK_ID));
+  const shortPrefix = getSuggestions('де', 5, 'books');
+  assert.ok(shortPrefix.books.some((row) => row.id === BOOK_ID));
 });
 
 test('searchOverview returns totals for all modes', () => {

@@ -342,32 +342,29 @@ a.table-row-link:active {
   justify-content: center;
 }
 
-.sidebar-app-pair-btn {
-  display: inline-flex;
+.sidebar-app-download-btn {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: #fff;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
-  transition: transform 0.1s ease, border-color 0.15s ease;
 }
 
-.sidebar-app-pair-btn:hover {
-  border-color: var(--accent-hover, #a1671b);
-  transform: scale(1.04);
+.sidebar-app-download-btn:hover {
+  color: var(--text);
 }
 
-.sidebar-app-pair-qr,
+.sidebar-app-download-qr,
 .app-pair-qr-wrap {
   display: block;
   line-height: 0;
 }
 
-.sidebar-app-pair-qr svg,
+.sidebar-app-download-qr svg,
 .app-pair-qr-wrap svg,
 .app-pair-modal-qr svg {
   display: block;
@@ -375,9 +372,25 @@ a.table-row-link:active {
   height: auto;
 }
 
-.sidebar-app-pair-qr {
-  width: 48px;
-  height: 48px;
+.sidebar-app-download-qr {
+  width: 72px;
+  height: 72px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+
+.sidebar-app-download-btn:hover .sidebar-app-download-qr {
+  border-color: var(--accent-hover, #a1671b);
+  transform: scale(1.04);
+}
+
+.sidebar-app-download-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .app-pair-hint {

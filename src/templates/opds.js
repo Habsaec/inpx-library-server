@@ -2,6 +2,7 @@
  * OPDS (Open Publication Distribution System) template functions.
  */
 import { escapeHtml, sanitizeHtml, siteTitleForDisplay, t, FORMAT_LABELS, formatGenreLabel, downloadBookPath, apiBookPath } from './shared.js';
+import { unwrapEscapedMarkup } from '../html-sanitize.js';
 
 function renderOpdsBaseLinks(baseUrl, selfPath, { acquisition = false } = {}) {
   const selfType = acquisition
@@ -80,7 +81,7 @@ function renderOpdsBookEntries(baseUrl, items, { includeContent = false } = {}) 
     // Annotation: prefer HTML if it looks like it contains tags (like inpx-web)
     let contentXml;
     if (book.annotation) {
-      const ann = String(book.annotation);
+      const ann = unwrapEscapedMarkup(String(book.annotation));
       const hasHtml = /<[a-z][\s\S]*?>/i.test(ann);
       if (hasHtml) {
         contentXml = `<content type="text/html">${sanitizeHtml(ann)}</content>`;

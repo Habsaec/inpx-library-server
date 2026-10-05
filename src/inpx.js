@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizeCachedAnnotation } from './html-sanitize.js';
 import unzipper from 'unzipper';
 import iconv from 'iconv-lite';
 import {
@@ -3759,6 +3760,7 @@ function buildTitleBoostExpr(column, needleKey, contentTokens = []) {
 
 function finalizeSearchBookPage(items, pageSize) {
   const list = dedupeSearchBookItems(items || []);
+  for (const item of list) delete item.bookDate;
   if (pageSize > 0 && list.length > pageSize) return list.slice(0, pageSize);
   return list;
 }
@@ -3879,8 +3881,13 @@ function sliceRankedFtsHits(rows, { needleKey, contentTokens, sort, order, pageS
     return compareSearchTie(a, b, sort, order);
   });
   const deduped = dedupeSearchBookItems(
-    decorated.map((row) => mapBookListRow(stripSearchRankFields(row)))
+    decorated.map((row) => {
+      const item = mapBookListRow(stripSearchRankFields(row));
+      if (row.bookDate) item.bookDate = row.bookDate;
+      return item;
+    })
   );
+  for (const item of deduped) delete item.bookDate;
   return deduped.slice(offset, offset + pageSize);
 }
 
@@ -4023,7 +4030,7 @@ function queryLegacyFtsPage({
     : `${boost.sql} ASC, bm25(books_fts) ASC, ${listOrderBy}`;
   return finalizeSearchBookPage(db.prepare(`
     SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang,
-           b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
+           b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted, b.date AS bookDate
     FROM books_fts
     JOIN active_books b ON b.id = books_fts.id
     WHERE ${whereSql}
@@ -4262,21 +4269,18 @@ export function searchBooks({
         LIMIT 1
       `).get(...whereParams));
     } else {
-      /* Без фильтров не джойнить active_books: VIEW читает полную строку books
-         до 10001 раза и на NAS это несколько секунд. Удалённые чуть завышают cap. */
+      /* Тот же фильтр, что у выдачи: скрытые языки/жанры и удалённые не входят в «Найдено». */
       const counted = resolveSqlTotal(
         `SELECT COUNT(*) AS count
          FROM books_fts
          JOIN active_books b ON b.id = books_fts.id
          WHERE ${whereSql}`,
         whereParams,
-        filterParts.length
-          ? `SELECT 1
-             FROM books_fts
-             JOIN active_books b ON b.id = books_fts.id
-             WHERE ${whereSql}`
-          : `SELECT 1 FROM books_fts WHERE books_fts MATCH ?`,
-        filterParts.length ? whereParams : [ftsPlan.match]
+        `SELECT 1
+         FROM books_fts
+         JOIN active_books b ON b.id = books_fts.id
+         WHERE ${whereSql}`,
+        whereParams
       );
       total = counted.total;
       capped = counted.capped;
@@ -4388,7 +4392,7 @@ export function searchBooks({
     const items = pageSize > 0
       ? finalizeSearchBookPage(db.prepare(`
       SELECT id, title, authors, genres, series, series_no AS seriesNo, ext, lang,
-             lib_rate AS libRate, archive_name AS archiveName
+             lib_rate AS libRate, archive_name AS archiveName, date AS bookDate
       FROM active_books
       WHERE ${combinedWhere}
       ORDER BY ${rankedOrderBy}
@@ -5412,6 +5416,12 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
       );
     }
 
+    /* Typeahead must not COUNT or ORDER BY a correlated book-count sum:
+       a 2–3 letter prefix walks tens of thousands of authors and blocks the loop. */
+    if (skipTotal && parsed.operator !== '*') {
+      return suggestAuthorPage(needleKey, pageSize);
+    }
+
     const subsetMatches = findAuthorsMatchingTokenSubset(parsed.value || query);
     if (subsetMatches.length) {
       return paginateAuthorSearchMatches(
@@ -5597,6 +5607,11 @@ export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'name',
       LIMIT ? OFFSET ?
     `).all(...whereParams, pageSize, offset);
     return { total, items };
+  }
+
+  if (skipTotal && parsed.operator !== '=' && parsed.operator !== '*') {
+    const items = suggestRowsByNamePrefix('series_catalog', needleKey, pageSize);
+    return { total: items.length, items };
   }
 
   let nameSearch = null;
@@ -6942,8 +6957,9 @@ function attachCachedAnnotationsToBooks(books) {
     try {
       const row = _stmtCachedBookAnnotation.get(String(book.id));
       if (row?.annotation) {
-        book.annotation = row.annotation;
-        book.annotationIsHtml = Boolean(row.annotationIsHtml);
+        const annotation = normalizeCachedAnnotation(row.annotation, row.annotationIsHtml);
+        book.annotation = annotation.annotation;
+        book.annotationIsHtml = annotation.annotationIsHtml;
       }
     } catch { /* ignore */ }
   }
@@ -7959,6 +7975,88 @@ export function getReadBookIds(username) {
  * @param {number} [limit=5]
  * @param {string} [field='books'] scope: books | authors | series
  */
+const _suggestPrefixStmts = new Map();
+
+/** Indexed sort_name/search_name prefix. LIMIT stops the range; no correlated sums. */
+function suggestRowsByNamePrefix(table, prefix, limit) {
+  const word = String(prefix || '').trim();
+  const n = Math.max(1, Math.floor(Number(limit) || 5));
+  if (!word || (table !== 'authors' && table !== 'series_catalog')) return [];
+  const run = (column) => {
+    const clause = authorColumnPrefixClause(`${column}`, word);
+    const cacheKey = `${table}:${column}:${clause.params.length}`;
+    let stmt = _suggestPrefixStmts.get(cacheKey);
+    if (!stmt) {
+      stmt = db.prepare(`
+        SELECT name,
+               COALESCE(display_name, name) AS displayName,
+               COALESCE(sort_name, LOWER(name)) AS sortKey,
+               book_count AS bookCount
+        FROM ${table}
+        WHERE ${clause.sql} AND book_count > 0
+        ORDER BY book_count DESC
+        LIMIT ?
+      `);
+      _suggestPrefixStmts.set(cacheKey, stmt);
+    }
+    return stmt.all(...clause.params, n);
+  };
+  const bySort = run('sort_name');
+  if (bySort.length) return bySort;
+  return run('search_name');
+}
+
+function suggestAuthorPage(prefix, pageSize) {
+  const n = Math.max(1, Math.floor(Number(pageSize) || 5));
+  const raw = suggestRowsByNamePrefix('authors', prefix, Math.min(24, n * 4));
+  const collapsed = collapsePreferredAuthorRows(raw);
+  collapsed.sort((a, b) => (Number(b.bookCount) || 0) - (Number(a.bookCount) || 0));
+  const items = withAuthorDisplayNames(collapsed.slice(0, n));
+  return { total: items.length, items };
+}
+
+let _stmtSuggestTitlePrefix = null;
+
+/** First titles in idx_books_title_search. Stops after `limit` rows, no FTS rank. */
+function suggestBooksByTitlePrefix(prefix, limit) {
+  const word = String(prefix || '').trim();
+  const upper = textPrefixUpperBound(word);
+  if (!word || !upper) return [];
+  _stmtSuggestTitlePrefix ??= db.prepare(`
+    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo
+    FROM books b
+    WHERE b.title_search >= ? AND b.title_search < ?
+      AND b.deleted = 0
+      AND (b.source_id IS NULL OR EXISTS (
+        SELECT 1 FROM sources s WHERE s.id = b.source_id AND s.enabled = 1
+      ))
+    ORDER BY b.title_search
+    LIMIT ?
+  `);
+  return _stmtSuggestTitlePrefix.all(word, upper, limit);
+}
+
+let _stmtSuggestFtsIds = null;
+
+function suggestBooksByFts(query, field, limit) {
+  if (!isBooksFtsUsable()) return [];
+  const plan = buildBooksFtsMatchQuery(field, query);
+  if (plan?.mode !== 'fts' || !plan.match) return [];
+  _stmtSuggestFtsIds ??= db.prepare(`
+    SELECT id FROM books_fts WHERE books_fts MATCH ? LIMIT ?
+  `);
+  const ids = _stmtSuggestFtsIds.all(plan.match, limit).map((row) => row.id).filter(Boolean);
+  if (!ids.length) return [];
+  const byId = new Map(loadActiveBooksByIds(ids).map((row) => [row.id, row]));
+  const out = [];
+  for (const id of ids) {
+    const row = byId.get(id);
+    if (!row) continue;
+    out.push(row);
+  }
+  return out;
+}
+
 export function getSuggestions(query, limit = 5, field = 'books') {
   const raw = String(query || '').trim();
   if (!raw || raw.length < 2) return { books: [], authors: [], series: [] };
@@ -7996,26 +8094,28 @@ export function getSuggestions(query, limit = 5, field = 'books') {
   }
 
   if (scope === 'books') {
-    // Skip full COUNT(*) — typeahead only needs a few ranked rows.
-    // Multi-word queries: title-scoped MATCH is cheaper/more relevant than field=all.
-    const contentTokens = filterSearchContentTokens(key.split(/\s+/));
-    const bookField = contentTokens.length >= 2 ? 'title' : 'all';
-    books = searchBooks({
-      query: raw,
-      page: 1,
-      pageSize: n,
-      field: bookField,
-      sort: 'title',
-      totalMode: 'omit',
-      allowTypoRetry: false
-    }).items
-      .map((row) => ({
+    /* Title prefix uses idx_books_title_search and stops at `n` rows.
+       FTS ORDER BY rank on a 2–3 letter prefix ("ле", "лет") ranks hundreds of
+       thousands of hits and blocks the event loop for tens of seconds. */
+    const seen = new Set();
+    const pushBook = (row) => {
+      if (!row?.id || seen.has(row.id) || books.length >= n) return;
+      seen.add(row.id);
+      books.push({
         id: row.id,
         title: row.title,
         authors: row.authors,
         series: row.series,
         seriesNo: row.seriesNo || ''
-      }));
+      });
+    };
+    for (const row of suggestBooksByTitlePrefix(key, n)) pushBook(row);
+    const contentTokens = filterSearchContentTokens(key.split(/\s+/));
+    const canFtsFill = contentTokens.length > 0 && contentTokens.every((tok) => tok.length >= 4);
+    if (books.length < n && canFtsFill) {
+      const bookField = contentTokens.length >= 2 ? 'title' : 'all';
+      for (const row of suggestBooksByFts(raw, bookField, n)) pushBook(row);
+    }
   }
 
   logSlowSearchSteps('suggest', raw, [

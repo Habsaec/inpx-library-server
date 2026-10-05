@@ -26,7 +26,8 @@ import {
 } from '../i18n.js';
 import { resolveIndexStageLine } from '../index-stage-i18n.js';
 import { getUiCustomization, getThemeCssVars, hasUiThemeColorsConfigured, usesPanelGlass, hasUiThemeShapeConfigured, hasUiThemeTypographyConfigured, FONT_FAMILY_WEBFONT, DISPLAY_FONT_WEBFONT } from '../services/ui-customization.js';
-import { balanceHtmlFragment, stripFlibustaMediaPlaceholders } from '../html-sanitize.js';
+import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarkup } from '../html-sanitize.js';
+import { APP_DOWNLOAD_URL, appDownloadQrSvg } from '../app-download-qr.js';
 
 export { t, tp, getLocale, plural, countLabel, formatLocaleInt, formatLocaleDateShort, formatLocaleDateTimeShort, formatLocaleDateLong, serializeClientI18n };
 export { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, parseGenreCodes };
@@ -245,7 +246,7 @@ export function escapeHtml(value = '') {
 const ALLOWED_HTML_TAG_RE = /^(b|i|em|strong|p|br|span|div|ul|ol|li|h[1-6]|blockquote|sup|sub|a|img|table|thead|tbody|tr|td|th)$/i;
 
 export function sanitizeHtml(html) {
-  const cleaned = stripXmlInvalidControls(stripFlibustaMediaPlaceholders(html))
+  const cleaned = stripXmlInvalidControls(stripFlibustaMediaPlaceholders(unwrapEscapedMarkup(html)))
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/javascript:/gi, 'blocked:')
@@ -1383,24 +1384,27 @@ function renderLoginLogoBlock() {
   return `<div class="login-brand-logo"><img src="${escapeHtml(src)}" alt="" class="login-logo-img" onerror="if(this.dataset.fallback!=='1'){this.dataset.fallback='1';this.src='/logo.png'}else{this.parentElement.style.display='none'}"></div>`;
 }
 
+/** Sidebar QR: phone camera opens the Android app download page. */
+function renderAppDownloadWidget() {
+  const url = escapeHtml(APP_DOWNLOAD_URL);
+  return `
+    <div class="sidebar-app-download">
+      <button type="button" class="sidebar-app-download-btn" data-app-download-open data-app-download-url="${url}" aria-label="${escapeHtml(t('profile.appDownload.sidebarAria'))}" title="${escapeHtml(t('profile.appDownload.title'))}">
+        <span class="sidebar-app-download-qr" data-app-download-qr aria-hidden="true">${appDownloadQrSvg()}</span>
+        <span class="sidebar-app-download-label">${escapeHtml(t('profile.appDownload.label'))}</span>
+      </button>
+    </div>`;
+}
+
 /**
- * QR pairing widget markup (filled by public/app.js).
- * @param {'panel'|'sidebar'} variant
+ * Profile QR for one-time app sign-in (filled by public/app.js).
  */
-export function renderAppPairWidget(variant = 'panel') {
-  if (variant === 'sidebar') {
-    return `
-      <div class="sidebar-app-pair" data-app-pair-root data-app-pair-variant="sidebar">
-        <button type="button" class="sidebar-app-pair-btn" data-app-pair-open aria-label="${escapeHtml(t('profile.appPair.sidebarAria'))}" title="${escapeHtml(t('profile.appPair.open'))}">
-          <span class="sidebar-app-pair-qr" data-app-pair-qr aria-hidden="true"></span>
-        </button>
-      </div>`;
-  }
+export function renderAppPairWidget() {
   return `
     <div class="app-pair-panel" data-app-pair-root data-app-pair-variant="panel" data-app-pair-autoload="1">
       <strong>${escapeHtml(t('profile.appPair.title'))}</strong>
       <p class="muted app-pair-hint">${escapeHtml(t('profile.appPair.hint'))}</p>
-      <p class="app-pair-app-link"><a href="https://github.com/Habsaec/inpx-book-reader/releases/latest" target="_blank" rel="noopener noreferrer">${escapeHtml(t('profile.appPair.appLink'))}</a></p>
+      <p class="app-pair-app-link"><a href="${escapeHtml(APP_DOWNLOAD_URL)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('profile.appPair.appLink'))}</a></p>
       <div class="app-pair-body">
         <div class="app-pair-qr-wrap" data-app-pair-qr aria-hidden="true"></div>
         <div class="app-pair-meta">
@@ -1425,9 +1429,7 @@ function renderUserSidebar({
   canAccessAdmin = false,
   csrfToken = ''
 }) {
-  const appPairFooter = user
-    ? `<div class="sidebar-footer">${renderAppPairWidget('sidebar')}</div>`
-    : '';
+  const appDownloadFooter = `<div class="sidebar-footer">${renderAppDownloadWidget()}</div>`;
   return `
     <aside class="sidebar sidebar-user" aria-label="${escapeHtml(t('aria.sidebar'))}">
       <div class="sidebar-user-scroll">
@@ -1447,7 +1449,7 @@ function renderUserSidebar({
     className: 'sidebar-tools'
   })}
       </div>
-      ${appPairFooter}
+      ${appDownloadFooter}
     </aside>
     <div class="sidebar-overlay" data-sidebar-overlay></div>`;
 }

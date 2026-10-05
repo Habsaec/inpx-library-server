@@ -43,7 +43,7 @@ Key endpoints for reader:
 - `GET /api/facet-books` — books by facet (`authors`/`series`/`genres`/`languages`); additive filters: `genre` (CSV/repeated, OR), `format`, `year`, `minRate`, `hasSeries` (1/0), `lang`
 - Web catalog / search / novinki support `?view=list` (Flibusta-style rows) alongside the default cover grid
 - `GET /api/browse/authors/:value/grouped` — author series + `standaloneBooks` + `books[]` per series (Flibusta-style list); `lean=1` omits `books[]` (name/displayName/bookCount only); `resolveAuthorName` picks the `authors` alias with the same `search_name` and higher `book_count` (INPX Latin vs Cyrillic duplicate)
-- Book search: SQLite FTS5, stem expand, title boost (exact/ordered/prefix), author+title split, phrase OR, stopword-aware AND, catalog-layer typo retry on miss, page-level edition dedupe, LIKE fallback when dirty/desynced. Dirty/desync auto-rebuild; post-index FTS warmup. Admin/ops: additive `ftsStatus`, `POST /api/operations/fts-rebuild`
+- Book search: SQLite FTS5, stem expand, title boost (exact/ordered/prefix), author+title split, phrase OR, stopword-aware AND, catalog-layer typo retry on miss, page-level edition dedupe (same title, author, series, year, and format only), LIKE fallback when dirty/desynced. Dirty/desync auto-rebuild; post-index FTS warmup. Admin/ops: additive `ftsStatus`, `POST /api/operations/fts-rebuild`
 - Details: `docs/architecture/search.md`
 - `POST /api/auth/pairing` — authenticated; creates a one-time 10-minute QR pairing code (`payload` JSON + `svg`) for Android app sign-in; does not include the password
 - `POST /api/auth/pairing/redeem` — public + rate-limited; exchanges pairing `code` for a device Bearer token (`deviceToken`, `deviceTokenId`, `username`, `serverUrl`)

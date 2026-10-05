@@ -6747,6 +6747,7 @@ attachBfCacheFacetReload();
 silenceSkippedViewTransitions();
 attachScrollToTop();
 attachSidebarToggle();
+initAppDownloadUi();
 initAppPairingUi();
 attachTopbarSearchToggle();
 attachTopbarAutoHide();
@@ -7589,13 +7590,11 @@ function formatAppPairCountdown(ms) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function initAppPairingUi() {
-  const roots = [...document.querySelectorAll('[data-app-pair-root]')];
-  if (!roots.length) return;
-
-  let sharedState = null;
-  let sharedPromise = null;
-  let tickTimer = 0;
+function initAppDownloadUi() {
+  const btn = document.querySelector('[data-app-download-open]');
+  if (!btn) return;
+  const url = btn.getAttribute('data-app-download-url') || '';
+  const qrHtml = btn.querySelector('[data-app-download-qr]')?.innerHTML || '';
   let modalEl = null;
 
   function ensureModal() {
@@ -7605,29 +7604,23 @@ function initAppPairingUi() {
     modalEl.hidden = true;
     modalEl.setAttribute('role', 'dialog');
     modalEl.setAttribute('aria-modal', 'true');
-    modalEl.setAttribute('aria-label', uiT('profile.appPair.title'));
+    modalEl.setAttribute('aria-label', uiT('profile.appDownload.title'));
     modalEl.innerHTML = `
-      <div class="app-pair-modal-backdrop" data-app-pair-modal-close></div>
+      <div class="app-pair-modal-backdrop" data-app-download-close></div>
       <div class="app-pair-modal-card">
-        <h3 class="app-pair-modal-title">${escapeHtml(uiT('profile.appPair.title'))}</h3>
-        <p class="muted app-pair-hint">${escapeHtml(uiT('profile.appPair.hint'))}</p>
-        <p class="app-pair-app-link"><a href="https://github.com/Habsaec/inpx-book-reader/releases/latest" target="_blank" rel="noopener noreferrer">${escapeHtml(uiT('profile.appPair.appLink'))}</a></p>
-        <div class="app-pair-modal-qr" data-app-pair-modal-qr></div>
-        <div class="app-pair-meta-row"><span class="muted">${escapeHtml(uiT('profile.appPair.serverUrl'))}</span> <code data-app-pair-modal-url></code></div>
-        <div class="app-pair-meta-row"><span class="muted">${escapeHtml(uiT('profile.appPair.username'))}</span> <code data-app-pair-modal-user></code></div>
-        <p class="muted app-pair-expires" data-app-pair-modal-expires></p>
-        <p class="app-pair-error" data-app-pair-modal-error hidden></p>
+        <h3 class="app-pair-modal-title">${escapeHtml(uiT('profile.appDownload.title'))}</h3>
+        <p class="muted app-pair-hint">${escapeHtml(uiT('profile.appDownload.hint'))}</p>
+        <div class="app-pair-modal-qr" data-app-download-modal-qr></div>
+        <p class="app-pair-app-link"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(uiT('profile.appPair.appLink'))}</a></p>
         <div class="app-pair-modal-actions">
-          <button type="button" class="button" data-app-pair-modal-refresh>${escapeHtml(uiT('profile.appPair.refresh'))}</button>
-          <button type="button" class="button" data-app-pair-modal-close>${escapeHtml(uiT('profile.appPair.close'))}</button>
+          <button type="button" class="button" data-app-download-close>${escapeHtml(uiT('profile.appPair.close'))}</button>
         </div>
       </div>`;
+    const qrEl = modalEl.querySelector('[data-app-download-modal-qr]');
+    if (qrEl) qrEl.innerHTML = qrHtml;
     document.body.appendChild(modalEl);
     modalEl.addEventListener('click', (event) => {
-      if (event.target.closest('[data-app-pair-modal-close]')) closeModal();
-    });
-    modalEl.querySelector('[data-app-pair-modal-refresh]')?.addEventListener('click', () => {
-      fetchPairing(true).then(() => paintAll());
+      if (event.target.closest('[data-app-download-close]')) closeModal();
     });
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && modalEl && !modalEl.hidden) {
@@ -7643,11 +7636,18 @@ function initAppPairingUi() {
     modalEl.hidden = true;
   }
 
-  function openModal() {
-    const modal = ensureModal();
-    modal.hidden = false;
-    fetchPairing(false).then(() => paintAll());
-  }
+  btn.addEventListener('click', () => {
+    ensureModal().hidden = false;
+  });
+}
+
+function initAppPairingUi() {
+  const roots = [...document.querySelectorAll('[data-app-pair-root]')];
+  if (!roots.length) return;
+
+  let sharedState = null;
+  let sharedPromise = null;
+  let tickTimer = 0;
 
   async function fetchPairing(force) {
     const expiresAt = sharedState?.expiresAt ? Date.parse(sharedState.expiresAt) : 0;
@@ -7731,25 +7731,8 @@ function initAppPairingUi() {
     }
   }
 
-  function paintModal() {
-    if (!modalEl || modalEl.hidden || !sharedState) return;
-    setQr(modalEl.querySelector('[data-app-pair-modal-qr]'), sharedState.svg);
-    const urlEl = modalEl.querySelector('[data-app-pair-modal-url]');
-    const userEl = modalEl.querySelector('[data-app-pair-modal-user]');
-    const expEl = modalEl.querySelector('[data-app-pair-modal-expires]');
-    const errEl = modalEl.querySelector('[data-app-pair-modal-error]');
-    if (urlEl) urlEl.textContent = sharedState.serverUrl || '';
-    if (userEl) userEl.textContent = sharedState.username || '';
-    paintExpires(expEl, sharedState.expiresAt);
-    if (errEl) {
-      errEl.hidden = !sharedState.error;
-      errEl.textContent = sharedState.error || '';
-    }
-  }
-
   function paintAll() {
     roots.forEach(paintRoot);
-    paintModal();
   }
 
   function startTicker() {
@@ -7768,8 +7751,7 @@ function initAppPairingUi() {
     root.querySelector('[data-app-pair-refresh]')?.addEventListener('click', () => {
       fetchPairing(true).then(() => paintAll());
     });
-    root.querySelector('[data-app-pair-open]')?.addEventListener('click', () => openModal());
-    if (root.getAttribute('data-app-pair-autoload') === '1' || root.getAttribute('data-app-pair-variant') === 'sidebar') {
+    if (root.getAttribute('data-app-pair-autoload') === '1') {
       setQr(root.querySelector('[data-app-pair-qr]'), '');
       fetchPairing(false).then(() => {
         paintAll();

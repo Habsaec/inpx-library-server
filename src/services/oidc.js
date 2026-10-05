@@ -158,8 +158,21 @@ export async function completeOidcLogin(req, currentUrl, flow) {
     }
   );
 
-  const claims = tokens.claims();
-  if (!claims?.sub) throw new Error('OIDC_MISSING_SUB');
+  const idClaims = tokens.claims();
+  if (!idClaims?.sub) throw new Error('OIDC_MISSING_SUB');
+
+  // Some IdPs (Synology SSO Server) put username/email/groups only in userinfo, not in id_token.
+  // id_token values win; userinfo only fills gaps. Failure is non-fatal.
+  let userinfo = {};
+  if (tokens.access_token) {
+    try {
+      userinfo = await openidClient.fetchUserInfo(server, tokens.access_token, idClaims.sub);
+    } catch (err) {
+      console.warn('[oidc] userinfo fetch failed:', err?.message || err);
+    }
+  }
+  const claims = { ...userinfo, ...idClaims };
+  console.log(`[oidc] claims: id_token=[${Object.keys(idClaims).join(',')}] userinfo=[${Object.keys(userinfo).join(',')}]`);
   return { claims, settings };
 }
 

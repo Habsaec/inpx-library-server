@@ -32,7 +32,6 @@ function ensureWorker() {
     workerData: { dbPath: config.dbPath },
     execArgv: []
   });
-  if (typeof next.unref === 'function') next.unref();
   next.on('message', (msg) => {
     const entry = pending.get(msg?.id);
     if (!entry) return;
@@ -50,6 +49,8 @@ function ensureWorker() {
     if (stopping) return;
     failPending(new Error(`db maintenance worker exited (${code})`));
   });
+  /* Listeners re-arm the port. unref after them so this thread does not pin shutdown or tests. */
+  if (typeof next.unref === 'function') next.unref();
   worker = next;
   return next;
 }

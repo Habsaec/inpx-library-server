@@ -52,6 +52,22 @@ test('sanitizeHtml strips bare $$N$$ slots left in bio text', () => {
   assert.match(out, /Биография автора/);
 });
 
+test('flibusta annotations.7z entity-encoded paragraphs become real tags', () => {
+  const raw = '&lt;p&gt;Я был Охотником.&lt;/p&gt;&lt;p&gt;Но, что-то пошло не так.&lt;/p&gt;&lt;image l:href="#1"&gt;&lt;/image&gt;';
+  const rich = sanitizeRichAnnotationHtml(raw);
+  assert.equal(rich.includes('&lt;'), false);
+  assert.equal(rich.includes('image'), false);
+  assert.match(rich, /<p>Я был Охотником\.<\/p><p>Но, что-то пошло не так\.<\/p>/);
+  const page = sanitizeHtml(raw);
+  assert.match(page, /<p>Я был Охотником\.<\/p><p>Но, что-то пошло не так\.<\/p>/);
+  assert.equal(page.includes('image'), false);
+});
+
+test('unwrap leaves real HTML and an intentional escaped less-than', () => {
+  const html = '<p>Смотри &lt;b&gt; так &lt;/b&gt;</p>';
+  assert.equal(sanitizeHtml(html), '<p>Смотри &lt;b&gt; так &lt;/b&gt;</p>');
+});
+
 test('stripFlibustaMediaPlaceholders removes filename image slots', () => {
   const raw = '[float=left]$$jimcarrey_countolaf_inline1.jpg$$[/float]<p>Bio</p>';
   const out = stripFlibustaMediaPlaceholders(raw);

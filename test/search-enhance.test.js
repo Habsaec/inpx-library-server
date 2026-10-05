@@ -29,6 +29,17 @@ test('dedupeSearchBookItems keeps higher rating edition', () => {
   assert.equal(items[1].id, 'c');
 });
 
+test('dedupeSearchBookItems keeps different series, year, and format', () => {
+  const items = dedupeSearchBookItems([
+    { id: 'a', title: 'Лето Господне', authors: 'Шмелев', series: 'Избранное', bookDate: '1933', ext: 'fb2', lang: 'ru', libRate: 4 },
+    { id: 'b', title: 'Лето Господне', authors: 'Шмелев', series: 'Классика', bookDate: '2001', ext: 'fb2', lang: 'ru', libRate: 5 },
+    { id: 'c', title: 'Лето Господне', authors: 'Шмелев', series: 'Классика', seriesNo: '1', bookDate: '2001-01-01', ext: 'fb2', lang: 'ru', libRate: 3 },
+    { id: 'd', title: 'Лето Господне', authors: 'Шмелев', series: 'Классика', bookDate: '2001', ext: 'fb2', lang: 'ru', libRate: 1 },
+    { id: 'e', title: 'Лето Господне', authors: 'Шмелев', series: 'Классика', bookDate: '2010', ext: 'epub', lang: 'ru', libRate: 2 }
+  ]);
+  assert.deepEqual(items.map((item) => item.id), ['a', 'b', 'c', 'e']);
+});
+
 test('weak/strong title hit helpers', () => {
   assert.equal(hasStrongTitleHit([{ title: 'Пешком над облаками' }], 'пешком над облаками'), true);
   assert.equal(isWeakBookSearchResult({

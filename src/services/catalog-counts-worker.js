@@ -59,9 +59,15 @@ try {
     recount(db, target);
     timings[target.table] = Date.now() - t0;
   }
+  /* Close before "done": the parent starts the stats snapshot immediately, and
+     close() still holds the file. That wait has no timeout and never finishes. */
+  db.close();
+  db = null;
   parentPort.postMessage({ type: 'done', timings });
 } catch (err) {
+  try { db?.close(); } catch {}
   parentPort.postMessage({ type: 'error', message: err?.message || String(err) });
 } finally {
-  try { db?.close(); } catch {}
+  /* parentPort stays referenced and would keep this thread, and the parent, alive. */
+  try { parentPort.close(); } catch {}
 }

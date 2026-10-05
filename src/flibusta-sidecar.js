@@ -23,7 +23,7 @@ import {
 import { readArchiveEntryBuffer, listArchiveFiles } from './archives.js';
 import { parseEnvTimeoutMs } from './utils/async-timeout.js';
 import { readSevenZipEntry } from './seven-zip.js';
-import { balanceHtmlFragment, stripFlibustaMediaPlaceholders } from './html-sanitize.js';
+import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarkup } from './html-sanitize.js';
 
 const ANNOTATIONS_REL = path.join('etc', 'annotations.7z');
 const _authorPortraitCache = new Map();
@@ -588,7 +588,7 @@ function escapeAttr(s) {
 
 /** Допускаем ограниченный HTML из sidecar (аннотации / био Флибусты; там часто div, span, списки). */
 export function sanitizeRichAnnotationHtml(html) {
-  let s = stripFlibustaMediaPlaceholders(html);
+  let s = stripFlibustaMediaPlaceholders(unwrapEscapedMarkup(html));
   s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
   s = s.replace(/<\/?(?:iframe|object|embed|style|link|meta|svg|math|form|input|textarea|button|select|details|dialog|template|base|noscript|plaintext|xmp)\b[\s\S]*?>/gi, '');
   s = s.replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
@@ -803,7 +803,7 @@ function getStoredAnnotationFast(bookId) {
       );
     }
     const row = _stmtGetStoredAnnotationLite.get(bookId);
-    return row?.annotation || '';
+    return unwrapEscapedMarkup(row?.annotation || '');
   } catch {
     return '';
   }

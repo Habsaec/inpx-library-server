@@ -3,6 +3,7 @@
  * Spec: https://drafts.opds.io/opds-2.0
  */
 import { siteTitleForDisplay, t, FORMAT_LABELS, formatGenreLabel, downloadBookPath, apiBookPath } from './shared.js';
+import { unwrapEscapedMarkup } from '../html-sanitize.js';
 
 const OPDS_MIME_FOR_SOURCE = {
   fb2: 'application/fb2+zip',
@@ -85,7 +86,7 @@ function formatPublication(book) {
   };
 
   if (book.annotation) {
-    pub.metadata.description = String(book.annotation).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+    pub.metadata.description = unwrapEscapedMarkup(String(book.annotation)).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
   }
 
   if (book.seriesList?.length) {

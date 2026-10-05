@@ -2883,8 +2883,10 @@ function runCatalogCountsWorkerOnce(onProgress) {
         onProgress?.({ stage: msg.stage, percent: CATALOG_COUNTS_STAGE_PERCENT[msg.stage] || 75 });
       } else if (msg?.type === 'done') {
         finish(resolve, msg.timings || {});
+        worker.terminate().catch(() => {});
       } else if (msg?.type === 'error') {
         finish(reject, new Error(msg.message || 'catalog counts worker failed'));
+        worker.terminate().catch(() => {});
       }
     });
     worker.on('error', (err) => finish(reject, err));

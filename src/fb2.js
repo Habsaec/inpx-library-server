@@ -16,6 +16,7 @@ import {
   hasImagesArchives
 } from './flibusta-sidecar.js';
 import { ensureEpubZipFromBookBuffer } from './epub-seven-zip.js';
+import { normalizeCachedAnnotation, unwrapEscapedMarkup } from './html-sanitize.js';
 
 /** Кэш по корню источника: есть ли на диске covers|images (без обхода при каждой книге). */
 const coverImageMediaRootCache = new Map();
@@ -334,10 +335,11 @@ function getCachedBookDetails(bookId) {
     return null;
   }
 
+  const annotation = normalizeCachedAnnotation(row.annotation, row.annotationIsHtml);
   return {
     title: row.title || '',
-    annotation: row.annotation || '',
-    annotationIsHtml: Boolean(row.annotationIsHtml),
+    annotation: annotation.annotation,
+    annotationIsHtml: annotation.annotationIsHtml,
     cover: row.data ? { contentType: row.contentType, data: row.data } : null
   };
 }
@@ -350,7 +352,7 @@ export function getStoredBookAnnotation(bookId) {
       _stmtGetStoredAnnotation = db.prepare(`SELECT annotation FROM book_details_cache WHERE book_id = ?`);
     }
     const row = _stmtGetStoredAnnotation.get(bookId);
-    return row?.annotation || '';
+    return unwrapEscapedMarkup(row?.annotation || '');
   } catch { return ''; }
 }
 
