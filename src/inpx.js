@@ -3373,11 +3373,27 @@ export function parseGenreList(genre = '') {
   return [...new Set(parts)];
 }
 
-function buildGenreFilterSql(genre = '') {
+/** Parse genreMode query: 'and' = book must have all selected genres, anything else = any (OR). */
+export function parseGenreMode(value) {
+  return String(value ?? '').trim().toLowerCase() === 'and' ? 'and' : 'or';
+}
+
+function buildGenreFilterSql(genre = '', mode = 'or') {
   const genres = parseGenreList(genre);
   if (!genres.length) return null;
 
-  // OR: book matches if it has at least one of the selected genres
+  if (mode === 'and') {
+    // AND: one EXISTS per genre — the book must have every selected genre
+    const clauses = genres.map(() => `EXISTS (
+      SELECT 1
+      FROM book_genres bg
+      JOIN genres_catalog g ON g.id = bg.genre_id
+      WHERE bg.book_id = active_books.id AND g.name = ?
+    )`);
+    return { where: clauses.join(' AND '), params: genres };
+  }
+
+  // OR (default): book matches if it has at least one of the selected genres
   const placeholders = genres.map(() => '?').join(',');
   return {
     where: `EXISTS (
@@ -4076,6 +4092,8 @@ function enabledSourcesHaveMixedSidecarFlag() {
 export function searchBooks({
   query = '', page = 1, pageSize = 24, field = 'all', sort = 'title', order = '',
   genre = '', letter = '', lang = '', format = '', year = 0, minRate = 0, hasSeries = null,
+  /** 'and' = book must have all selected genres, 'or' (default) = at least one */
+  genreMode = 'or',
   /** exact = full COUNT(*); capped = COUNT up to 10001 (hub); omit = skip COUNT (suggest) */
   totalMode = 'exact',
   /** Internal: prevent recursive typo-correction loops */
@@ -4084,7 +4102,7 @@ export function searchBooks({
   query = prepareSearchQueryInput(query);
   const offset = (page - 1) * pageSize;
   const orderBy = resolveSort(sort, order);
-  const genreFilter = buildGenreFilterSql(genre);
+  const genreFilter = buildGenreFilterSql(genre, genreMode);
   const extraFilters = buildCatalogExtraFilters({ lang, format, year, minRate, hasSeries });
   const parsedQuery = parseSearchOperator(query);
   const letterNorm = String(letter || '').trim().toLowerCase();
@@ -4931,6 +4949,7 @@ export function buildSearchRecoveryHints({ query = '', field = 'books' } = {}) {
 export function searchCatalog({
   query = '', page = 1, pageSize = 24, field = 'books', sort = 'title', order = '',
   genre = '', letter = '', lang = '', format = '', year = 0, minRate = 0, hasSeries = null,
+  genreMode = 'or',
   nameOnly = false,
   /** books: default capped COUNT for free-text (same as search hub) — exact COUNT on Flibusta is too slow */
   totalMode = ''
@@ -4974,6 +4993,7 @@ export function searchCatalog({
       sort,
       order,
       genre,
+      genreMode,
       letter,
       lang,
       format,

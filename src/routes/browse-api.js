@@ -21,6 +21,7 @@ import {
   searchOverview,
   listSearchGenres,
   parseGenreList,
+  parseGenreMode,
   parseHasSeries
 } from '../inpx.js';
 import {
@@ -150,6 +151,7 @@ export function registerBrowseApiRoutes(app) {
     const order = String(req.query.order || '');
     const genres = parseGenreList(req.query.genre);
     const genre = genres.join(',');
+    const genreMode = parseGenreMode(req.query.genreMode);
     const letter = String(req.query.letter || '').trim().slice(0, 2);
     const lang = String(req.query.lang || '').trim();
     const format = String(req.query.format || '').trim();
@@ -158,10 +160,10 @@ export function registerBrowseApiRoutes(app) {
     const hasSeries = parseHasSeries(req.query.hasSeries);
     const page = safePage(req.query.page);
     const pageSize = 24;
-    const cacheKey = `api:catalog:v2:${field}:${sort}:${order}:${genre}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}:s${pageSize}`;
+    const cacheKey = `api:catalog:v3:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}:s${pageSize}`;
     const result = getCachedPageData(
       cacheKey,
-      () => searchCatalog({ query, page, pageSize, field, sort, order, genre, letter, lang, format, year, minRate, hasSeries }),
+      () => searchCatalog({ query, page, pageSize, field, sort, order, genre, genreMode, letter, lang, format, year, minRate, hasSeries }),
       PAGE_CACHE_TTL_MS
     );
     const payload = { items: result.items, total: result.total, page, pageSize, field: result.field };
