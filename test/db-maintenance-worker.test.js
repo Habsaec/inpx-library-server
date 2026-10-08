@@ -81,3 +81,15 @@ test('maintenance worker checkpoints, analyzes and writes the stats snapshot', a
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('runDbMaintenance stats completes while the idle worker stays unrefed', async () => {
+  const { initDb } = await import('../src/db.js');
+  const { runDbMaintenance, stopDbMaintenance } = await import('../src/services/db-maintenance.js');
+  initDb();
+  try {
+    const stats = await runDbMaintenance('stats');
+    assert.equal(typeof stats.totalBooks, 'number');
+  } finally {
+    stopDbMaintenance();
+  }
+});
