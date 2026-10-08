@@ -39,6 +39,10 @@ User query
 
 Enter always opens **books** (Flibusta-like). Authors / series are chips above results — no hub screen and no smart 302 redirect. `preferredField` remains a soft API hint (series only when no author hits).
 
+## Genre filter modes
+
+`genre` (CSV/repeated) matches any selected genre (OR) by default. `/api/catalog` + web `/catalog` additionally accept `genreMode=and` — the book must have every selected genre (one `EXISTS` per genre, same `book_genres`/`genres_catalog` indexes). Everything else (facet-books, library views, OPDS) stays OR; the mode is additive and defaults to `or`.
+
 ## Operators
 
 | Operator | Meaning |
