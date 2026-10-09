@@ -490,8 +490,8 @@ import {
   ]);
   const loadedGoogleFonts = new Set();
   function googleFontCssUrl(def) {
-    const family = def.family.trim().replace(/\s+/g, '+');
-    return `https://fonts.googleapis.com/css2?family=${family}:wght@${def.weights || '400;700'}&display=swap`;
+    const slug = def.family.trim().toLowerCase().replace(/\s+/g, '-');
+    return new URL(`/fonts/${slug}.css`, location.origin).href;
   }
   function ensureGoogleFont(key) {
     const def = GOOGLE_FONTS[key];

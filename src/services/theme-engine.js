@@ -364,16 +364,16 @@ export const FONT_FAMILY_STACKS = {
   mono: "ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Liberation Mono', monospace",
 };
 
-/** Google Fonts family spec for presets that require a web font (empty = system/available). */
+/** Self-hosted stylesheet `/fonts/<name>.css` for presets that require a web font (empty = system/available). */
 export const FONT_FAMILY_WEBFONT = {
-  inter: 'Source+Sans+3:wght@400;500;600;700',
-  serif: 'Source+Serif+4:ital,wght@0,400;0,600;1,400;1,600',
-  merriweather: 'Merriweather:wght@400;700',
-  rounded: 'Nunito:wght@400;600;700;800',
+  inter: 'source-sans-3',
+  serif: 'source-serif-4',
+  merriweather: 'merriweather',
+  rounded: 'nunito',
 };
 
 /** Display/serif companion loaded on every page for hero and literary chrome. */
-export const DISPLAY_FONT_WEBFONT = 'Source+Serif+4:ital,wght@0,400;0,600;1,400;1,600';
+export const DISPLAY_FONT_WEBFONT = 'source-serif-4';
 export const DISPLAY_FONT_STACK = "'Source Serif 4', Georgia, 'Times New Roman', serif";
 
 /** CSS font-family stack for UI preset (custom uses uploaded @font-face name). */

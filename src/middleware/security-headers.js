@@ -11,12 +11,12 @@ export function securityHeaders(req, res, next) {
     'Content-Security-Policy',
     "default-src 'self'; " +
     "script-src 'self' 'unsafe-inline' https://www.google.com https://www.gstatic.com; " +
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob:; " +
     "media-src 'self' blob:; " +
     "frame-src 'self' blob: https://www.google.com; " +
-    "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; " +
-    "font-src 'self' https://fonts.gstatic.com; " +
+    "connect-src 'self'; " +
+    "font-src 'self'; " +
     "object-src 'none'; " +
     "base-uri 'self'; " +
     "form-action 'self'"

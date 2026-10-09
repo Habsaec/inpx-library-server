@@ -2096,6 +2096,7 @@ textarea:focus-visible {
   margin-bottom: 18px;
 }
 
+.section-title h1,
 .section-title h2 {
   font-family: var(--display-font);
   font-size: 1.5rem;
@@ -3229,7 +3230,7 @@ html[data-theme="light"] .cover-fallback-overlay {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 5px;
+  gap: 8px;
   padding: 0 2px;
 }
 
@@ -3246,6 +3247,11 @@ html[data-theme="light"] .cover-fallback-overlay {
   opacity: 0.84;
   line-clamp: 2;
   -webkit-line-clamp: 2;
+}
+
+html[data-theme="light"] .meta .author,
+html[data-theme="light"] .card-series {
+  opacity: 0.92;
 }
 
 .card-series a {
@@ -3285,6 +3291,18 @@ html[data-theme="light"] .cover-fallback-overlay {
 
 .author-popover-trigger:hover {
   color: var(--text);
+}
+
+.author-popover-trigger,
+.series-popover-trigger {
+  position: relative;
+}
+
+.author-popover-trigger::after,
+.series-popover-trigger::after {
+  content: '';
+  position: absolute;
+  inset: -2px -5px;
 }
 
 .author-inline {
@@ -4261,9 +4279,13 @@ body:has(.bottom-nav) .batch-fab {
 
 .page-link-active {
   background: var(--accent);
-  color: #fff !important;
+  color: #1a1612 !important;
   border-color: var(--accent);
   font-weight: 600;
+}
+
+html[data-theme="light"] .page-link-active {
+  color: #fff !important;
 }
 
 .page-link-prev,
@@ -7043,13 +7065,58 @@ html[data-theme="light"] .alert-info {
   box-shadow: var(--shadow-lg);
 }
 
+.login-card .brand h1,
 .login-card .brand h2 {
   color: var(--accent);
+}
+
+.login-card .brand h1 {
+  font-size: 1.5em;
 }
 
 .login-card .brand p {
   color: var(--muted);
   margin-top: 6px;
+}
+
+.login-card input:not([type="checkbox"]):not([type="radio"]) {
+  min-height: 44px;
+}
+
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.password-toggle,
+.password-toggle:hover {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.password-toggle:hover {
+  color: var(--text);
+}
+
+.password-toggle:active {
+  transform: none;
+}
+
+.password-toggle[aria-pressed="false"] .password-toggle-slash {
+  display: none;
 }
 
 .login-footer-link {
@@ -7530,6 +7597,18 @@ html[data-theme="light"] .table-row.event-error {
   transform: translateX(-50%);
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
 
   *,
@@ -7956,7 +8035,7 @@ html[data-theme="light"] .cover-fallback-overlay {
   }
 
   .card .meta {
-    gap: 2px;
+    gap: 9px;
   }
 
   .card .meta .card-actions {
@@ -8084,6 +8163,7 @@ html[data-theme="light"] .cover-fallback-overlay {
     gap: 8px;
   }
 
+  .section-title h1,
   .section-title h2 {
     font-size: 1.125rem;
   }
@@ -8446,6 +8526,7 @@ html[data-theme="light"] .cover-fallback-overlay {
     font-size: 0.625rem;
   }
 
+  .section-title h1,
   .section-title h2 {
     font-size: 1rem;
   }
@@ -9273,6 +9354,7 @@ html[data-theme="light"] .cover-fallback-overlay {
     width: 100%;
   }
 
+  .login-card .brand h1,
   .login-card .brand h2 {
     font-size: 1.125rem;
   }
@@ -9927,7 +10009,7 @@ html[data-ui-typography="1"] .shell :is(.muted, .admin-field-hint, .admin-card-s
 }
 
 html[data-ui-typography="1"] .shell :is(.admin-card-title, .sidebar .brand h1, .sidebar .brand h2,
-  .welcome-hero-title, .book-detail-shell h1) {
+  .welcome-hero-title, .book-detail-shell h1:not(.book-detail-title)) {
   font-size: var(--font-size-lg);
 }
 

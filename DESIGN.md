@@ -45,6 +45,8 @@ Admin UI customization may override tokens when configured (`data-ui-theme`).
 | Display | **Source Serif 4** (`--display-font`) | Page titles, hero quote, series headings, book detail title |
 | Optional presets | system, Source Serif 4 (`serif`), Georgia, Merriweather, Nunito, mono, custom | Admin → UI |
 
+Web fonts are self-hosted in `public/fonts/` (latin + cyrillic woff2, OFL licenses alongside); UI pages make no Google Fonts requests.
+
 Body ~14.5px / 1.55. Display headings use slight negative tracking (~-0.02em).
 
 ## Spacing & radius

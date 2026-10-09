@@ -1308,10 +1308,7 @@ function renderWebFontLinks() {
   if (DISPLAY_FONT_WEBFONT && !families.includes(DISPLAY_FONT_WEBFONT)) {
     families.push(DISPLAY_FONT_WEBFONT);
   }
-  const familyQuery = families.map((f) => `family=${f}`).join('&');
-  return `<link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?${familyQuery}&display=swap" rel="stylesheet">`;
+  return families.map((f) => `<link href="/fonts/${f}.css" rel="stylesheet">`).join('\n  ');
 }
 
 function renderUiFontFaceStyle() {
@@ -1635,11 +1632,11 @@ export function renderLoginScreen({
         </div>`}
         ${hidePasswordField ? '' : `<div>
           <label for="password">${escapeHtml(passLabel)}</label>
-          <input id="password" type="password" name="password" autocomplete="${passwordAutocomplete}">
+          ${renderPasswordInput('password', passwordAutocomplete)}
         </div>`}
         ${confirmPasswordField ? `<div>
           <label for="confirmPassword">${escapeHtml(t('passwordReset.confirmPassword'))}</label>
-          <input id="confirmPassword" type="password" name="confirmPassword" autocomplete="new-password">
+          ${renderPasswordInput('confirmPassword', 'new-password')}
         </div>` : ''}
         ${extraFieldsHtml}
         ${hiddenFieldsHtml}
@@ -1670,7 +1667,7 @@ export function renderLoginScreen({
     <${hideForm ? 'div' : 'form'} class="login-card"${hideForm ? '' : ` method="post" action="${action}"`}>
       ${renderLoginLogoBlock()}
       <div class="brand" style="margin-bottom:20px;">
-        <h2>${escapeHtml(title)}</h2>
+        <h1>${escapeHtml(title)}</h1>
         <p>${escapeHtml(subtitle)}</p>
       </div>
       ${error ? renderAlert('error', error) : ''}
@@ -1685,6 +1682,18 @@ export function renderLoginScreen({
       </div>
     </${hideForm ? 'div' : 'form'}>
   </div>
+  ${formFields && (!hidePasswordField || confirmPasswordField) ? PASSWORD_TOGGLE_SCRIPT : ''}
 </body>
 </html>`;
+}
+
+const PASSWORD_TOGGLE_SCRIPT = `<script>document.querySelectorAll('[data-password-toggle]').forEach(function(b){b.addEventListener('click',function(){var i=document.getElementById(b.getAttribute('aria-controls'));var show=i.type==='password';i.type=show?'text':'password';b.setAttribute('aria-pressed',String(show));b.setAttribute('aria-label',show?b.dataset.labelHide:b.dataset.labelShow);});});</script>`;
+
+function renderPasswordInput(name, autocomplete) {
+  const show = escapeHtml(t('login.showPassword'));
+  const hide = escapeHtml(t('login.hidePassword'));
+  return `<div class="password-field">
+            <input id="${name}" type="password" name="${name}" autocomplete="${autocomplete}">
+            <button type="button" class="password-toggle" data-password-toggle aria-controls="${name}" aria-pressed="false" aria-label="${show}" data-label-show="${show}" data-label-hide="${hide}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="password-toggle-slash" d="M4 4l16 16"/></svg></button>
+          </div>`;
 }

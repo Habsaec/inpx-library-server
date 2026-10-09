@@ -5422,9 +5422,8 @@ function attachUiAppearanceUpload() {
     setRootAttr('data-ui-bg', attrs.bg);
     setRootAttr('data-ui-shape', attrs.shape);
     setRootAttr('data-ui-typography', attrs.typography);
-    if (data.webfont) {
-      const family = String(data.webfont).split(':')[0].replace(/\s+/g, '+');
-      const href = `https://fonts.googleapis.com/css2?family=${family}:wght@400;600;700&display=swap`;
+    if (data.webfont && /^[a-z0-9-]+$/.test(data.webfont)) {
+      const href = new URL(`/fonts/${data.webfont}.css`, location.origin).href;
       if (!previewFontLink) {
         previewFontLink = document.createElement('link');
         previewFontLink.rel = 'stylesheet';

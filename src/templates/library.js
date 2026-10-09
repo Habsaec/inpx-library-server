@@ -44,6 +44,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     : '';
   const continueAttr = isAuthenticated && hasContinueData ? ' data-home-continue' : '';
   const content = `
+    <h1 class="visually-hidden">${escapeHtml(siteTitleForDisplay())}</h1>
     ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
     <section class="welcome-hero-banner home-reveal"${continueAttr}>
       <div class="welcome-hero-overlay"></div>
@@ -320,7 +321,7 @@ export function renderSearchOverview({
   const content = `
     <section class="hero">
       <div class="section-title">
-        <h2>${escapeHtml(t('search.overviewTitle'))}</h2>
+        <h1>${escapeHtml(t('search.overviewTitle'))}</h1>
       </div>
       <div class="list-context-hint list-context-hint-spacious">
         ${escapeHtml(tp('search.overviewQuery', { q }))}
@@ -479,7 +480,7 @@ export function renderCatalog({
   const content = `
     <section class="hero">
       <div class="section-title">
-        <h2>${escapeHtml(pageHeading)}</h2>
+        <h1>${escapeHtml(pageHeading)}</h1>
         <div class="actions">
           ${viewToggle}
           ${renderSortControl({
@@ -718,7 +719,7 @@ export function renderBook({
           </div>
         </div>
         <div class="book-detail-content">
-          <h2 class="book-detail-title">${escapeHtml(book.title)}${Number(book.deleted) ? ` <span class="deleted-badge deleted-badge--inline" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>` : ''}</h2>
+          <h1 class="book-detail-title">${escapeHtml(book.title)}${Number(book.deleted) ? ` <span class="deleted-badge deleted-badge--inline" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>` : ''}</h1>
           ${Number(book.deleted) ? `<p class="muted book-deleted-note">${escapeHtml(t('book.deletedHint'))}</p>` : ''}
           <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 3, bookAuthors: book.authors, inlineExpand: true }) : escapeHtml(t('book.authorUnknown'))}</div>
           ${summaryBits.length ? `<div class="book-detail-summary">${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
@@ -1176,7 +1177,7 @@ export function renderAuthorFacetPage({
           </div>
         </div>
         <div class="book-detail-content">
-          <h2 class="book-detail-title">${escapeHtml(displayName || title)}</h2>
+          <h1 class="book-detail-title">${escapeHtml(displayName || title)}</h1>
           <div class="muted author-facet-count-line">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural('book', total)}</div>
           ${genreChips}
           ${bioBlock}
@@ -1431,8 +1432,6 @@ export function renderReader({ book, details, user, csrfToken = '', lite = false
   const themeBoot = lite
     ? "document.documentElement.dataset.readerTheme='eink';try{var _ls=JSON.parse(localStorage.getItem('reader-settings-lite')||'{}');if(_ls.chromePinned)document.documentElement.dataset.chromePinned='1'}catch(e){}"
     : "try{var _s=JSON.parse(localStorage.getItem('reader-settings')||'{}');document.documentElement.dataset.readerTheme=_s.theme||'sepia';if(_s.chromePinned)document.documentElement.dataset.chromePinned='1'}catch(e){document.documentElement.dataset.readerTheme='sepia'}";
-  const fontPreconnect = lite ? '' : `<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`;
   const liteBoot = lite
     ? `<script>window.__READER_LITE=1;window.__READER_BOOK_PAGE_PATH=${JSON.stringify(backHref)}</script>`
     : '';
@@ -1455,7 +1454,6 @@ export function renderReader({ book, details, user, csrfToken = '', lite = false
 ${csrfToken ? `<meta name="csrf-token" content="${escapeHtml(csrfToken)}">` : ''}
 <title>${escapeHtml(documentTitle)}</title>
 ${renderFaviconLinks()}
-${fontPreconnect}
 <link rel="stylesheet" href="/reader.css?v=${STATIC_ASSET_VERSION}">
 <script>${themeBoot}</script>
 </head>
