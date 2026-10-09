@@ -3042,7 +3042,7 @@ html[data-theme="light"] .cover-fallback-overlay {
 .cover-fallback-copy {
   position: absolute;
   /* ?????????? ???? ?????? ????????? book-fallback.png */
-  inset: 11% 15% 30%;
+  inset: 21% 15% 30%;
   width: auto;
   height: auto;
   display: flex;
@@ -3097,7 +3097,7 @@ html[data-theme="light"] .cover-fallback-overlay {
 
 /* ???????? ???????? ? ???? ??????????, ?? ??????? */
 .card .cover-fallback-copy {
-  inset: 12% 15% 32%;
+  inset: 22% 15% 32%;
 }
 
 .card .cover-fallback-title {
@@ -3114,7 +3114,7 @@ html[data-theme="light"] .cover-fallback-overlay {
 
 /* ???????? ????? ? ??????? �?????????� ??????? */
 .book-detail-cover .cover-fallback-copy {
-  inset: 10% 13% 32%;
+  inset: 20% 13% 32%;
   gap: 0.55em;
   padding-top: 0.1em;
 }
@@ -3133,7 +3133,7 @@ html[data-theme="light"] .cover-fallback-overlay {
 }
 
 .hero-cover-link .cover-fallback-copy {
-  inset: 13% 12% 20%;
+  inset: 23% 12% 20%;
 }
 
 .hero-cover-link .cover-fallback-title {
@@ -11053,7 +11053,7 @@ html[data-eink="1"] .topbar-lang-link.is-active {
   }
 }
 
-/* ── Magic layer: warm glow, blueprint grid, spotlight, beam ──
+/* ── Magic layer: warm glow, palimpsest, spotlight, beam ──
    Additive on top of the reading-room world. Every effect derives from
    --accent so Admin → UI palettes keep driving it; e-ink, reduced motion
    and high contrast switch it off at the end of this block. */
@@ -11067,7 +11067,8 @@ html[data-eink="1"] .topbar-lang-link.is-active {
   --magic-glow: color-mix(in srgb, var(--accent) 34%, transparent);
   --magic-glow-strong: color-mix(in srgb, var(--accent) 58%, transparent);
   --magic-ember: color-mix(in srgb, var(--accent) 52%, #b5482c);
-  --magic-grid-line: color-mix(in srgb, var(--text) 8%, transparent);
+  --magic-ink: color-mix(in srgb, color-mix(in srgb, var(--text) 58%, var(--accent)) 3.5%, transparent);
+  --magic-manuscript: "Не лѣпо ли ны бяшетъ, братіе, начати старыми словесы трудныхъ повѣстій о пълку Игоревѣ, Игоря Святъславлича? Начати же ся тъй пѣсни по былинамъ сего времени, а не по замышленію Бояню. Боянъ бо вѣщій, аще кому хотяше пѣснь творити, то растѣкашется мыслію по древу, сѣрымъ вълкомъ по земли, шизымъ орломъ подъ облакы. О Руская землѣ, уже за шеломянемъ еси! Длъго ночь мркнетъ. Заря свѣтъ запала, мгла поля покрыла. Щекотъ славій успе, говоръ галичь убуди. Русичи великая поля чрьлеными щиты прегородиша, ищучи себѣ чести, а князю славы. Съ заранія въ пятъкъ потопташа поганыя плъкы половецкыя. На рѣцѣ на Каялѣ тьма свѣтъ покрыла. Яръ туре Всеволодѣ! Стоиши на борони, прыщеши на вои стрѣлами, гремлеши о шеломы мечи харалужными. Не лѣпо ли ны бяшетъ, братіе, начати старыми словесы трудныхъ повѣстій о пълку Игоревѣ.";
   --magic-sheen: rgba(255, 246, 228, 0.42);
   --magic-sheen-soft: rgba(255, 238, 205, 0.2);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -11077,7 +11078,7 @@ html[data-eink="1"] .topbar-lang-link.is-active {
 html[data-theme="light"] {
   --magic-glow: color-mix(in srgb, var(--accent) 24%, transparent);
   --magic-glow-strong: color-mix(in srgb, var(--accent) 42%, transparent);
-  --magic-grid-line: color-mix(in srgb, var(--text) 9%, transparent);
+  --magic-ink: color-mix(in srgb, color-mix(in srgb, var(--text) 48%, var(--accent)) 4.5%, transparent);
   --magic-sheen: rgba(255, 252, 244, 0.5);
   --magic-sheen-soft: color-mix(in srgb, var(--accent) 26%, transparent);
 }
@@ -11092,7 +11093,16 @@ textarea {
   caret-color: var(--accent);
 }
 
-/* Blueprint grid + warm aurora behind the top of every page.
+/* Pochaevsk ustav for the Tale wash. The file is already spaced like a penned page. */
+@font-face {
+  font-family: 'Pochaevsk';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/pochaevsk_ucs_spacedout.ttf') format('truetype');
+}
+
+/* Palimpsest + warm aurora behind the top of every page.
    The shell paints its ground on the canvas so z-index:-1 layers stay visible. */
 body:has(> .shell) {
   background: var(--shell-bg);
@@ -11116,11 +11126,39 @@ body:has(> .shell) {
   pointer-events: none;
   background:
     radial-gradient(ellipse 46% 60% at 22% 0%, var(--magic-glow), transparent 70%),
-    radial-gradient(ellipse 34% 48% at 78% 4%, color-mix(in srgb, var(--magic-ember) 22%, transparent), transparent 72%),
-    linear-gradient(to right, var(--magic-grid-line) 1px, transparent 1px) 0 0 / 48px 48px,
-    linear-gradient(to bottom, var(--magic-grid-line) 1px, transparent 1px) 0 0 / 48px 48px;
+    radial-gradient(ellipse 34% 48% at 78% 4%, color-mix(in srgb, var(--magic-ember) 22%, transparent), transparent 72%);
   -webkit-mask-image: radial-gradient(ellipse 80% 100% at 50% 0%, #000 30%, transparent 78%);
   mask-image: radial-gradient(ellipse 80% 100% at 50% 0%, #000 30%, transparent 78%);
+}
+
+/* Opening of the Tale, written as a quill hand. No drop cap. */
+.magic-manuscript {
+  position: absolute;
+  inset: 0 0 4% 0;
+  z-index: -1;
+  overflow: hidden;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 76px 48px 0;
+  pointer-events: none;
+  user-select: none;
+  font-family: 'Pochaevsk', 'Source Serif 4', serif;
+  font-size: 1.35rem;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.7;
+  letter-spacing: 0;
+  text-align: left;
+  overflow-wrap: break-word;
+  column-count: 2;
+  column-gap: 3rem;
+  color: var(--magic-ink);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 8%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 8%, transparent 100%);
+}
+
+html[data-ui-manuscript="0"] .magic-manuscript {
+  display: none !important;
 }
 
 .topbar {
@@ -11163,48 +11201,6 @@ body:has(> .shell) {
   justify-self: center;
   width: 100%;
   max-width: 200px;
-  aspect-ratio: 2 / 3;
-  display: grid;
-  place-items: center;
-  border-radius: 1px 4px 4px 1px;
-  background:
-    radial-gradient(circle at var(--mark-glow-x, 30%) 28%, color-mix(in srgb, var(--accent) 46%, transparent), transparent 58%),
-    linear-gradient(160deg, color-mix(in srgb, var(--accent) 34%, #2a1d12) 0%, color-mix(in srgb, var(--magic-ember) 26%, #140d08) 100%);
-  box-shadow:
-    inset 7px 0 9px -5px rgba(0, 0, 0, 0.5),
-    inset 0 0 0 1px rgba(255, 236, 200, 0.08),
-    0 18px 40px -18px rgba(0, 0, 0, 0.7),
-    0 22px 44px -22px var(--magic-glow-strong);
-  animation: magic-mark-glow 14s ease-in-out infinite alternate;
-}
-
-@property --mark-glow-x {
-  syntax: '<percentage>';
-  initial-value: 30%;
-  inherits: false;
-}
-
-@keyframes magic-mark-glow {
-  to { --mark-glow-x: 70%; }
-}
-
-.welcome-hero-mark::before {
-  content: '';
-  position: absolute;
-  inset: 12px 12px 12px 16px;
-  border: 1px solid rgba(255, 236, 200, 0.2);
-  border-radius: 2px;
-  pointer-events: none;
-}
-
-.welcome-hero-mark::after {
-  content: '\201C';
-  font-family: var(--display-font);
-  font-size: 8rem;
-  line-height: 1;
-  transform: translateY(0.2em);
-  color: rgba(255, 240, 215, 0.88);
-  text-shadow: 0 0 28px var(--magic-glow-strong), 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 
 .welcome-hero-content {
@@ -11416,7 +11412,21 @@ html[data-ui-bg="1"] body::after {
   mask-image: radial-gradient(ellipse 70% 90% at 20% 40%, #000 25%, transparent 78%);
 }
 
-html[data-theme="light"] .book-detail-shell::before {
+/* Continue-reading hero: the same blurred cover, held to the card */
+.hero-cover-wash {
+  position: absolute;
+  inset: -48px -32px -24px;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--hero-cover, none) center 30% / cover no-repeat;
+  filter: blur(64px) saturate(1.6);
+  opacity: 0.75;
+  -webkit-mask-image: radial-gradient(ellipse 70% 90% at 20% 40%, #000 25%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 90% at 20% 40%, #000 25%, transparent 78%);
+}
+
+html[data-theme="light"] .book-detail-shell::before,
+html[data-theme="light"] .hero-cover-wash {
   opacity: 0.55;
 }
 
@@ -11437,7 +11447,8 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
     background: linear-gradient(180deg, var(--detail-veil-clear) 0, var(--detail-veil-clear) 240px, var(--detail-veil-dense) 340px);
   }
 
-  .book-detail-shell::before {
+  .book-detail-shell::before,
+  .hero-cover-wash {
     -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 25%, #000 25%, transparent 78%);
     mask-image: radial-gradient(ellipse 90% 70% at 50% 25%, #000 25%, transparent 78%);
   }
@@ -11447,7 +11458,7 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
   box-shadow: var(--card-cover-shadow-hover), 0 30px 60px -28px var(--magic-glow-strong);
 }
 
-/* Login: same grid/aurora field, card framed by a travelling beam */
+/* Login: same palimpsest field, card framed by a travelling beam */
 .login-shell {
   position: relative;
   isolation: isolate;
@@ -11495,10 +11506,6 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
     max-width: 120px;
   }
 
-  .welcome-hero-mark::after {
-    font-size: 5rem;
-  }
-
   .welcome-hero-content {
     justify-items: center;
   }
@@ -11508,15 +11515,26 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
   }
 }
 
+@media (max-width: 900px) {
+  .magic-manuscript {
+    column-count: 1;
+    padding: 24px 24px 36px;
+  }
+}
+
 @media (max-width: 600px) {
-  .main-wrap::before {
+  .main-wrap::before,
+  .login-shell::before {
     height: 420px;
-    background-size: auto, auto, 32px 32px, 32px 32px;
+  }
+
+  .magic-manuscript {
+    padding: 18px 16px 28px;
+    font-size: 1.05rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .welcome-hero-mark,
   .hero-card-progress-fill,
   .login-card::before {
     animation: none;
@@ -11534,7 +11552,9 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
 @media (prefers-contrast: more) {
   .main-wrap::before,
   .login-shell::before,
-  .book-detail-shell::before {
+  .magic-manuscript,
+  .book-detail-shell::before,
+  .hero-cover-wash {
     display: none;
   }
 
@@ -11545,8 +11565,10 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
 
 html[data-eink="1"] .main-wrap::before,
 html[data-eink="1"] .login-shell::before,
+html[data-eink="1"] .magic-manuscript,
 html[data-eink="1"] .login-card::before,
 html[data-eink="1"] .book-detail-shell::before,
+html[data-eink="1"] .hero-cover-wash,
 html[data-eink="1"] .admin-card::before,
 html[data-eink="1"] .book-detail-main::before {
   display: none !important;
@@ -11555,17 +11577,6 @@ html[data-eink="1"] .book-detail-main::before {
 html[data-eink="1"] .hero-card-progress-fill {
   background: #000;
   box-shadow: none;
-}
-
-html[data-eink="1"] .welcome-hero-mark {
-  background: #fff;
-  border: 1px solid #000;
-  box-shadow: none;
-}
-
-html[data-eink="1"] .welcome-hero-mark::after {
-  color: #000;
-  text-shadow: none;
 }
 
 html[data-eink="1"] .cover {

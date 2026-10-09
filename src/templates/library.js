@@ -26,9 +26,8 @@ import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-q
 export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false }) {
   const isAuthenticated = Boolean(user);
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
-  const quoteInviting = !isAuthenticated || !hasContinueData;
-  const welcomeQuotePool = getHomeWelcomeQuotePool(getLocale(), { inviting: quoteInviting });
-  const welcomeQuote = pickHomeWelcomeQuote(getLocale(), { inviting: quoteInviting });
+  const welcomeQuotePool = getHomeWelcomeQuotePool(getLocale());
+  const welcomeQuote = pickHomeWelcomeQuote(getLocale());
   const welcomeQuotesJson = JSON.stringify(welcomeQuotePool.map(({ quote, author }) => ({
     quote,
     author,
@@ -53,9 +52,16 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     <h1 class="visually-hidden">${escapeHtml(siteTitleForDisplay())}</h1>
     ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
     <section class="welcome-hero-banner home-reveal"${continueAttr}>
-      <div class="welcome-hero-mark" aria-hidden="true"></div>
+      <div class="welcome-hero-mark cover" aria-hidden="true">
+        <span class="cover-fallback">
+          <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+          <span class="cover-fallback-overlay"></span>
+          <span class="cover-fallback-copy">
+            <span class="cover-fallback-title">${escapeHtml(t('home.quoteCoverTitle'))}</span>
+          </span>
+        </span>
+      </div>
       <div class="welcome-hero-content">
-        <div class="hero-card-kicker">${escapeHtml(t('home.quoteKicker'))}</div>
         <blockquote class="welcome-hero-quote">${escapeHtml(welcomeQuote.quote)}</blockquote>
         <cite class="welcome-hero-author">${renderWelcomeQuoteAuthor(welcomeQuote.author)}</cite>
       </div>

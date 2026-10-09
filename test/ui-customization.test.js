@@ -424,6 +424,15 @@ test('saveUiSettings persists blur, bg contrast and login logo flag', () => {
   assert.equal(ui.showLogoOnLogin, false);
 });
 
+test('manuscript wash is on until the admin turns it off', () => {
+  invalidateUiCustomizationCache();
+  assert.equal(getUiCustomization().manuscriptWash, true);
+  saveUiSettings({ manuscriptWash: false });
+  assert.equal(getUiCustomization().manuscriptWash, false);
+  saveUiSettings({ manuscriptWash: true });
+  assert.equal(getUiCustomization().manuscriptWash, true);
+});
+
 test('saveUiSettings persists surface opacity', () => {
   invalidateUiCustomizationCache();
   saveUiSettings({ surfaceOpacity: 72 });

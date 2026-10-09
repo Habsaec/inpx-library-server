@@ -77,11 +77,11 @@ Body ~14.5px / 1.55. Display headings use slight negative tracking (~-0.02em).
 
 Additive block at the end of `public/styles.css`, inspired by Magic UI / tailwindcss.com but kept in the warm world. Every effect derives from `--accent` (Admin → UI palettes still drive it); `--magic-ember` is a warm rust mix of the accent.
 
-- **Backdrop:** 48px blueprint grid + gold/ember aurora on `.main-wrap::before` and the login page, faded by a radial mask
-- **Home hero:** the quote uses the continue-reading card's anatomy (200px cover column + kicker / title-scale text / author) so swapping in the card does not jump; the cover slot is `.welcome-hero-mark`, a leather "binding" with an embossed open-quote and a drifting glow (`@property --mark-glow-x`); quote and author resolve out of blur
+- **Backdrop:** barely-there two-column wash of the opening of *Слово о полку Игореве* in Pochaevsk (`public/fonts/pochaevsk_ucs_spacedout.ttf`, ustav, no drop cap). It runs almost to the bottom of the page and fades evenly from just below the top to nothing at the end; Admin → Appearance → Effects can turn it off (`ui_manuscript`, `data-ui-manuscript="0"`). Gold/ember aurora stays on `.main-wrap` / login
+- **Home hero:** the quote uses the continue-reading card's anatomy (200px cover column + title-scale text / author) so swapping in the card does not jump; the cover slot is the standard `/book-fallback.png` placeholder titled «Великие мысли великих людей»; quote and author resolve out of blur
 - **Covers:** pointer-following light inside `.cover::after` (`--spot`, `--mx/--my` from `attachPointerSpotlight` in `app.js`), warm glow under the lifted cover
 - **Panels:** border that lights up under the pointer on `.admin-card` and `.book-detail-main`
-- **Book detail:** the cover itself, blurred, as an ambient backdrop (`--detail-cover` set by the template)
+- **Book detail:** the cover itself, blurred, as an ambient backdrop (`--detail-cover` set by the template). The continue-reading hero uses the same wash (`.hero-cover-wash`, `--hero-cover` from the slide cover)
 - **Buttons:** shimmer sweep + glow on every bordered button (icon-only toggles excluded); shelf «Show all» is a pill with a sliding arrow
 - **Login:** travelling conic border beam (`@property --beam-angle`)
 - **Continue reading:** progress bar with a moving sheen

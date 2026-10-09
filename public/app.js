@@ -108,12 +108,50 @@ function revealHomeBlock(el) {
   });
 }
 
+/* Faint Pochaevsk wash of the Tale, repeated until it nearly fills the page. */
+function fillManuscript(el) {
+  const passage = el.dataset.passage || '';
+  if (!passage || el.clientHeight < 8 || el.clientWidth < 8) return;
+  const style = getComputedStyle(el);
+  const fontSize = parseFloat(style.fontSize) || 21;
+  const lineHeight = parseFloat(style.lineHeight) || fontSize * 1.7;
+  const cols = Math.max(1, parseInt(style.columnCount, 10) || 1);
+  const lines = Math.ceil(el.clientHeight / lineHeight) + 2;
+  const charsPerLine = Math.max(16, Math.floor((el.clientWidth / cols) / (fontSize * 0.42)));
+  const copies = Math.min(80, Math.max(1, Math.ceil((lines * charsPerLine * cols) / passage.length)));
+  const next = copies === 1 ? passage : Array.from({ length: copies }, () => passage).join(' ');
+  if (el.textContent !== next) el.textContent = next;
+}
+
+function mountManuscriptWash() {
+  const root = document.documentElement;
+  if (root.dataset.eink === '1' || root.dataset.uiManuscript === '0') return;
+  const raw = getComputedStyle(root).getPropertyValue('--magic-manuscript').trim();
+  const text = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')
+    ? raw.slice(1, -1).replace(/\\"/g, '"')
+    : raw;
+  if (!text) return;
+  for (const host of document.querySelectorAll('.main-wrap, .login-shell')) {
+    if (host.querySelector('.magic-manuscript')) continue;
+    const el = document.createElement('p');
+    el.className = 'magic-manuscript';
+    el.setAttribute('aria-hidden', 'true');
+    el.dataset.passage = text;
+    el.textContent = text;
+    host.prepend(el);
+    const paint = () => fillManuscript(el);
+    requestAnimationFrame(paint);
+    if (document.fonts?.ready) document.fonts.ready.then(paint);
+    if (typeof ResizeObserver === 'function') new ResizeObserver(paint).observe(host);
+  }
+}
+
 function initHomeWelcomeReveal() {
   const banner = document.querySelector('.welcome-hero-banner.home-reveal');
   if (banner) revealHomeBlock(banner);
 }
 
-const HOME_QUOTE_ROTATE_MS = 10000;
+const HOME_QUOTE_ROTATE_MS = 20000;
 const HOME_QUOTE_FADE_MS = 650;
 
 function initHomeQuoteRotation() {
@@ -192,6 +230,15 @@ function renderCoverRatingBadgeHtml(libRate) {
   return `<span class="cover-rating-wrapper"><span class="cover-rating-badge cover-rating-${n}">${Array.from({ length: n }, () => '<span>★</span>').join('')}</span></span>`;
 }
 
+function heroCoverWashValue(book) {
+  const url = String(apiBookPath(book?.id, 'cover-thumb') || '').replace(/"/g, '%22');
+  return url ? `url('${url}')` : 'none';
+}
+
+function renderHeroCoverWashHtml(book) {
+  return `<div class="hero-cover-wash" style="--hero-cover:${heroCoverWashValue(book)}" aria-hidden="true"></div>`;
+}
+
 function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKicker = false } = {}) {
   const title = escapeHtml(book.title || '');
   const progress = Math.max(0, Math.min(100, Math.round(Number(book.readProgress) || 0)));
@@ -231,6 +278,7 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
 
 function renderPremiumHeroCardHtml(book) {
   return `<section class="premium-hero-card">
+    ${renderHeroCoverWashHtml(book)}
     ${renderHeroSlideInnerHtml(book, { eager: true, heading: 'h1', showKicker: true })}
   </section>`;
 }
@@ -248,6 +296,7 @@ function renderPremiumHeroCarouselHtml(books, total) {
     ? `<a class="hero-carousel-all" href="/library/continue">${escapeHtml(uiT('home.showAll'))}</a>`
     : '';
   return `<section class="premium-hero-card hero-carousel" data-hero-carousel aria-roledescription="carousel" aria-label="${escapeHtml(uiT('home.shelfContinue'))}">
+    ${renderHeroCoverWashHtml(books[0])}
     <div class="hero-carousel-head">
       <div class="hero-card-kicker">${escapeHtml(uiT('home.heroKicker'))}</div>
       <p class="hero-carousel-status" data-hero-status aria-live="polite">${escapeHtml(uiTp('home.heroSlide', { current: 1, total: books.length }))}</p>
@@ -344,6 +393,8 @@ function initHeroCarousel(root, books) {
       else dot.removeAttribute('aria-current');
     });
     if (status) status.textContent = uiTp('home.heroSlide', { current: index + 1, total: count });
+    const wash = root.querySelector('.hero-cover-wash');
+    if (wash) wash.style.setProperty('--hero-cover', heroCoverWashValue(books[index]));
     applyHeroBookAnnotation(books[index], slides[index]);
     const neighbor = books[index + 1] || books[0];
     if (neighbor && neighbor !== books[index]) applyHeroBookAnnotation(neighbor, slides[(index + 1) % count]);
@@ -6854,6 +6905,7 @@ attachSmartSearch();
 attachBookIllustrationLightbox();
 loadHomeRecommendationsProgressively();
 loadHomeContinueProgressively();
+mountManuscriptWash();
 initHomeWelcomeReveal();
 initHomeQuoteRotation();
 attachPointerSpotlight();

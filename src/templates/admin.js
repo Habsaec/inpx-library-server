@@ -1730,6 +1730,10 @@ export function renderAdminAppearance({
       <div class="admin-card">
         <div class="admin-card-title">${escapeHtml(t('admin.ui.sectionEffects'))}</div>
         <div class="admin-card-subtitle">${escapeHtml(t('admin.ui.sectionEffectsHint'))}</div>
+        <label class="admin-checkbox-label">
+          <input type="checkbox" form="ui-main-form" name="manuscriptWash" value="1" ${ui.manuscriptWash !== false ? 'checked' : ''}>
+          ${escapeHtml(t('admin.ui.manuscriptWash'))}
+        </label>
         ${`<div data-ui-bg-section${ui.hasBackground ? '' : ' hidden'}>`}
         <div class="admin-section-label">${escapeHtml(t('admin.ui.sectionBackgroundOverlay'))}</div>
         <div class="admin-form-grid admin-form-grid--gap-12">

@@ -1,4 +1,4 @@
-/** Цитаты о книгах для welcome-баннера на главной (ru / en), с контекстными пулами. */
+/** Цитаты о книгах для welcome-баннера на главной (ru / en). Один общий список на язык. */
 
 const POOLS = {
   ru: {
@@ -103,28 +103,28 @@ function normalizeLocale(locale) {
   return locale === 'en' ? 'en' : 'ru';
 }
 
-export function getHomeQuoteContext(hour = new Date().getHours(), inviting = false) {
-  if (inviting) return 'inviting';
-  if (hour >= 5 && hour < 12) return 'morning';
-  if (hour >= 12 && hour < 17) return 'afternoon';
-  if (hour >= 17 && hour < 22) return 'evening';
-  return 'night';
+function quotesForLocale(locale) {
+  const seen = new Set();
+  const list = [];
+  for (const item of Object.values(POOLS[normalizeLocale(locale)]).flat()) {
+    const key = `${item.quote}\0${item.author}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push(item);
+  }
+  return list;
 }
 
 export function getHomeWelcomeQuotes(locale = 'ru') {
-  const loc = normalizeLocale(locale);
-  const pools = POOLS[loc];
-  return Object.values(pools).flat();
+  return quotesForLocale(locale);
 }
 
-export function getHomeWelcomeQuotePool(locale = 'ru', { inviting = false, hour } = {}) {
-  const loc = normalizeLocale(locale);
-  const ctx = getHomeQuoteContext(hour ?? new Date().getHours(), inviting);
-  return POOLS[loc][ctx] || POOLS[loc].inviting;
+export function getHomeWelcomeQuotePool(locale = 'ru') {
+  return quotesForLocale(locale);
 }
 
-export function pickHomeWelcomeQuote(locale = 'ru', options = {}) {
-  const list = getHomeWelcomeQuotePool(locale, options);
+export function pickHomeWelcomeQuote(locale = 'ru') {
+  const list = getHomeWelcomeQuotePool(locale);
   if (!list.length) return { quote: '', author: '' };
   return list[Math.floor(Math.random() * list.length)];
 }

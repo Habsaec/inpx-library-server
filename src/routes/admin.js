@@ -783,6 +783,7 @@ export function registerAdminRoutes(app, deps) {
         bgSize: lastFormFieldValue(req.body.bgSize),
         bgPosition: lastFormFieldValue(req.body.bgPosition),
         showLogoOnLogin: isFormFlagEnabled(req.body.showLogoOnLogin),
+        manuscriptWash: isFormFlagEnabled(req.body.manuscriptWash),
       });
       saveUiShapeSettings({
         radiusPreset: lastFormFieldValue(req.body.radiusPreset),

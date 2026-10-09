@@ -1332,6 +1332,7 @@ function uiHtmlRootAttrs() {
     attrs += ' data-ui-sliders="1"';
   }
   if (ui.hasBackground) attrs += ' data-ui-bg="1"';
+  if (ui.manuscriptWash === false) attrs += ' data-ui-manuscript="0"';
   if (hasUiThemeShapeConfigured()) attrs += ' data-ui-shape="1"';
   if (hasUiThemeTypographyConfigured()) attrs += ' data-ui-typography="1"';
   return attrs;
@@ -1683,6 +1684,36 @@ export function renderLoginScreen({
     </${hideForm ? 'div' : 'form'}>
   </div>
   ${formFields && (!hidePasswordField || confirmPasswordField) ? PASSWORD_TOGGLE_SCRIPT : ''}
+  <script>
+    (function () {
+      var root = document.documentElement;
+      if (root.dataset.eink === '1' || root.dataset.uiManuscript === '0') return;
+      var host = document.querySelector('.login-shell');
+      if (!host || host.querySelector('.magic-manuscript')) return;
+      var raw = getComputedStyle(root).getPropertyValue('--magic-manuscript').trim();
+      var text = raw.length >= 2 && raw.charAt(0) === '"' && raw.charAt(raw.length - 1) === '"' ? raw.slice(1, -1) : raw;
+      if (!text) return;
+      var el = document.createElement('p');
+      el.className = 'magic-manuscript';
+      el.setAttribute('aria-hidden', 'true');
+      el.dataset.passage = text;
+      el.textContent = text;
+      host.prepend(el);
+      var paint = function () {
+        if (!el.dataset.passage || el.clientHeight < 8) return;
+        var style = getComputedStyle(el);
+        var fontSize = parseFloat(style.fontSize) || 21;
+        var lineHeight = parseFloat(style.lineHeight) || fontSize * 1.7;
+        var cols = Math.max(1, parseInt(style.columnCount, 10) || 1);
+        var lines = Math.ceil(el.clientHeight / lineHeight) + 2;
+        var chars = Math.max(16, Math.floor((el.clientWidth / cols) / (fontSize * 0.42)));
+        var copies = Math.min(40, Math.max(1, Math.ceil((lines * chars * cols) / text.length)));
+        el.textContent = copies === 1 ? text : new Array(copies).fill(text).join(' ');
+      };
+      requestAnimationFrame(paint);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(paint);
+    })();
+  </script>
 </body>
 </html>`;
 }

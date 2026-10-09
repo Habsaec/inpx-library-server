@@ -468,6 +468,7 @@ export function getUiCustomization() {
   const surfaceBlurRaw = getSetting('ui_surface_blur');
   const surfaceBlur = surfaceBlurRaw === '' ? 0 : clampInt(surfaceBlurRaw, 0, 24, 0);
   const showLogoOnLogin = getSetting('ui_show_logo_login') !== '0';
+  const manuscriptWash = getSetting('ui_manuscript') !== '0';
   const radiusPreset = getSetting('ui_radius_preset') || 'rounded';
   const shadowPreset = getSetting('ui_shadow_preset') || 'normal';
   const fontSize = readFontSizeSetting();
@@ -536,6 +537,7 @@ export function getUiCustomization() {
     surfaceOpacity,
     surfaceBlur,
     showLogoOnLogin,
+    manuscriptWash,
     glassColorDark: themePair.dark.surface,
     glassColorLight: themePair.light.surface,
     glassTextDark: themePair.dark.text,
@@ -806,6 +808,7 @@ export function saveUiSettings({
   bgSize,
   bgPosition,
   showLogoOnLogin,
+  manuscriptWash,
   dynamicThemeFromBg,
 } = {}) {
   if (dynamicThemeFromBg !== undefined) {
@@ -910,6 +913,9 @@ export function saveUiSettings({
   }
   if (showLogoOnLogin !== undefined) {
     setSetting('ui_show_logo_login', showLogoOnLogin ? '1' : '0');
+  }
+  if (manuscriptWash !== undefined) {
+    setSetting('ui_manuscript', manuscriptWash ? '1' : '0');
   }
   invalidateUiCustomizationCache();
 }
