@@ -282,6 +282,7 @@
   "home.welcomeQuote": "Books are a uniquely portable magic.",
   "home.welcomeQuoteAuthor": "Stephen King",
   "home.heroKicker": "✦ Continue reading ✦",
+  "home.quoteKicker": "✦ A word on books ✦",
   "home.heroReadBook": "Read book",
   "home.heroAboutBook": "About book",
   "home.heroProgress": "{{pct}}% read",

@@ -11052,3 +11052,526 @@ html[data-eink="1"] .topbar-lang-link.is-active {
     border-top: 1px solid color-mix(in srgb, var(--text) 72%, transparent);
   }
 }
+
+/* ── Magic layer: warm glow, blueprint grid, spotlight, beam ──
+   Additive on top of the reading-room world. Every effect derives from
+   --accent so Admin → UI palettes keep driving it; e-ink, reduced motion
+   and high contrast switch it off at the end of this block. */
+@property --beam-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+:root {
+  --magic-glow: color-mix(in srgb, var(--accent) 34%, transparent);
+  --magic-glow-strong: color-mix(in srgb, var(--accent) 58%, transparent);
+  --magic-ember: color-mix(in srgb, var(--accent) 52%, #b5482c);
+  --magic-grid-line: color-mix(in srgb, var(--text) 8%, transparent);
+  --magic-sheen: rgba(255, 246, 228, 0.42);
+  --magic-sheen-soft: rgba(255, 238, 205, 0.2);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  accent-color: var(--accent);
+}
+
+html[data-theme="light"] {
+  --magic-glow: color-mix(in srgb, var(--accent) 24%, transparent);
+  --magic-glow-strong: color-mix(in srgb, var(--accent) 42%, transparent);
+  --magic-grid-line: color-mix(in srgb, var(--text) 9%, transparent);
+  --magic-sheen: rgba(255, 252, 244, 0.5);
+  --magic-sheen-soft: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--text);
+}
+
+input,
+textarea {
+  caret-color: var(--accent);
+}
+
+/* Blueprint grid + warm aurora behind the top of every page.
+   The shell paints its ground on the canvas so z-index:-1 layers stay visible. */
+body:has(> .shell) {
+  background: var(--shell-bg);
+}
+
+.shell {
+  background: transparent;
+}
+
+.main-wrap {
+  position: relative;
+}
+
+.main-wrap::before,
+.login-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 620px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 46% 60% at 22% 0%, var(--magic-glow), transparent 70%),
+    radial-gradient(ellipse 34% 48% at 78% 4%, color-mix(in srgb, var(--magic-ember) 22%, transparent), transparent 72%),
+    linear-gradient(to right, var(--magic-grid-line) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(to bottom, var(--magic-grid-line) 1px, transparent 1px) 0 0 / 48px 48px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 100% at 50% 0%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(ellipse 80% 100% at 50% 0%, #000 30%, transparent 78%);
+}
+
+.topbar {
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+/* Search: glowing ring on focus */
+.topbar-search input {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent);
+}
+
+.topbar-search input:focus {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--accent) 12%, transparent),
+    0 12px 32px -14px var(--magic-glow-strong);
+}
+
+/* Sidebar: active item glows instead of sitting flat */
+.sidenav-links a.active {
+  background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 22%, var(--button-bg)) 0%, color-mix(in srgb, var(--accent) 6%, transparent) 100%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 10px 24px -14px var(--magic-glow-strong);
+}
+
+/* Home quote mirrors the continue-reading card (cover column + text column) so the swap does not jump */
+.welcome-hero-banner {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 40px;
+  align-items: center;
+  padding: 32px 36px;
+}
+
+.welcome-hero-mark {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  width: 100%;
+  max-width: 200px;
+  aspect-ratio: 2 / 3;
+  display: grid;
+  place-items: center;
+  border-radius: 1px 4px 4px 1px;
+  background:
+    radial-gradient(circle at var(--mark-glow-x, 30%) 28%, color-mix(in srgb, var(--accent) 46%, transparent), transparent 58%),
+    linear-gradient(160deg, color-mix(in srgb, var(--accent) 34%, #2a1d12) 0%, color-mix(in srgb, var(--magic-ember) 26%, #140d08) 100%);
+  box-shadow:
+    inset 7px 0 9px -5px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 236, 200, 0.08),
+    0 18px 40px -18px rgba(0, 0, 0, 0.7),
+    0 22px 44px -22px var(--magic-glow-strong);
+  animation: magic-mark-glow 14s ease-in-out infinite alternate;
+}
+
+@property --mark-glow-x {
+  syntax: '<percentage>';
+  initial-value: 30%;
+  inherits: false;
+}
+
+@keyframes magic-mark-glow {
+  to { --mark-glow-x: 70%; }
+}
+
+.welcome-hero-mark::before {
+  content: '';
+  position: absolute;
+  inset: 12px 12px 12px 16px;
+  border: 1px solid rgba(255, 236, 200, 0.2);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.welcome-hero-mark::after {
+  content: '\201C';
+  font-family: var(--display-font);
+  font-size: 8rem;
+  line-height: 1;
+  transform: translateY(0.2em);
+  color: rgba(255, 240, 215, 0.88);
+  text-shadow: 0 0 28px var(--magic-glow-strong), 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.welcome-hero-content {
+  display: grid;
+  gap: 10px;
+  max-width: none;
+  min-width: 0;
+}
+
+.welcome-hero-quote {
+  font-size: clamp(1.5rem, 2.7vw, 2rem);
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  max-width: 34ch;
+  text-wrap: pretty;
+}
+
+html[data-ui-typography="1"] .shell .welcome-hero-quote {
+  font-size: var(--font-size-xl);
+}
+
+.welcome-hero-banner.home-reveal .welcome-hero-quote,
+.welcome-hero-banner.home-reveal .welcome-hero-author {
+  opacity: 0;
+  filter: blur(10px);
+  transform: translateY(10px);
+  transition: opacity 0.9s var(--ease-out-expo), filter 0.9s var(--ease-out-expo), transform 0.9s var(--ease-out-expo);
+}
+
+.welcome-hero-banner.home-reveal .welcome-hero-author {
+  transition-delay: 0.28s;
+}
+
+.welcome-hero-banner.home-reveal-active .welcome-hero-quote,
+.welcome-hero-banner.home-reveal-active .welcome-hero-author {
+  opacity: 1;
+  filter: none;
+  transform: none;
+}
+
+.welcome-hero-banner.home-reveal-active.is-quote-swapping .welcome-hero-quote,
+.welcome-hero-banner.home-reveal-active.is-quote-swapping .welcome-hero-author {
+  opacity: 0;
+  filter: blur(8px);
+  transform: translateY(-6px);
+  transition-duration: 0.55s;
+  transition-delay: 0s;
+}
+
+.welcome-hero-author {
+  margin-top: 0;
+  font-family: inherit;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.welcome-hero-author::before {
+  content: '\2014\00a0';
+  color: var(--muted);
+}
+
+/* Continue reading: progress bar carries a moving sheen */
+.hero-card-progress-fill {
+  background:
+    linear-gradient(100deg, transparent 30%, var(--magic-sheen) 50%, transparent 70%) 0 0 / 220% 100% no-repeat,
+    linear-gradient(90deg, var(--accent), var(--magic-ember));
+  animation: magic-sheen 3.2s var(--ease-premium) infinite;
+  box-shadow: 0 0 14px -2px var(--magic-glow-strong);
+}
+
+@keyframes magic-sheen {
+  0% { background-position: 160% 0, 0 0; }
+  60%, 100% { background-position: -60% 0, 0 0; }
+}
+
+/* Buttons: shimmer sweep + warm lift on hover (primary gets the brighter sheen) */
+:is(.button, button):not(.password-toggle, .author-popover-trigger, .series-popover-trigger, .sidebar-toggle),
+.premium-hero-card .button-primary,
+.card-actions-read .button-primary,
+.actions-primary .button-primary {
+  background-image: linear-gradient(110deg, transparent 35%, var(--btn-sheen, var(--magic-sheen-soft)) 50%, transparent 65%);
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  background-repeat: no-repeat;
+  transition: background-position 0.9s var(--ease-out-expo), box-shadow 0.3s var(--ease-premium), border-color 0.2s, color 0.2s, background-color 0.2s, transform 0.1s ease-out;
+}
+
+:is(.button, button):not(.password-toggle, .author-popover-trigger, .series-popover-trigger, .sidebar-toggle):hover:not(:disabled),
+.premium-hero-card .button-primary:hover,
+.card-actions-read .button-primary:hover,
+.actions-primary .button-primary:hover {
+  background-position: -30% 0;
+  box-shadow: 0 10px 26px -12px var(--magic-glow-strong), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.button-primary {
+  --btn-sheen: var(--magic-sheen);
+}
+
+/* Shelf heading link: pill with an arrow that slides on hover */
+.shelf-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 999px;
+  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.3s var(--ease-premium);
+}
+
+.shelf-link::after {
+  content: '';
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14M13 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14M13 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 0.35s var(--ease-out-expo);
+}
+
+.shelf-link:hover {
+  text-decoration: none;
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: 0 8px 20px -12px var(--magic-glow-strong);
+}
+
+.shelf-link:hover::after {
+  transform: translateX(3px);
+}
+
+/* Covers: light follows the pointer, warm glow pools underneath */
+@property --spot {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: true;
+}
+
+.cover {
+  transition: transform 0.35s var(--ease-premium), box-shadow 0.35s var(--ease-premium), --spot 0.35s var(--ease-premium);
+}
+
+.cover::after {
+  background:
+    radial-gradient(240px circle at var(--mx, 50%) var(--my, 0%), rgb(255 244 222 / calc(var(--spot) * 0.3)), transparent 60%),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 25%, rgba(0, 0, 0, 0) 75%, rgba(0, 0, 0, 0.06) 100%);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .card:hover .cover,
+  .book-detail-cover .cover:hover {
+    --spot: 1;
+  }
+
+  .card:hover .cover {
+    box-shadow: var(--card-cover-shadow-hover), 0 22px 44px -20px var(--magic-glow-strong);
+  }
+}
+
+/* Panels: a border that lights up where the pointer is (admin cards, book detail) */
+.admin-card,
+.book-detail-main {
+  position: relative;
+}
+
+.admin-card::before,
+.book-detail-main::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(360px circle at var(--mx, -999px) var(--my, -999px), var(--magic-glow-strong), transparent 62%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  opacity: 0;
+  transition: opacity 0.35s var(--ease-premium);
+}
+
+.admin-card:hover::before,
+.book-detail-main:hover::before {
+  opacity: 1;
+}
+
+/* Book detail: the cover itself becomes a soft ambient backdrop */
+.book-detail-shell {
+  position: relative;
+}
+
+/* Same layer as the background image: the veil must sit below z:-1 backdrops, not cover them */
+html[data-ui-bg="1"] body::after {
+  z-index: -2;
+}
+
+.book-detail-shell::before {
+  content: '';
+  position: absolute;
+  inset: -48px -32px auto;
+  height: 460px;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--detail-cover, none) center 30% / cover no-repeat;
+  filter: blur(64px) saturate(1.6);
+  opacity: 0.75;
+  -webkit-mask-image: radial-gradient(ellipse 70% 90% at 20% 40%, #000 25%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 90% at 20% 40%, #000 25%, transparent 78%);
+}
+
+html[data-theme="light"] .book-detail-shell::before {
+  opacity: 0.55;
+}
+
+/* Clear over the cover column, dense under the text so body copy keeps ≥4.5:1 */
+.book-detail-shell > .book-detail-main {
+  --detail-veil-clear: color-mix(in srgb, var(--surface) 18%, transparent);
+  --detail-veil-dense: color-mix(in srgb, var(--surface) 74%, transparent);
+  background: linear-gradient(90deg, var(--detail-veil-clear) 0, var(--detail-veil-clear) 220px, var(--detail-veil-dense) 300px);
+}
+
+html[data-theme="light"] .book-detail-shell > .book-detail-main {
+  --detail-veil-clear: color-mix(in srgb, var(--surface) 30%, transparent);
+  --detail-veil-dense: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+@media (max-width: 900px) {
+  .book-detail-shell > .book-detail-main {
+    background: linear-gradient(180deg, var(--detail-veil-clear) 0, var(--detail-veil-clear) 240px, var(--detail-veil-dense) 340px);
+  }
+
+  .book-detail-shell::before {
+    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 25%, #000 25%, transparent 78%);
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 25%, #000 25%, transparent 78%);
+  }
+}
+
+.book-detail-cover .cover {
+  box-shadow: var(--card-cover-shadow-hover), 0 30px 60px -28px var(--magic-glow-strong);
+}
+
+/* Login: same grid/aurora field, card framed by a travelling beam */
+.login-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.login-shell::before {
+  height: 100%;
+  -webkit-mask-image: radial-gradient(ellipse 70% 70% at 50% 40%, #000 25%, transparent 80%);
+  mask-image: radial-gradient(ellipse 70% 70% at 50% 40%, #000 25%, transparent 80%);
+}
+
+.login-card {
+  position: relative;
+  box-shadow: var(--shadow-lg), 0 40px 80px -40px var(--magic-glow-strong);
+}
+
+.login-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(from var(--beam-angle), transparent 0deg 250deg, var(--magic-ember) 300deg, var(--accent) 340deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: magic-beam 7s linear infinite;
+}
+
+@keyframes magic-beam {
+  to { --beam-angle: 360deg; }
+}
+
+@media (max-width: 900px) {
+  .welcome-hero-banner {
+    grid-template-columns: 1fr;
+    gap: 20px;
+    padding: 24px 20px;
+    text-align: center;
+  }
+
+  .welcome-hero-mark {
+    max-width: 120px;
+  }
+
+  .welcome-hero-mark::after {
+    font-size: 5rem;
+  }
+
+  .welcome-hero-content {
+    justify-items: center;
+  }
+
+  .welcome-hero-quote {
+    font-size: 1.375rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .main-wrap::before {
+    height: 420px;
+    background-size: auto, auto, 32px 32px, 32px 32px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-hero-mark,
+  .hero-card-progress-fill,
+  .login-card::before {
+    animation: none;
+  }
+
+  .welcome-hero-banner.home-reveal .welcome-hero-quote,
+  .welcome-hero-banner.home-reveal .welcome-hero-author {
+    opacity: 1;
+    filter: none;
+    transform: none;
+    transition: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .main-wrap::before,
+  .login-shell::before,
+  .book-detail-shell::before {
+    display: none;
+  }
+
+  .cover {
+    --spot: 0 !important;
+  }
+}
+
+html[data-eink="1"] .main-wrap::before,
+html[data-eink="1"] .login-shell::before,
+html[data-eink="1"] .login-card::before,
+html[data-eink="1"] .book-detail-shell::before,
+html[data-eink="1"] .admin-card::before,
+html[data-eink="1"] .book-detail-main::before {
+  display: none !important;
+}
+
+html[data-eink="1"] .hero-card-progress-fill {
+  background: #000;
+  box-shadow: none;
+}
+
+html[data-eink="1"] .welcome-hero-mark {
+  background: #fff;
+  border: 1px solid #000;
+  box-shadow: none;
+}
+
+html[data-eink="1"] .welcome-hero-mark::after {
+  color: #000;
+  text-shadow: none;
+}
+
+html[data-eink="1"] .cover {
+  --spot: 0 !important;
+}
+
+html[data-eink="1"] :is(.button, button) {
+  background-image: none !important;
+}

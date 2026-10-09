@@ -117,10 +117,14 @@ export function getHomeWelcomeQuotes(locale = 'ru') {
   return Object.values(pools).flat();
 }
 
-export function pickHomeWelcomeQuote(locale = 'ru', { inviting = false, hour } = {}) {
+export function getHomeWelcomeQuotePool(locale = 'ru', { inviting = false, hour } = {}) {
   const loc = normalizeLocale(locale);
   const ctx = getHomeQuoteContext(hour ?? new Date().getHours(), inviting);
-  const list = POOLS[loc][ctx] || POOLS[loc].inviting;
+  return POOLS[loc][ctx] || POOLS[loc].inviting;
+}
+
+export function pickHomeWelcomeQuote(locale = 'ru', options = {}) {
+  const list = getHomeWelcomeQuotePool(locale, options);
   if (!list.length) return { quote: '', author: '' };
   return list[Math.floor(Math.random() * list.length)];
 }

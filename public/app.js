@@ -113,6 +113,79 @@ function initHomeWelcomeReveal() {
   if (banner) revealHomeBlock(banner);
 }
 
+const HOME_QUOTE_ROTATE_MS = 10000;
+const HOME_QUOTE_FADE_MS = 650;
+
+function initHomeQuoteRotation() {
+  const banner = document.querySelector('.welcome-hero-banner');
+  const data = banner?.querySelector('[data-home-quotes]');
+  const quoteEl = banner?.querySelector('.welcome-hero-quote');
+  const authorEl = banner?.querySelector('.welcome-hero-author');
+  if (!data || !quoteEl || !authorEl) return;
+  if (document.documentElement.dataset.eink === '1') return;
+  let pool = [];
+  try { pool = JSON.parse(data.textContent || '[]'); } catch { return; }
+  if (!Array.isArray(pool) || pool.length < 2) return;
+  let current = Math.max(0, pool.findIndex((q) => q.quote === quoteEl.textContent));
+  let paused = false;
+  const pause = () => { paused = true; };
+  const resume = () => { paused = banner.matches(':hover') || banner.contains(document.activeElement); };
+  banner.addEventListener('pointerenter', pause);
+  banner.addEventListener('pointerleave', resume);
+  banner.addEventListener('focusin', pause);
+  banner.addEventListener('focusout', () => setTimeout(resume, 0));
+  const swap = () => {
+    let next = Math.floor(Math.random() * (pool.length - 1));
+    if (next >= current) next += 1;
+    current = next;
+    const { quote, author, href } = pool[current];
+    quoteEl.textContent = quote;
+    authorEl.textContent = '';
+    if (href) {
+      const a = document.createElement('a');
+      a.href = href;
+      a.textContent = author;
+      authorEl.append(a);
+    } else {
+      authorEl.textContent = author;
+    }
+  };
+  const timer = setInterval(() => {
+    if (!banner.isConnected) { clearInterval(timer); return; }
+    if (paused || document.hidden) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { swap(); return; }
+    banner.classList.add('is-quote-swapping');
+    setTimeout(() => {
+      swap();
+      banner.classList.remove('is-quote-swapping');
+    }, HOME_QUOTE_FADE_MS);
+  }, HOME_QUOTE_ROTATE_MS);
+}
+
+/* Feeds --mx/--my to the pointer-lit covers and panels in styles.css. */
+function attachPointerSpotlight() {
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+  if (document.documentElement.dataset.eink === '1') return;
+  let target = null;
+  let x = 0;
+  let y = 0;
+  let frame = 0;
+  const apply = () => {
+    frame = 0;
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    target.style.setProperty('--mx', `${Math.round(x - r.left)}px`);
+    target.style.setProperty('--my', `${Math.round(y - r.top)}px`);
+  };
+  document.addEventListener('pointermove', (e) => {
+    target = e.target instanceof Element ? e.target.closest('.cover, .admin-card, .book-detail-main') : null;
+    if (!target) return;
+    x = e.clientX;
+    y = e.clientY;
+    if (!frame) frame = requestAnimationFrame(apply);
+  }, { passive: true });
+}
+
 function renderCoverRatingBadgeHtml(libRate) {
   const n = Math.max(0, Math.min(5, Math.floor(Number(libRate) || 0)));
   if (!n) return '';
@@ -6782,6 +6855,8 @@ attachBookIllustrationLightbox();
 loadHomeRecommendationsProgressively();
 loadHomeContinueProgressively();
 initHomeWelcomeReveal();
+initHomeQuoteRotation();
+attachPointerSpotlight();
 attachLoadMore();
 attachBatchDownloadSelection();
 attachConfirmedFormSubmits();

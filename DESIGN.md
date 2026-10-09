@@ -73,6 +73,20 @@ Body ~14.5px / 1.55. Display headings use slight negative tracking (~-0.02em).
 - **List view:** grouped panels with soft surface, hover row wash, Covers/List segmented control
 - **Book detail:** bordered surface panel; display-serif title
 
+## Magic layer (2026-10)
+
+Additive block at the end of `public/styles.css`, inspired by Magic UI / tailwindcss.com but kept in the warm world. Every effect derives from `--accent` (Admin → UI palettes still drive it); `--magic-ember` is a warm rust mix of the accent.
+
+- **Backdrop:** 48px blueprint grid + gold/ember aurora on `.main-wrap::before` and the login page, faded by a radial mask
+- **Home hero:** the quote uses the continue-reading card's anatomy (200px cover column + kicker / title-scale text / author) so swapping in the card does not jump; the cover slot is `.welcome-hero-mark`, a leather "binding" with an embossed open-quote and a drifting glow (`@property --mark-glow-x`); quote and author resolve out of blur
+- **Covers:** pointer-following light inside `.cover::after` (`--spot`, `--mx/--my` from `attachPointerSpotlight` in `app.js`), warm glow under the lifted cover
+- **Panels:** border that lights up under the pointer on `.admin-card` and `.book-detail-main`
+- **Book detail:** the cover itself, blurred, as an ambient backdrop (`--detail-cover` set by the template)
+- **Buttons:** shimmer sweep + glow on every bordered button (icon-only toggles excluded); shelf «Show all» is a pill with a sliding arrow
+- **Login:** travelling conic border beam (`@property --beam-angle`)
+- **Continue reading:** progress bar with a moving sheen
+- Off in e-ink mode and `prefers-contrast: more`; animations off under `prefers-reduced-motion`
+
 ## Do / Don’t
 
 **Do**

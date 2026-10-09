@@ -13,7 +13,7 @@ import {
   renderSectionIntro, renderFacetHero, renderAlert, renderAccountNav, renderAppPairWidget,
   renderListRemoveBtn, bookIdDataAttr, bookCardDataAttrs, batchBookIdDataAttr,
   firstAuthorValue, uniqueBooksById, batchSelectInputAttrs, safeDomIdPart,
-  browseTotalLine, canDownloadInUi, canSendToEmailInUi, renderAuthorLinks, renderSeriesLinks, renderWelcomeQuoteAuthor,
+  browseTotalLine, canDownloadInUi, canSendToEmailInUi, renderAuthorLinks, renderSeriesLinks, renderWelcomeQuoteAuthor, isWelcomeQuoteAuthorLinkable,
   STATIC_ASSET_VERSION, siteTitleForDisplay, READ_CHECK_SVG, renderFaviconLinks,
   bookPagePath, readPagePath, apiBookPath, liteBookPagePath, liteReadPagePath,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
@@ -21,13 +21,19 @@ import {
   formatAuthorLabel, formatLanguageLabel,
   formatGenreLabel, parseGenreCodes
 } from './shared.js';
-import { pickHomeWelcomeQuote } from '../home-welcome-quotes.js';
+import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
 
 export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false }) {
   const isAuthenticated = Boolean(user);
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
   const quoteInviting = !isAuthenticated || !hasContinueData;
+  const welcomeQuotePool = getHomeWelcomeQuotePool(getLocale(), { inviting: quoteInviting });
   const welcomeQuote = pickHomeWelcomeQuote(getLocale(), { inviting: quoteInviting });
+  const welcomeQuotesJson = JSON.stringify(welcomeQuotePool.map(({ quote, author }) => ({
+    quote,
+    author,
+    href: isWelcomeQuoteAuthorLinkable(author) ? `/catalog?field=authors&q=${encodeURIComponent(author)}` : ''
+  }))).replace(/</g, '\\u003c');
   const subtitleText = homeSubtitle === '-' ? '' : (homeSubtitle || t('home.subtitle'));
   const homeViewAttr = listView ? 'list' : 'grid';
   const recommendationsShelf = isAuthenticated
@@ -47,11 +53,13 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     <h1 class="visually-hidden">${escapeHtml(siteTitleForDisplay())}</h1>
     ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
     <section class="welcome-hero-banner home-reveal"${continueAttr}>
-      <div class="welcome-hero-overlay"></div>
+      <div class="welcome-hero-mark" aria-hidden="true"></div>
       <div class="welcome-hero-content">
+        <div class="hero-card-kicker">${escapeHtml(t('home.quoteKicker'))}</div>
         <blockquote class="welcome-hero-quote">${escapeHtml(welcomeQuote.quote)}</blockquote>
         <cite class="welcome-hero-author">${renderWelcomeQuoteAuthor(welcomeQuote.author)}</cite>
       </div>
+      <script type="application/json" data-home-quotes>${welcomeQuotesJson}</script>
     </section>
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}
     ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, showBatch: false, user, readBookIds, listView })}
@@ -697,7 +705,7 @@ export function renderBook({
       ? tp('book.authorPrefix', { name: formatAuthorLabel(book.authors) })
       : t('nav.recent');
   const content = `
-    <section class="book-detail-shell">
+    <section class="book-detail-shell" style="--detail-cover:url('${escapeHtml(apiBookPath(book.id, 'cover'))}')">
       <div class="book-detail-main card-detail-panel">
         ${isAuthenticated ? `<div class="book-detail-corner-actions">
           <button class="button book-detail-read-action ${isRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-read-button="1">${isRead ? escapeHtml(t('book.markedRead')) : escapeHtml(t('book.markRead'))}</button>

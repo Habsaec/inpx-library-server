@@ -295,6 +295,7 @@
   "home.welcomeQuote": "Книги — это уникальная переносимая магия.",
   "home.welcomeQuoteAuthor": "Стивен Кинг",
   "home.heroKicker": "✦ Продолжить чтение ✦",
+  "home.quoteKicker": "✦ Слово о книгах ✦",
   "home.heroReadBook": "Читать книгу",
   "home.heroAboutBook": "О книге",
   "home.heroProgress": "{{pct}}% прочитано",
