@@ -24,14 +24,15 @@ User query
   → GET /api/search: totals for chips / Android (`routeField` always null)
   → typeahead: GET /api/search/suggest (web dropdown + Android)
   → GET /api/catalog?field=authors|series from chips
-  → empty: recovery hints + one typo retry; weak: ≤1 did-you-mean
+  → empty books: lightweight did-you-mean only; authors/series totals come from overview
+  → empty authors/series: cross-mode recovery hints; weak books: ≤1 did-you-mean
   → paginated page (edition dedupe: same title, author, series, year, and format)
 ```
 
 | Mode | Matcher |
 |------|---------|
 | Overview | `searchOverview` — capped book COUNT (≤10k) + authors/series totals + soft `preferredField`; `routeField` always null |
-| Books | FTS5 MATCH + title boost (exact/prefix/ordered-token) then `bm25`; author+title split when confident; phrase OR; stopwords skipped in AND; LIKE fallback when dirty/desynced/`*`/zero MATCH; free-text uses capped COUNT |
+| Books | FTS5 MATCH + title boost (exact/prefix/ordered-token) then `bm25`; author+title split when confident; phrase OR; stopwords skipped in AND; LIKE fallback when dirty/desynced or explicitly requested with `*`; a healthy zero MATCH returns immediately; free-text uses capped COUNT |
 | Authors | `listAuthors` (also OPDS). A single surname is a `sort_name` range (`>=` / `<` on `idx_authors_sort_name`); `LIKE '%token%'` only for `*` or when that prefix misses |
 | Series | A single token is a `sort_name` range (`>=` / `<` on `idx_series_catalog_sort_name`); `LIKE '%token%'` only for `*` or when that prefix misses. Multi-token: series name + mixed author+series |
 
@@ -61,7 +62,7 @@ Enter always opens **books** (Flibusta-like). Authors / series are chips above r
 2. No typo dictionary on suggest / overview
 3. No alternate-mode rescans except empty catalog results
 4. Suggest: title prefix on `idx_books_title_search` (no FTS `ORDER BY rank`); authors/series are `sort_name` ranges. FTS fill only when every content token is 4+ characters and the prefix list is short
-5. FTS when healthy; LIKE only on miss/dirty/`*`
+5. FTS when healthy; LIKE only when dirty/desynced or explicitly requested with `*` (`BOOKS_FTS_ZERO_MATCH_LIKE_FALLBACK=1` restores the legacy zero-MATCH fallback)
 6. Book totals join `active_books` (cap 10k) so excluded languages, genres, and deleted books are not counted
 7. Language/format dropdowns read `catalog_distinct_langs` / `catalog_distinct_exts`, not `SELECT DISTINCT` over `books` on each search
 
@@ -75,7 +76,7 @@ Enter always opens **books** (Flibusta-like). Authors / series are chips above r
 
 ## Did-you-mean
 
-Authors + series + `search_title_tokens` (≤50k). Empty catalog → full `searchHints`; weak books page → ≤1 suggestion. Typo retry only after a true miss at catalog layer.
+Authors + series + `search_title_tokens` (≤50k). Empty books → lightweight did-you-mean; the separate overview supplies author/series totals. Empty author/series modes keep full cross-mode `searchHints`; weak books page → ≤1 suggestion. `SEARCH_SYNC_EMPTY_RECOVERY=1` restores the legacy corrected-query retry and full synchronous hints.
 
 ## Ranking (books)
 
