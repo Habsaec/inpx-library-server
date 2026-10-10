@@ -117,6 +117,18 @@ const AUTHOR_GROUPED_CACHE_TTL_MS = 60_000; // 12с → 60с: меньше за�
 const AUTHOR_GROUPED_FETCH_CAP = 10_000;
 const ARCHIVE_STEM_LOOKUP_TTL_MS = 120_000;
 const BOOKS_FTS_DIRTY_META_KEY = 'books_fts_dirty';
+/**
+ * A healthy FTS miss is authoritative. Falling through to a multi-column LIKE
+ * scan on 500k+ books blocks the Node event loop for several seconds. Keep the
+ * legacy behaviour available only as an explicit emergency compatibility flag.
+ */
+const BOOKS_FTS_ZERO_MATCH_LIKE_FALLBACK = process.env.BOOKS_FTS_ZERO_MATCH_LIKE_FALLBACK === '1';
+/**
+ * Legacy empty-result recovery re-runs corrected book search plus author/series
+ * scans synchronously. The search overview already supplies those section
+ * totals, so keep that expensive duplicate work opt-in on large NAS catalogs.
+ */
+const SEARCH_SYNC_EMPTY_RECOVERY = process.env.SEARCH_SYNC_EMPTY_RECOVERY === '1';
 
 const facetBooksCache = new Map();
 const facetDedupTotalCache = new Map();
@@ -4287,8 +4299,6 @@ export function searchBooks({
       ftsHit = total > 0;
     }
 
-    // External-content FTS can be empty/desynced while books_fts_dirty=0.
-    // If MATCH finds nothing, fall through to LIKE instead of a false "0 results".
     if (ftsHit) {
       const contentTokens = filterSearchContentTokens(String(needleKey || '').split(/\s+/));
       /* Exact/phrase/ordered title beat bm25 so multi-word titles land on page 1. */
@@ -4310,9 +4320,20 @@ export function searchBooks({
       const outTotal = mode === 'omit' ? items.length : total;
       return capped ? { total: outTotal, items, capped: true } : { total: outTotal, items };
     }
+
+    /*
+     * isBooksFtsUsable() already checks the dirty flag and probes external-content
+     * desynchronisation. Treat a zero MATCH from a healthy index as a real miss:
+     * the old LIKE fallback scanned every searchable column and stalled the
+     * event loop for seconds on NAS-sized catalogs. `*query` still selects the
+     * explicit contains/LIKE path, and an unusable FTS still falls through below.
+     */
+    if (!BOOKS_FTS_ZERO_MATCH_LIKE_FALLBACK) {
+      return { total: 0, items: [] };
+    }
   }
 
-  /* ── Fallback: LIKE (FTS dirty, empty MATCH, `*` contains, or FTS unavailable) ── */
+  /* ── Fallback: LIKE (FTS dirty/unavailable, explicit `*`, or legacy flag) ── */
   const sqlSearch = buildBookSearchSql(field, query);
   if (sqlSearch || authorMatch) {
     const needleKey = createSortKey(parsedQuery.value || query);
@@ -4988,7 +5009,12 @@ export function searchCatalog({
       field: normalizedField
     };
     /* Typo retry only after a true miss — not on every searchBooks call. */
-    if (!warmed && result.total === 0 && String(query || '').trim()) {
+    if (
+      SEARCH_SYNC_EMPTY_RECOVERY
+      && !warmed
+      && result.total === 0
+      && String(query || '').trim()
+    ) {
       const corrected = tryTypoCorrectedSearchBooks({ ...bookArgs, allowTypoRetry: true });
       if (corrected) result = { ...corrected, field: normalizedField };
     }
@@ -4998,7 +5024,14 @@ export function searchCatalog({
   const tMain = Date.now();
   const hintField = normalizedField === 'authors' || normalizedField === 'series' ? normalizedField : 'books';
   if (q && result.total === 0) {
-    result.searchHints = buildSearchRecoveryHints({ query: q, field: hintField });
+    result.searchHints = hintField === 'books' && !SEARCH_SYNC_EMPTY_RECOVERY
+      ? {
+          alternateModes: [],
+          didYouMean: findDidYouMeanSuggestions(q, 3),
+          tip: null,
+          deferred: true
+        }
+      : buildSearchRecoveryHints({ query: q, field: hintField });
   } else if (
     q
     && hintField === 'books'
