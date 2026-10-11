@@ -76,7 +76,7 @@ import {
   listSearchGenres,
   hasContinueBooks
 } from '../inpx.js';
-import { getDistinctLanguages, getDistinctFormats, parseGenreList, parseHasSeries } from '../inpx.js';
+import { getDistinctLanguages, getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
 import {
@@ -308,6 +308,7 @@ export function registerLibraryRoutes(app, deps) {
     const query = String(req.query.q || '');
     const genres = parseGenreList(req.query.genre);
     const genre = genres.join(',');
+    const genreMode = parseGenreMode(req.query.genreMode);
     const letter = String(req.query.letter || '').trim().slice(0, 2);
     const lang = String(req.query.lang || '').trim();
     const format = String(req.query.format || '').trim();
@@ -332,8 +333,8 @@ export function registerLibraryRoutes(app, deps) {
     const order = String(req.query.order || '');
     const page = safePage(req.query.page);
     const pageSize = 24;
-    const cacheKey = `catalog:v3:${field}:${sort}:${order}:${genre}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}`;
-    const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, order, genre, letter, lang, format, year, minRate, hasSeries }));
+    const cacheKey = `catalog:v4:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}`;
+    const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, order, genre, genreMode, letter, lang, format, year, minRate, hasSeries }));
     const langs = getDistinctLanguages();
     const formats = getDistinctFormats();
     const allGenreOptions = getCachedPageData('catalog:genre-options', () => listGenresGrouped({ sort: 'name' }), PAGE_CACHE_TTL_MS);
@@ -425,7 +426,7 @@ export function registerLibraryRoutes(app, deps) {
       : null;
     const listView = isListBrowseView({ username: user?.username || '', queryView: req.query.view, scope: 'catalog' });
     res.send(renderCatalog({
-      ...result, page, pageSize, query, field, sort, order, genre, genres, letter, lang, format, year,
+      ...result, page, pageSize, query, field, sort, order, genre, genres, genreMode, letter, lang, format, year,
       minRate, hasSeries, langs, formats, genreOptions, genreOptionsLazy, searchNav,
       view: listView ? 'list' : '',
       user, stats,

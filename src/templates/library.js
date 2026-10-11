@@ -61,7 +61,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
 
 function buildCatalogQueryParams({
   query = '', field = 'books', sort = 'title', order = '', genres = [], letter = '',
-  lang = '', format = '', year = 0, minRate = 0, hasSeries = null, view = ''
+  lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genreMode = 'or', view = ''
 } = {}) {
   const p = new URLSearchParams();
   if (field) p.set('field', field);
@@ -74,6 +74,7 @@ function buildCatalogQueryParams({
   if (year) p.set('year', String(year));
   if (minRate >= 1) p.set('minRate', String(minRate));
   if (hasSeries === 0 || hasSeries === 1) p.set('hasSeries', String(hasSeries));
+  if (genreMode === 'and') p.set('genreMode', 'and');
   if (view === 'list') p.set('view', 'list');
   for (const g of genres) {
     if (g) p.append('genre', g);
@@ -166,12 +167,12 @@ function sortGenreOptionsAlpha(options = []) {
 
 function renderCatalogFilterPanel({
   query, field, sort, order, genres = [], letter, lang, format, year, minRate = 0,
-  hasSeries = null, langs = [], formats = [], genreOptions = [], genreOptionsLazy = false,
+  hasSeries = null, genreMode = 'or', langs = [], formats = [], genreOptions = [], genreOptionsLazy = false,
   view = ''
 }) {
   const selected = new Set(genres);
   const baseParams = buildCatalogQueryParams({
-    query, field, sort, order, genres, letter, lang, format, year, minRate, hasSeries, view
+    query, field, sort, order, genres, letter, lang, format, year, minRate, hasSeries, genreMode, view
   });
   const chips = [];
   for (const g of genres) {
@@ -230,7 +231,13 @@ function renderCatalogFilterPanel({
             <details class="catalog-filter-details"${genres.length ? ' open' : ''}>
               <summary>${escapeHtml(t('catalog.filtersGenres'))}${genres.length ? ` (${genres.length})` : ''}</summary>
               <div class="catalog-genre-panel">
-                <input type="search" class="catalog-genre-search" data-catalog-genre-search placeholder="${escapeHtml(t('catalog.filtersGenreSearch'))}" autocomplete="off">
+                <div class="catalog-genre-search-row">
+                  <input type="search" class="catalog-genre-search" data-catalog-genre-search placeholder="${escapeHtml(t('catalog.filtersGenreSearch'))}" autocomplete="off">
+                  <select class="catalog-genre-mode" name="genreMode" aria-label="${escapeHtml(t('catalog.filtersGenreMode'))}" title="${escapeHtml(t('catalog.filtersGenreMode'))}" onchange="this.form.submit()">
+                    <option value=""${genreMode === 'and' ? '' : ' selected'}>${escapeHtml(t('catalog.filtersGenreModeAny'))}</option>
+                    <option value="and"${genreMode === 'and' ? ' selected' : ''}>${escapeHtml(t('catalog.filtersGenreModeAll'))}</option>
+                  </select>
+                </div>
                 <div class="catalog-genre-list" role="group" aria-label="${escapeHtml(t('catalog.filtersGenres'))}">${genreListHtml}</div>
               </div>
             </details>
@@ -372,7 +379,7 @@ function renderSearchNav(searchNav, { query = '', field = 'books' } = {}) {
 export function renderCatalog({
   items, total, page, pageSize, query, field, sort, order = '',
   genre = '', genres = null, letter = '', lang = '', format = '', year = 0,
-  minRate = 0, hasSeries = null,
+  minRate = 0, hasSeries = null, genreMode = 'or',
   langs = [], formats = [], genreOptions = [],
   genreOptionsLazy = false,
   searchNav = null,
@@ -405,7 +412,7 @@ export function renderCatalog({
         { value: 'name', label: t('sort.byName') }
       ];
   const catalogParams = buildCatalogQueryParams({
-    query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries,
+    query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode,
     view: isListView ? 'list' : ''
   });
   const catalogPageBase = `/catalog?${catalogParams.toString()}`;
@@ -465,8 +472,8 @@ export function renderCatalog({
   const pageHeading = hasQueryContext ? t('catalog.resultsTitle') : t('catalog.title');
   const viewToggle = isBookField
     ? (() => {
-      const gridParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, view: '' });
-      const listParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, view: 'list' });
+      const gridParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, view: '' });
+      const listParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, view: 'list' });
       gridParams.set('view', 'grid');
       const gridIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
       const listIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
@@ -496,6 +503,7 @@ export function renderCatalog({
               ...(year ? { year: String(year) } : {}),
               ...(minRate >= 1 ? { minRate: String(minRate) } : {}),
               ...((hasSeries === 0 || hasSeries === 1) ? { hasSeries: String(hasSeries) } : {}),
+              ...(genreMode === 'and' ? { genreMode: 'and' } : {}),
               ...(letter ? { letter } : {}),
               ...(isListView ? { view: 'list' } : {})
             }
@@ -504,7 +512,7 @@ export function renderCatalog({
       </div>
       ${searchNavBlock}
       ${isBookField ? renderCatalogFilterPanel({
-        query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, langs, formats, genreOptions, genreOptionsLazy,
+        query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, langs, formats, genreOptions, genreOptionsLazy,
         view: isListView ? 'list' : ''
       }) : ''}
       ${letter && !query ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(tp('catalog.letterResults', { letter: letter.toUpperCase() }))}</div>` : ''}
