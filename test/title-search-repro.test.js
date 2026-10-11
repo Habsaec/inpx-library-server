@@ -199,6 +199,60 @@ test('LIKE fallback finds multi-word title when FTS is dirty', () => {
   }
 });
 
+test('healthy FTS miss does not fall through to a broad LIKE scan', () => {
+  const id = 'healthy-fts-like-only-hit';
+  const title = 'Альфабета Гаммадельта';
+  const enriched = enrichBookRow({
+    title,
+    authors: 'Тестовый Автор',
+    genres: '',
+    series: '',
+    seriesNo: '',
+    keywords: '',
+    date: ''
+  });
+  db.prepare('DELETE FROM books WHERE id = ?').run(id);
+  db.prepare(`
+    INSERT INTO books (
+      id, title, authors, genres, series, series_no, title_sort, author_sort,
+      series_sort, series_index, title_search, authors_search, series_search,
+      genres_search, keywords_search, file_name, archive_name, size, lib_id, deleted,
+      ext, date, lang, keywords, lib_rate, source_id
+    ) VALUES (
+      ?, ?, 'Тестовый Автор', '', '', '', ?, ?,
+      '', 0, ?, ?, '',
+      '', '', 'like-only.fb2', 'a.zip', 1, ?, 0,
+      'fb2', '', 'ru', '', 0, NULL
+    )
+  `).run(
+    id,
+    title,
+    enriched.titleSort,
+    enriched.authorSort,
+    enriched.titleSearch,
+    enriched.authorsSearch,
+    id
+  );
+  rebuildBooksFtsFromContentSync();
+  setMeta('books_fts_dirty', '0');
+  invalidateBooksFtsHealthCache();
+  try {
+    const defaultSearch = searchBooks({ query: 'бета дельта', page: 1, pageSize: 24, field: 'title' });
+    assert.equal(defaultSearch.total, 0, 'healthy zero-MATCH must return immediately');
+
+    const explicitContains = searchBooks({ query: '*бета дельта', page: 1, pageSize: 24, field: 'title' });
+    assert.ok(
+      explicitContains.items.some((row) => row.id === id),
+      'explicit * search must retain the contains/LIKE behaviour'
+    );
+  } finally {
+    db.prepare('DELETE FROM books WHERE id = ?').run(id);
+    rebuildBooksFtsFromContentSync();
+    setMeta('books_fts_dirty', '0');
+    invalidateBooksFtsHealthCache();
+  }
+});
+
 test('single-token prefix still finds the title', () => {
   const prefix = searchBooks({ query: 'пешком', page: 1, pageSize: 24, field: 'title' });
   assert.ok(prefix.items.some((row) => row.id === BOOK_ID), 'single prefix token must match');

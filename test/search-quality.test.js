@@ -134,6 +134,20 @@ test('empty catalog result includes recovery hints', () => {
   assert.ok(seriesAlt && seriesAlt.total > 0, 'authors-empty should hint series');
 });
 
+test('empty books result keeps synchronous recovery lightweight', () => {
+  const result = searchCatalog({
+    query: 'codexnosuchbookxyz',
+    field: 'books',
+    page: 1,
+    pageSize: 24
+  });
+  assert.equal(result.total, 0);
+  assert.ok(result.searchHints);
+  assert.deepEqual(result.searchHints.alternateModes, []);
+  assert.ok(Array.isArray(result.searchHints.didYouMean));
+  assert.equal(result.searchHints.deferred, true);
+});
+
 test('did-you-mean suggests close author token', () => {
   const hints = findDidYouMeanSuggestions('булычов', 3);
   assert.ok(hints.some((h) => h.type === 'author' && /булычев/i.test(h.label)), `got ${JSON.stringify(hints)}`);
