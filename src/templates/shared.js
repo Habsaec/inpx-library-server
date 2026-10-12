@@ -1435,6 +1435,7 @@ function uiHtmlRootAttrs() {
   }
   if (ui.showLogo === false) attrs += ' data-ui-logo="0"';
   if (ui.manuscriptWash === false) attrs += ' data-ui-manuscript="0"';
+  if (ui.book3d === false) attrs += ' data-ui-book3d="0"';
   if (hasUiThemeShapeConfigured()) attrs += ' data-ui-shape="1"';
   if (hasUiThemeTypographyConfigured()) attrs += ' data-ui-typography="1"';
   const coverPair = coverFallbackPair();

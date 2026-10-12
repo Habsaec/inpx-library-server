@@ -13007,3 +13007,153 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
     width: 100%;
   }
 }
+
+/* 3D book covers (mouse + motion allowed only): flat at rest, the book turns on hover.
+   Wrapper gets a page edge (::before); hero and book page also get a back plate (::after).
+   Cards: .card-cover wraps cover + hover actions, all lifted in front of the page edge. */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  html:not([data-ui-book3d="0"]) .hero-carousel .hero-card-cover-side,
+  html:not([data-ui-book3d="0"]) .book-3d-body,
+  html:not([data-ui-book3d="0"]) .card-cover {
+    /* Thickness scales with the cover width (cqw of this container), so it looks the same everywhere. */
+    --bk-depth: 10.5cqw;
+    --bk-persp: 900px;
+    --bk-tilt: 0deg;
+    --bk-lift: 0px;
+    container-type: inline-size;
+    position: relative;
+    transform-style: preserve-3d;
+    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
+    transition: transform 0.6s var(--ease-premium);
+  }
+
+  html:not([data-ui-book3d="0"]) .book-3d-body {
+    --bk-persp: 1200px;
+  }
+
+  html:not([data-ui-book3d="0"]) .hero-carousel .hero-card-cover-side::before,
+  html:not([data-ui-book3d="0"]) .book-3d-body::before,
+  html:not([data-ui-book3d="0"]) .card-cover::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    left: calc(100% - var(--bk-depth) / 2);
+    width: var(--bk-depth);
+    transform: rotateY(90deg);
+    background: repeating-linear-gradient(90deg, #f4eedf 0 1px, #e3dac4 1px 2px);
+    pointer-events: none;
+  }
+
+  /* Back plate; hidden at rest so a flat cover keeps its normal shadow. On cards it replaces
+     the old gradient (.card-cover::after), which moves to .card-cover-actions::before below. */
+  html:not([data-ui-book3d="0"]) .hero-carousel .hero-card-cover-side::after,
+  html:not([data-ui-book3d="0"]) .book-3d-body::after,
+  html:not([data-ui-book3d="0"]) .card .card-cover::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    height: auto;
+    transform: translateZ(calc(var(--bk-depth) / -2));
+    border-radius: 1px 4px 4px 1px;
+    background: #14110d;
+    box-shadow: 0 22px 36px -16px rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    transition: opacity 0.45s var(--ease-premium);
+    pointer-events: none;
+  }
+
+  html:not([data-ui-book3d="0"]) .hero-carousel .hero-carousel-slide .hero-cover-link.cover,
+  html:not([data-ui-book3d="0"]) .hero-carousel .hero-carousel-slide:hover .hero-cover-link.cover,
+  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d .cover,
+  html:not([data-ui-book3d="0"]) .card-cover > .cover {
+    transform: translateZ(calc(var(--bk-depth) / 2));
+  }
+
+  html:not([data-ui-book3d="0"]) .card-cover-actions {
+    transform: translateZ(calc(var(--bk-depth) / 2 + 1px));
+  }
+
+  html:not([data-ui-book3d="0"]) .card-cover-actions::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    left: -8px;
+    right: -8px;
+    bottom: -8px;
+    aspect-ratio: 1 / 0.69;
+    border-radius: 0 0 4px 1px;
+    pointer-events: none;
+    background: linear-gradient(to top,
+        color-mix(in srgb, #0c0a08 90%, transparent) 0%,
+        color-mix(in srgb, #0c0a08 70%, transparent) 45%,
+        color-mix(in srgb, #0c0a08 24%, transparent) 78%,
+        transparent 100%);
+  }
+
+  html[data-theme="light"]:not([data-ui-book3d="0"]) .card-cover-actions::before {
+    background: linear-gradient(to top,
+        color-mix(in srgb, #2a2014 78%, transparent) 0%,
+        color-mix(in srgb, #2a2014 52%, transparent) 45%,
+        color-mix(in srgb, #2a2014 16%, transparent) 78%,
+        transparent 100%);
+  }
+
+  /* Hover: the book turns. */
+  html:not([data-ui-book3d="0"]) .hero-carousel-slide:hover .hero-card-cover-side {
+    --bk-tilt: -20deg;
+    --bk-lift: -8px;
+  }
+
+  /* Book page: the outer wrapper stays still and catches the pointer, so the turning body can't flicker at its edges. */
+  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d:hover .book-3d-body {
+    --bk-tilt: -20deg;
+  }
+
+  html:not([data-ui-book3d="0"]) .hero-carousel-slide:hover .hero-card-cover-side::after,
+  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d:hover .book-3d-body::after,
+  html:not([data-ui-book3d="0"]) .card:hover .card-cover::after {
+    opacity: 1;
+  }
+
+  html:not([data-ui-book3d="0"]) .card:hover .card-cover,
+  html:not([data-ui-book3d="0"]) .card:focus-within .card-cover {
+    --bk-tilt: -20deg;
+    --bk-lift: -8px;
+    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
+  }
+
+  html:not([data-ui-book3d="0"]) .card:active .card-cover {
+    --bk-lift: -1px;
+    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
+  }
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) and (max-width: 900px) {
+  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d {
+    max-width: 320px;
+    margin-inline: auto;
+  }
+
+  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d .cover {
+    max-width: none;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) and (max-width: 600px) {
+  html:not([data-ui-book3d="0"]) .card-cover-actions::before {
+    left: -6px;
+    right: -6px;
+    bottom: -6px;
+  }
+
+  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d {
+    max-width: 280px;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) and (max-width: 360px) {
+  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d {
+    max-width: 240px;
+  }
+}

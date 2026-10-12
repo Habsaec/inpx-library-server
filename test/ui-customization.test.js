@@ -503,6 +503,18 @@ test('manuscript wash is on until the admin turns it off', () => {
   assert.equal(getUiCustomization().manuscriptWash, true);
 });
 
+test('3D book covers are on until the admin turns them off', () => {
+  invalidateUiCustomizationCache();
+  assert.equal(getUiCustomization().book3d, true);
+  assert.equal(getThemePreviewFromDraft({}).attrs.book3d, true);
+  assert.equal(getThemePreviewFromDraft({ book3d: '0' }).attrs.book3d, false);
+  saveUiSettings({ book3d: false });
+  assert.equal(getUiCustomization().book3d, false);
+  assert.equal(getThemePreviewFromDraft({}).attrs.book3d, false);
+  saveUiSettings({ book3d: true });
+  assert.equal(getUiCustomization().book3d, true);
+});
+
 test('manuscript appearance settings clamp, persist and reset', () => {
   invalidateUiCustomizationCache();
   resetManuscriptSettings();

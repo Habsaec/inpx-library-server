@@ -741,6 +741,7 @@ export function getUiCustomization() {
   const showLogo = getSetting('ui_show_logo') !== '0';
   const showHeader = getSetting('ui_show_header') !== '0';
   const manuscriptWash = getSetting('ui_manuscript') !== '0';
+  const book3d = getSetting('ui_book_3d') !== '0';
   const radiusPreset = getSetting('ui_radius_preset') || 'rounded';
   const shadowPreset = getSetting('ui_shadow_preset') || 'normal';
   const fontSize = readFontSizeSetting();
@@ -829,6 +830,7 @@ export function getUiCustomization() {
     showLogo,
     showHeader,
     manuscriptWash,
+    book3d,
     manuscriptFont,
     manuscriptInk,
     manuscriptSize,
@@ -1124,6 +1126,9 @@ export function getThemePreviewFromDraft(draft = {}) {
   const manuscriptWash = draft.manuscriptWash !== undefined
     ? draftStr(draft.manuscriptWash) !== '0'
     : saved.manuscriptWash !== false;
+  const book3d = draft.book3d !== undefined
+    ? draftStr(draft.book3d) !== '0'
+    : saved.book3d !== false;
   const manuscriptFont = COVER_TITLE_FONTS[draftStr(draft.manuscriptFont, saved.manuscriptFont)]
     ? draftStr(draft.manuscriptFont, saved.manuscriptFont)
     : saved.manuscriptFont;
@@ -1155,6 +1160,7 @@ export function getThemePreviewFromDraft(draft = {}) {
         : '',
       logo: showLogo,
       manuscript: manuscriptWash,
+      book3d,
       shape: true,
       typography: true,
     },
@@ -1201,6 +1207,7 @@ export function saveUiSettings({
   showLogo,
   showLogoOnLogin,
   manuscriptWash,
+  book3d,
   dynamicThemeFromBg,
 } = {}) {
   if (dynamicThemeFromBg !== undefined) {
@@ -1324,6 +1331,9 @@ export function saveUiSettings({
   }
   if (manuscriptWash !== undefined) {
     setSetting('ui_manuscript', manuscriptWash ? '1' : '0');
+  }
+  if (book3d !== undefined) {
+    setSetting('ui_book_3d', book3d ? '1' : '0');
   }
   invalidateUiCustomizationCache();
 }

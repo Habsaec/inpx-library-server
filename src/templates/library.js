@@ -767,7 +767,7 @@ export function renderBook({
           <button class="button book-detail-bookmark-action ${bookmarked ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-bookmark-button="1" ${bookmarked ? 'data-active-favorite="true"' : ''}>${bookmarked ? escapeHtml(t('book.inFavorite')) : escapeHtml(t('book.addFavorite'))}</button>
           <button class="button" type="button" ${bookIdDataAttr(book.id)} data-add-to-shelf="1">${escapeHtml(t('book.toShelf'))}</button>
         </div>` : ''}
-        <div class="book-detail-cover">
+        <div class="book-detail-cover book-3d"><div class="book-3d-body">
           <div class="cover ${hasRealCover ? '' : 'cover-fallback-active'}">
             <img class="cover-image" src="${apiBookPath(book.id, 'cover')}" alt="${escapeHtml(book.title)}">
             <span class="cover-fallback" ${hasRealCover ? 'hidden' : ''} aria-hidden="${hasRealCover ? 'true' : 'false'}">
@@ -780,7 +780,7 @@ export function renderBook({
             </span>
             ${(() => { const r = Math.max(0, Math.min(5, Math.floor(Number(book.libRate) || 0))); return r ? `<span class="cover-rating-wrapper"><span class="cover-rating-badge cover-rating-${r}">${Array.from({ length: r }, () => '<span>★</span>').join('')}</span></span>` : ''; })()}
           </div>
-        </div>
+        </div></div>
         <div class="book-detail-content">
           <h1 class="book-detail-title">${escapeHtml(book.title)}${Number(book.deleted) ? ` <span class="deleted-badge deleted-badge--inline" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>` : ''}</h1>
           ${Number(book.deleted) ? `<p class="muted book-deleted-note">${escapeHtml(t('book.deletedHint'))}</p>` : ''}
