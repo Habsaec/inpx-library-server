@@ -1947,7 +1947,7 @@ export function renderAdminAppearance({
         <div class="admin-card-title">${escapeHtml(t('admin.ui.sectionEffects'))}</div>
         <div class="admin-card-subtitle">${escapeHtml(t('admin.ui.sectionEffectsHint'))}</div>
         <div class="admin-field-group admin-field-group--compact">
-          <label class="admin-checkbox-label">
+          <label class="admin-checkbox-label ui-asset-checkbox">
             <input type="checkbox" form="ui-main-form" name="book3d" value="1" ${ui.book3d !== false ? 'checked' : ''}>
             ${escapeHtml(t('admin.ui.book3d'))}
           </label>
