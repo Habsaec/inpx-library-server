@@ -1682,6 +1682,13 @@ WHERE rp.progress >= 99
       FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
     );
 
+    /* Снимок последнего ручного поиска дубликатов (ключи title_sort + author_sort). */
+    CREATE TABLE IF NOT EXISTS duplicate_scan_keys (
+      title_sort TEXT NOT NULL,
+      author_sort TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (title_sort, author_sort)
+    ) WITHOUT ROWID;
+
     CREATE TABLE IF NOT EXISTS suppressed_books (
       book_id TEXT PRIMARY KEY,
       title TEXT DEFAULT '',

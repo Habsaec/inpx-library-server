@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { config } from '../config.js';
 import { getSharp } from './sharp-loader.js';
 import { getSetting, setSetting } from '../db.js';
@@ -85,7 +86,8 @@ export {
 
 const UI_DIR = path.join(config.dataDir, 'ui');
 const BG_OVERLAY_MAX = 80;
-const BG_OVERLAY_DEFAULT_STRENGTH = 0;
+const DEFAULT_BG_CONTRAST = 5;
+const BG_OVERLAY_DEFAULT_STRENGTH = BG_OVERLAY_MAX - DEFAULT_BG_CONTRAST;
 
 function bgContrastFromOverlayStrength(strength) {
   return BG_OVERLAY_MAX - strength;
@@ -97,7 +99,13 @@ function overlayStrengthFromBgContrast(contrast) {
 }
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_FONT_BYTES = 2 * 1024 * 1024;
-const VALID_ASSETS = new Set(['logo', 'favicon', 'background', 'font']);
+const VALID_ASSETS = new Set(['logo', 'favicon', 'background', 'header', 'cover', 'font']);
+export const DEFAULT_HEADER_HEIGHT = 180;
+export const MIN_HEADER_HEIGHT = 80;
+export const MAX_HEADER_HEIGHT = 640;
+const HEADER_POSITION_PRESETS = ['center', 'top', 'bottom'];
+const HEADER_SIZE_PRESETS = ['cover', 'contain'];
+export const DEFAULT_HEADER_SIZE = 'cover';
 const CUSTOM_FONT_BASENAME = 'custom-font';
 
 const FONT_EXTENSIONS = {
@@ -112,7 +120,242 @@ const SERVE_MAP = {
   favicon: { file: 'favicon-32.png', type: 'image/png' },
   'favicon-192': { file: 'favicon-192.png', type: 'image/png' },
   background: { file: 'background.webp', type: 'image/webp' },
+  header: { file: 'header.webp', type: 'image/webp' },
+  cover: { file: 'cover.webp', type: 'image/webp' },
 };
+
+/** Title face on the placeholder cover. Keys are stored in settings. */
+export const COVER_TITLE_FONTS = {
+  serif: { stack: "'Source Serif 4', Georgia, 'Times New Roman', serif", webfont: 'source-serif-4' },
+  garamond: { stack: "'EB Garamond', Georgia, 'Times New Roman', serif", webfont: 'eb-garamond' },
+  literata: { stack: "'Literata', Georgia, serif", webfont: 'literata' },
+  spectral: { stack: "'Spectral', Georgia, serif", webfont: 'spectral' },
+  merriweather: { stack: "'Merriweather', Georgia, serif", webfont: 'merriweather' },
+  ptSerif: { stack: "'PT Serif', Georgia, serif", webfont: 'pt-serif' },
+  notoSerif: { stack: "'Noto Serif', Georgia, serif", webfont: 'noto-serif' },
+  sans: { stack: "'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", webfont: 'source-sans-3' },
+  pochaevsk: { stack: "'Pochaevsk', 'Source Serif 4', serif", webfont: '' },
+};
+export const DEFAULT_COVER_TITLE_FONT = 'serif';
+export const DEFAULT_COVER_TITLE_SIZE = 100;
+export const MIN_COVER_TITLE_SIZE = 60;
+export const MAX_COVER_TITLE_SIZE = 160;
+export const MIN_COVER_TITLE_OFFSET = -24;
+export const MAX_COVER_TITLE_OFFSET = 24;
+export const DEFAULT_COVER_TITLE_COLOR = '#f6f1e6';
+/** Dark ink used when the placeholder plate is light. */
+export const COVER_TITLE_COLOR_ON_LIGHT = '#2a2014';
+const COVER_TITLE_LUMINANCE_SPLIT = 0.45;
+/** Where `.cover-fallback-copy` sits: inset 21% 11% 30% 19%. */
+const COVER_TITLE_SAMPLE_BOX = { x0: 0.19, x1: 0.89, y0: 0.21, y1: 0.70 };
+export const DEFAULT_COVER_TITLE_SHADOW = 0;
+export const DEFAULT_MANUSCRIPT_FONT = 'pochaevsk';
+export const DEFAULT_MANUSCRIPT_INK = 2;
+export const MIN_MANUSCRIPT_INK = 1;
+export const MAX_MANUSCRIPT_INK = 20;
+export const DEFAULT_MANUSCRIPT_SIZE = 100;
+export const MIN_MANUSCRIPT_SIZE = 60;
+export const MAX_MANUSCRIPT_SIZE = 160;
+export const MAX_MANUSCRIPT_TEXT = 4000;
+/** Opening of the Tale of Igor's Campaign — the factory wash text. */
+export const DEFAULT_MANUSCRIPT_TEXT = 'Не лѣпо ли ны бяшетъ, братіе, начати старыми словесы трудныхъ повѣстій о пълку Игоревѣ, Игоря Святъславлича? Начати же ся тъй пѣсни по былинамъ сего времени, а не по замышленію Бояню. Боянъ бо вѣщій, аще кому хотяше пѣснь творити, то растѣкашется мыслію по древу, сѣрымъ вълкомъ по земли, шизымъ орломъ подъ облакы. О Руская землѣ, уже за шеломянемъ еси! Длъго ночь мркнетъ. Заря свѣтъ запала, мгла поля покрыла. Щекотъ славій успе, говоръ галичь убуди. Русичи великая поля чрьлеными щиты прегородиша, ищучи себѣ чести, а князю славы. Съ заранія въ пятъкъ потопташа поганыя плъкы половецкыя. На рѣцѣ на Каялѣ тьма свѣтъ покрыла. Яръ туре Всеволодѣ! Стоиши на борони, прыщеши на вои стрѣлами, гремлеши о шеломы мечи харалужными. Не лѣпо ли ны бяшетъ, братіе, начати старыми словесы трудныхъ повѣстій о пълку Игоревѣ.';
+
+const bundledCoverVersions = new Map();
+
+/** Content hash so a replaced file with the same name is not stuck behind immutable cache. */
+export function bundledCoverUrl(theme) {
+  const file = theme === 'light' ? 'book-fallback-light.png' : 'book-fallback.png';
+  let version = bundledCoverVersions.get(file);
+  if (!version) {
+    try {
+      const buf = fs.readFileSync(path.join(config.publicDir, file));
+      version = crypto.createHash('md5').update(buf).digest('hex').slice(0, 8);
+    } catch {
+      version = '0';
+    }
+    bundledCoverVersions.set(file, version);
+  }
+  return `/${file}?v=${version}`;
+}
+
+export function bundledHeaderUrl() {
+  const file = 'header.png';
+  let version = bundledCoverVersions.get(file);
+  if (!version) {
+    try {
+      const buf = fs.readFileSync(path.join(config.publicDir, file));
+      version = crypto.createHash('md5').update(buf).digest('hex').slice(0, 8);
+    } catch {
+      return '';
+    }
+    bundledCoverVersions.set(file, version);
+  }
+  return `/${file}?v=${version}`;
+}
+export const MIN_COVER_TITLE_SHADOW = 0;
+export const MAX_COVER_TITLE_SHADOW = 100;
+
+/** Cream on a dark plate, dark ink on a light one. */
+export function pickCoverTitleColor(luminance) {
+  const lum = Number(luminance);
+  if (!Number.isFinite(lum)) return DEFAULT_COVER_TITLE_COLOR;
+  return lum >= COVER_TITLE_LUMINANCE_SPLIT ? COVER_TITLE_COLOR_ON_LIGHT : DEFAULT_COVER_TITLE_COLOR;
+}
+
+/** Average the title plate and pick a readable ink color. */
+export async function coverTitleColorFromImageBuffer(buffer) {
+  const sharp = await getSharp();
+  if (!sharp || !buffer?.length) return DEFAULT_COVER_TITLE_COLOR;
+  const width = 40;
+  const height = 60;
+  const { data, info } = await sharp(buffer, { failOn: 'error' })
+    .rotate()
+    .resize(width, height, { fit: 'fill' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const x0 = Math.floor(width * COVER_TITLE_SAMPLE_BOX.x0);
+  const x1 = Math.min(width, Math.ceil(width * COVER_TITLE_SAMPLE_BOX.x1));
+  const y0 = Math.floor(height * COVER_TITLE_SAMPLE_BOX.y0);
+  const y1 = Math.min(height, Math.ceil(height * COVER_TITLE_SAMPLE_BOX.y1));
+  let sum = 0;
+  let count = 0;
+  const channels = info.channels || 3;
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const i = (y * width + x) * channels;
+      sum += relativeLuminance(data[i], data[i + 1], data[i + 2]);
+      count += 1;
+    }
+  }
+  return pickCoverTitleColor(count ? sum / count : 0);
+}
+
+function readCoverTitleFont() {
+  const raw = getSetting('ui_cover_title_font');
+  return COVER_TITLE_FONTS[raw] ? raw : DEFAULT_COVER_TITLE_FONT;
+}
+
+function readCoverTitleSize() {
+  const raw = getSetting('ui_cover_title_size');
+  if (raw === '') return DEFAULT_COVER_TITLE_SIZE;
+  return clampInt(raw, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, DEFAULT_COVER_TITLE_SIZE);
+}
+
+function readCoverTitleOffset(key) {
+  const raw = getSetting(key);
+  if (raw === '') return 0;
+  return clampInt(raw, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
+}
+
+function readCoverTitleColor() {
+  const raw = getSetting('ui_cover_title_color');
+  if (raw === '') return DEFAULT_COVER_TITLE_COLOR;
+  return normalizeHexColor(raw, DEFAULT_COVER_TITLE_COLOR);
+}
+
+function readCoverTitleShadow() {
+  const raw = getSetting('ui_cover_title_shadow');
+  if (raw === '') return DEFAULT_COVER_TITLE_SHADOW;
+  return clampInt(raw, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW);
+}
+
+function hasCoverTitleSettingsConfigured() {
+  return [
+    'ui_cover_title_font',
+    'ui_cover_title_size',
+    'ui_cover_title_x',
+    'ui_cover_title_y',
+    'ui_cover_title_color',
+    'ui_cover_title_shadow',
+  ].some((key) => getSetting(key) !== '');
+}
+
+function readManuscriptFont() {
+  const raw = getSetting('ui_manuscript_font');
+  return COVER_TITLE_FONTS[raw] ? raw : DEFAULT_MANUSCRIPT_FONT;
+}
+
+function readManuscriptInk() {
+  return clampInt(getSetting('ui_manuscript_ink'), MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK);
+}
+
+function readManuscriptSize() {
+  return clampInt(getSetting('ui_manuscript_size'), MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE);
+}
+
+function normalizeManuscriptText(raw) {
+  const text = String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_MANUSCRIPT_TEXT);
+  return text || DEFAULT_MANUSCRIPT_TEXT;
+}
+
+function readManuscriptText() {
+  const raw = getSetting('ui_manuscript_text');
+  if (!raw) return '';
+  const text = normalizeManuscriptText(raw);
+  return text === DEFAULT_MANUSCRIPT_TEXT ? '' : text;
+}
+
+function cssQuotedString(value) {
+  return `"${String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/[\u0000-\u001f]/g, '')}"`;
+}
+
+function hasManuscriptSettingsConfigured() {
+  return [
+    'ui_manuscript_font',
+    'ui_manuscript_ink',
+    'ui_manuscript_size',
+    'ui_manuscript_text',
+  ].some((key) => getSetting(key) !== '');
+}
+
+/** CSS variables for the background wash. Always emitted so defaults stay explicit. */
+export function manuscriptToCssVars(ui) {
+  const font = COVER_TITLE_FONTS[ui.manuscriptFont] || COVER_TITLE_FONTS[DEFAULT_MANUSCRIPT_FONT];
+  const size = clampInt(ui.manuscriptSize, MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE);
+  const ink = clampInt(ui.manuscriptInk, MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK);
+  const text = normalizeManuscriptText(ui.manuscriptText);
+  const vars = [
+    `--magic-manuscript-font:${font.stack}`,
+    `--magic-manuscript-scale:${size / 100}`,
+    `--magic-manuscript:${cssQuotedString(text)}`,
+  ];
+  if (ink !== DEFAULT_MANUSCRIPT_INK) vars.unshift(`--magic-ink-strength:${ink}`);
+  return vars;
+}
+
+/** CSS variables for the placeholder cover. Always emitted so the defaults stay explicit. */
+export function coverFallbackToCssVars(ui) {
+  const font = COVER_TITLE_FONTS[ui.coverTitleFont] || COVER_TITLE_FONTS[DEFAULT_COVER_TITLE_FONT];
+  const size = clampInt(ui.coverTitleSize, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, DEFAULT_COVER_TITLE_SIZE);
+  const x = clampInt(ui.coverTitleX, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
+  const y = clampInt(ui.coverTitleY, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
+  const color = normalizeHexColor(ui.coverTitleColor, DEFAULT_COVER_TITLE_COLOR);
+  const shadow = clampInt(ui.coverTitleShadow, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW);
+  const colorSet = ui.coverTitleColorSet === true || (ui.coverTitleColorSet !== false && color !== DEFAULT_COVER_TITLE_COLOR);
+  const useThemeInk = !ui.coverFallbackUrl && !colorSet;
+  const darkColor = useThemeInk ? DEFAULT_COVER_TITLE_COLOR : color;
+  const lightColor = useThemeInk ? COVER_TITLE_COLOR_ON_LIGHT : color;
+  return [
+    `--cover-title-font:${font.stack}`,
+    `--cover-title-scale:${size / 100}`,
+    `--cover-title-x:${x}`,
+    `--cover-title-y:${y}`,
+    `--cover-title-color:${darkColor}`,
+    `--cover-title-color-light:${lightColor}`,
+    `--cover-title-shadow:${shadow}`,
+  ];
+}
 
 function ensureUiDir() {
   fs.mkdirSync(UI_DIR, { recursive: true });
@@ -233,6 +476,33 @@ function readBgSize() {
 function readBgPosition() {
   const raw = getSetting('ui_bg_position');
   return BG_POSITION_PRESETS.includes(raw) ? raw : 'center';
+}
+
+function readHeaderHeight() {
+  const raw = getSetting('ui_header_height');
+  if (raw === '') return DEFAULT_HEADER_HEIGHT;
+  return clampInt(raw, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, DEFAULT_HEADER_HEIGHT);
+}
+
+function readHeaderPosition() {
+  const raw = getSetting('ui_header_position');
+  return HEADER_POSITION_PRESETS.includes(raw) ? raw : 'center';
+}
+
+function readHeaderSize() {
+  const raw = getSetting('ui_header_size');
+  return HEADER_SIZE_PRESETS.includes(raw) ? raw : DEFAULT_HEADER_SIZE;
+}
+
+function headerLayoutToCssVars(height, position, size) {
+  const h = clampInt(height, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, DEFAULT_HEADER_HEIGHT);
+  const pos = HEADER_POSITION_PRESETS.includes(position) ? position : 'center';
+  const sz = HEADER_SIZE_PRESETS.includes(size) ? size : DEFAULT_HEADER_SIZE;
+  return [
+    `--ui-header-height:${h}px`,
+    `--ui-header-position:${pos}`,
+    `--ui-header-size:${sz}`,
+  ];
 }
 
 function hasCustomFontFile() {
@@ -468,6 +738,8 @@ export function getUiCustomization() {
   const surfaceBlurRaw = getSetting('ui_surface_blur');
   const surfaceBlur = surfaceBlurRaw === '' ? 0 : clampInt(surfaceBlurRaw, 0, 24, 0);
   const showLogoOnLogin = getSetting('ui_show_logo_login') !== '0';
+  const showLogo = getSetting('ui_show_logo') !== '0';
+  const showHeader = getSetting('ui_show_header') !== '0';
   const manuscriptWash = getSetting('ui_manuscript') !== '0';
   const radiusPreset = getSetting('ui_radius_preset') || 'rounded';
   const shadowPreset = getSetting('ui_shadow_preset') || 'normal';
@@ -530,6 +802,23 @@ export function getUiCustomization() {
   const faviconUrl = fileMtimeUrl('/custom/ui/favicon', 'favicon-32.png');
   const faviconAppleUrl = fileMtimeUrl('/custom/ui/favicon-192', 'favicon-192.png');
   const backgroundUrl = fileMtimeUrl('/custom/ui/background', 'background.webp');
+  const customHeaderUrl = fileMtimeUrl('/custom/ui/header', 'header.webp');
+  const headerUrl = customHeaderUrl || bundledHeaderUrl();
+  const headerHeight = readHeaderHeight();
+  const headerPosition = readHeaderPosition();
+  const headerSize = readHeaderSize();
+  const coverFallbackUrl = fileMtimeUrl('/custom/ui/cover', 'cover.webp');
+  const coverTitleFont = readCoverTitleFont();
+  const coverTitleSize = readCoverTitleSize();
+  const coverTitleX = readCoverTitleOffset('ui_cover_title_x');
+  const coverTitleY = readCoverTitleOffset('ui_cover_title_y');
+  const coverTitleColor = readCoverTitleColor();
+  const coverTitleColorSet = getSetting('ui_cover_title_color') !== '';
+  const coverTitleShadow = readCoverTitleShadow();
+  const manuscriptFont = readManuscriptFont();
+  const manuscriptInk = readManuscriptInk();
+  const manuscriptSize = readManuscriptSize();
+  const manuscriptText = readManuscriptText();
   return {
     blur,
     overlay,
@@ -537,7 +826,13 @@ export function getUiCustomization() {
     surfaceOpacity,
     surfaceBlur,
     showLogoOnLogin,
+    showLogo,
+    showHeader,
     manuscriptWash,
+    manuscriptFont,
+    manuscriptInk,
+    manuscriptSize,
+    manuscriptText,
     glassColorDark: themePair.dark.surface,
     glassColorLight: themePair.light.surface,
     glassTextDark: themePair.dark.text,
@@ -569,7 +864,25 @@ export function getUiCustomization() {
     faviconUrl,
     faviconAppleUrl,
     backgroundUrl,
+    headerUrl,
+    headerHeight,
+    headerPosition,
+    headerSize,
+    coverFallbackUrl,
+    coverFallbackLightUrl: coverFallbackUrl || bundledCoverUrl('light'),
+    hasCustomCover: Boolean(coverFallbackUrl),
+    coverTitleFont,
+    coverTitleSize,
+    coverTitleX,
+    coverTitleY,
+    coverTitleColor,
+    coverTitleColorSet,
+    coverTitleShadow,
+    hasCustomCoverFallback: Boolean(coverFallbackUrl) || hasCoverTitleSettingsConfigured(),
+    hasCustomManuscript: hasManuscriptSettingsConfigured(),
     hasBackground: Boolean(backgroundUrl),
+    hasCustomHeader: Boolean(customHeaderUrl),
+    hasHeader: showHeader && Boolean(headerUrl),
     hasLogo: Boolean(logoUrl),
     radiusPreset,
     shadowPreset,
@@ -595,7 +908,7 @@ export function getThemeCssVars() {
   const panelGlass = usesPanelGlass();
   const shape = hasUiThemeShapeConfigured();
   const typography = hasUiThemeTypographyConfigured();
-  if (!colors && !panelGlass && !ui.hasBackground && !shape && !typography) return [];
+  if (!colors && !panelGlass && !ui.hasBackground && !ui.hasHeader && !shape && !typography) return [];
   const vars = [];
   if (colors) {
     vars.push(...themePairToCssVars(ui.themePair));
@@ -617,6 +930,12 @@ export function getThemeCssVars() {
       `--ui-bg-blur:${ui.blur}px`,
       `--ui-bg-overlay:${ui.overlay}`,
       ...backgroundLayoutToCssVars(ui.bgSize, ui.bgPosition),
+    );
+  }
+  if (ui.hasHeader) {
+    vars.push(
+      `--ui-header-image:url("${ui.headerUrl}")`,
+      ...headerLayoutToCssVars(ui.headerHeight, ui.headerPosition, ui.headerSize),
     );
   }
   if (shape) {
@@ -733,7 +1052,7 @@ export function getThemePreviewFromDraft(draft = {}) {
 
   if (hasBg) {
     const blur = clampInt(draftStr(draft.bgBlur, String(saved.blur)), 0, 24, 0);
-    const bgContrast = clampInt(draftStr(draft.bgOverlay, String(saved.bgContrast)), 0, BG_OVERLAY_MAX, BG_OVERLAY_MAX);
+    const bgContrast = clampInt(draftStr(draft.bgOverlay, String(saved.bgContrast)), 0, BG_OVERLAY_MAX, DEFAULT_BG_CONTRAST);
     const overlay = BG_OVERLAY_MAX - bgContrast;
     const bgSize = draftStr(draft.bgSize, saved.bgSize);
     const bgPosition = draftStr(draft.bgPosition, saved.bgPosition);
@@ -744,6 +1063,24 @@ export function getThemePreviewFromDraft(draft = {}) {
       ...backgroundLayoutToCssVars(bgSize, bgPosition),
     );
   }
+
+  const showHeader = draft.showHeader !== undefined
+    ? draftStr(draft.showHeader) !== '0'
+    : saved.showHeader !== false;
+  const headerOn = showHeader && Boolean(saved.headerUrl);
+  if (headerOn) {
+    vars.push(
+      `--ui-header-image:url("${saved.headerUrl}")`,
+      ...headerLayoutToCssVars(
+        draftStr(draft.headerHeight, String(saved.headerHeight)),
+        draftStr(draft.headerPosition, saved.headerPosition),
+        draftStr(draft.headerSize, saved.headerSize),
+      ),
+    );
+  }
+  const showLogo = draft.showLogo !== undefined
+    ? draftStr(draft.showLogo) !== '0'
+    : saved.showLogo !== false;
 
   const radiusPreset = UI_RADIUS_PRESETS.includes(draftStr(draft.radiusPreset)) ? draftStr(draft.radiusPreset) : saved.radiusPreset;
   const radiusScale = clampInt(draftStr(draft.radiusScale, String(saved.radiusScale)), MIN_RADIUS_SCALE, MAX_RADIUS_SCALE, DEFAULT_RADIUS_SCALE);
@@ -762,6 +1099,46 @@ export function getThemePreviewFromDraft(draft = {}) {
   vars.push(...fontFamilyToCssVars(fontFamily, saved.customFontName));
 
   const webfont = FONT_FAMILY_WEBFONT[fontFamily] || '';
+  const coverTitleFont = COVER_TITLE_FONTS[draftStr(draft.coverTitleFont, saved.coverTitleFont)]
+    ? draftStr(draft.coverTitleFont, saved.coverTitleFont)
+    : saved.coverTitleFont;
+  const coverTitleSize = clampInt(draftStr(draft.coverTitleSize, String(saved.coverTitleSize)), MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, DEFAULT_COVER_TITLE_SIZE);
+  const coverTitleX = clampInt(draftStr(draft.coverTitleX, String(saved.coverTitleX)), MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
+  const coverTitleY = clampInt(draftStr(draft.coverTitleY, String(saved.coverTitleY)), MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
+  const coverTitleColor = normalizeHexColor(draftStr(draft.coverTitleColor, saved.coverTitleColor), DEFAULT_COVER_TITLE_COLOR);
+  const coverTitleShadow = clampInt(draftStr(draft.coverTitleShadow, String(saved.coverTitleShadow)), MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW);
+  const coverTitleColorSet = coverTitleColor !== DEFAULT_COVER_TITLE_COLOR
+    || (saved.coverTitleColorSet && coverTitleColor === saved.coverTitleColor);
+  vars.push(...coverFallbackToCssVars({
+    coverTitleFont,
+    coverTitleSize,
+    coverTitleX,
+    coverTitleY,
+    coverTitleColor,
+    coverTitleShadow,
+    coverFallbackUrl: saved.coverFallbackUrl,
+    coverTitleColorSet,
+  }));
+  const coverWebfont = COVER_TITLE_FONTS[coverTitleFont]?.webfont || '';
+
+  const manuscriptWash = draft.manuscriptWash !== undefined
+    ? draftStr(draft.manuscriptWash) !== '0'
+    : saved.manuscriptWash !== false;
+  const manuscriptFont = COVER_TITLE_FONTS[draftStr(draft.manuscriptFont, saved.manuscriptFont)]
+    ? draftStr(draft.manuscriptFont, saved.manuscriptFont)
+    : saved.manuscriptFont;
+  const manuscriptInk = clampInt(draftStr(draft.manuscriptInk, String(saved.manuscriptInk)), MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK);
+  const manuscriptSize = clampInt(draftStr(draft.manuscriptSize, String(saved.manuscriptSize)), MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE);
+  const manuscriptText = draft.manuscriptText !== undefined
+    ? draftStr(draft.manuscriptText)
+    : saved.manuscriptText;
+  vars.push(...manuscriptToCssVars({
+    manuscriptFont,
+    manuscriptInk,
+    manuscriptSize,
+    manuscriptText,
+  }));
+  const manuscriptWebfont = COVER_TITLE_FONTS[manuscriptFont]?.webfont || '';
 
   // Live preview always injects full theme vars — enable matching root attrs so CSS mappings apply.
   return {
@@ -770,10 +1147,20 @@ export function getThemePreviewFromDraft(draft = {}) {
       theme: true,
       sliders: true,
       bg: hasBg,
+      header: headerOn,
+      headerFit: headerOn
+        ? (HEADER_SIZE_PRESETS.includes(draftStr(draft.headerSize, saved.headerSize))
+          ? draftStr(draft.headerSize, saved.headerSize)
+          : DEFAULT_HEADER_SIZE)
+        : '',
+      logo: showLogo,
+      manuscript: manuscriptWash,
       shape: true,
       typography: true,
     },
     webfont,
+    coverWebfont,
+    manuscriptWebfont,
     fontFamily,
   };
 }
@@ -807,6 +1194,11 @@ export function saveUiSettings({
   overlayColorAutoLight,
   bgSize,
   bgPosition,
+  headerHeight,
+  headerPosition,
+  headerSize,
+  showHeader,
+  showLogo,
   showLogoOnLogin,
   manuscriptWash,
   dynamicThemeFromBg,
@@ -911,12 +1303,112 @@ export function saveUiSettings({
   if (bgPosition !== undefined) {
     setSetting('ui_bg_position', BG_POSITION_PRESETS.includes(bgPosition) && bgPosition !== 'center' ? bgPosition : '');
   }
+  if (headerHeight !== undefined) {
+    const height = clampInt(headerHeight, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, DEFAULT_HEADER_HEIGHT);
+    setSetting('ui_header_height', height === DEFAULT_HEADER_HEIGHT ? '' : String(height));
+  }
+  if (headerPosition !== undefined) {
+    setSetting('ui_header_position', HEADER_POSITION_PRESETS.includes(headerPosition) && headerPosition !== 'center' ? headerPosition : '');
+  }
+  if (headerSize !== undefined) {
+    setSetting('ui_header_size', HEADER_SIZE_PRESETS.includes(headerSize) && headerSize !== DEFAULT_HEADER_SIZE ? headerSize : '');
+  }
+  if (showHeader !== undefined) {
+    setSetting('ui_show_header', showHeader ? '1' : '0');
+  }
+  if (showLogo !== undefined) {
+    setSetting('ui_show_logo', showLogo ? '1' : '0');
+  }
   if (showLogoOnLogin !== undefined) {
     setSetting('ui_show_logo_login', showLogoOnLogin ? '1' : '0');
   }
   if (manuscriptWash !== undefined) {
     setSetting('ui_manuscript', manuscriptWash ? '1' : '0');
   }
+  invalidateUiCustomizationCache();
+}
+
+export function saveCoverFallbackSettings({
+  coverTitleFont,
+  coverTitleSize,
+  coverTitleX,
+  coverTitleY,
+  coverTitleColor,
+  coverTitleShadow,
+} = {}) {
+  if (coverTitleFont !== undefined) {
+    const id = String(coverTitleFont || '').trim();
+    setSetting('ui_cover_title_font', COVER_TITLE_FONTS[id] && id !== DEFAULT_COVER_TITLE_FONT ? id : '');
+  }
+  if (coverTitleSize !== undefined) {
+    const size = clampInt(coverTitleSize, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, DEFAULT_COVER_TITLE_SIZE);
+    setSetting('ui_cover_title_size', size === DEFAULT_COVER_TITLE_SIZE ? '' : String(size));
+  }
+  if (coverTitleX !== undefined) {
+    const x = clampInt(coverTitleX, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
+    setSetting('ui_cover_title_x', x === 0 ? '' : String(x));
+  }
+  if (coverTitleY !== undefined) {
+    const y = clampInt(coverTitleY, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
+    setSetting('ui_cover_title_y', y === 0 ? '' : String(y));
+  }
+  if (coverTitleColor !== undefined) {
+    const color = normalizeHexColor(coverTitleColor, DEFAULT_COVER_TITLE_COLOR);
+    setSetting('ui_cover_title_color', color === DEFAULT_COVER_TITLE_COLOR ? '' : color);
+  }
+  if (coverTitleShadow !== undefined) {
+    const shadow = clampInt(coverTitleShadow, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW);
+    setSetting('ui_cover_title_shadow', shadow === DEFAULT_COVER_TITLE_SHADOW ? '' : String(shadow));
+  }
+  invalidateUiCustomizationCache();
+}
+
+/** Clears the placeholder image and every title setting in that appearance card. */
+export function resetCoverFallbackSettings() {
+  setSetting('ui_cover_title_font', '');
+  setSetting('ui_cover_title_size', '');
+  setSetting('ui_cover_title_x', '');
+  setSetting('ui_cover_title_y', '');
+  setSetting('ui_cover_title_color', '');
+  setSetting('ui_cover_title_shadow', '');
+  removeUiAsset('cover');
+}
+
+export function saveManuscriptSettings({
+  manuscriptFont,
+  manuscriptInk,
+  manuscriptSize,
+  manuscriptText,
+} = {}) {
+  if (manuscriptFont !== undefined) {
+    const id = String(manuscriptFont || '').trim();
+    setSetting('ui_manuscript_font', COVER_TITLE_FONTS[id] && id !== DEFAULT_MANUSCRIPT_FONT ? id : '');
+  }
+  if (manuscriptInk !== undefined) {
+    const ink = clampInt(manuscriptInk, MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK);
+    setSetting('ui_manuscript_ink', ink === DEFAULT_MANUSCRIPT_INK ? '' : String(ink));
+  }
+  if (manuscriptSize !== undefined) {
+    const size = clampInt(manuscriptSize, MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE);
+    setSetting('ui_manuscript_size', size === DEFAULT_MANUSCRIPT_SIZE ? '' : String(size));
+  }
+  if (manuscriptText !== undefined) {
+    const text = String(manuscriptText || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, MAX_MANUSCRIPT_TEXT);
+    setSetting('ui_manuscript_text', !text || text === DEFAULT_MANUSCRIPT_TEXT ? '' : text);
+  }
+  invalidateUiCustomizationCache();
+}
+
+export function resetManuscriptSettings() {
+  setSetting('ui_manuscript_font', '');
+  setSetting('ui_manuscript_ink', '');
+  setSetting('ui_manuscript_size', '');
+  setSetting('ui_manuscript_text', '');
   invalidateUiCustomizationCache();
 }
 
@@ -1011,6 +1503,32 @@ export async function saveUiAsset(asset, buffer, options = {}) {
     if (hasUiDynamicThemeFromBg()) {
       await refreshBgThemePaletteFromFile();
     }
+  } else if (asset === 'header') {
+    let pipeline = image.clone();
+    try {
+      pipeline = pipeline.trim({ threshold: 12 });
+    } catch {
+      pipeline = image.clone();
+    }
+    const out = await pipeline
+      .resize(2560, 1400, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 84 })
+      .toBuffer();
+    fs.writeFileSync(path.join(UI_DIR, 'header.webp'), out);
+  } else if (asset === 'cover') {
+    const out = await image
+      .clone()
+      .resize(800, 1200, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 82 })
+      .toBuffer();
+    fs.writeFileSync(path.join(UI_DIR, 'cover.webp'), out);
+    let titleColor = DEFAULT_COVER_TITLE_COLOR;
+    try {
+      titleColor = await coverTitleColorFromImageBuffer(out);
+    } catch {
+      titleColor = DEFAULT_COVER_TITLE_COLOR;
+    }
+    saveCoverFallbackSettings({ coverTitleColor: titleColor });
   }
 
   invalidateUiCustomizationCache();
@@ -1045,6 +1563,8 @@ export function removeUiAsset(asset) {
     logo: ['logo.png'],
     favicon: ['favicon-32.png', 'favicon-192.png'],
     background: ['background.webp'],
+    header: ['header.webp'],
+    cover: ['cover.webp'],
   }[asset];
   for (const fileName of files) {
     try {
@@ -1056,6 +1576,9 @@ export function removeUiAsset(asset) {
   if (asset === 'background') {
     clearExtractedBgPalette();
     if (hasUiDynamicThemeFromBg()) setSetting('ui_dynamic_theme_from_bg', '0');
+  }
+  if (asset === 'cover') {
+    setSetting('ui_cover_title_color', '');
   }
   invalidateUiCustomizationCache();
 }
@@ -1096,6 +1619,15 @@ export function getUiAppearanceFormState() {
     surfaceBlur: ui.surfaceBlur,
     bgSize: ui.bgSize,
     bgPosition: ui.bgPosition,
+    headerHeight: ui.headerHeight,
+    headerPosition: ui.headerPosition,
+    headerSize: ui.headerSize,
+    hasHeader: ui.hasHeader,
+    hasCustomHeader: ui.hasCustomHeader,
+    headerUrl: ui.headerUrl,
+    showHeader: ui.showHeader,
+    showLogo: ui.showLogo,
+    showLogoOnLogin: ui.showLogoOnLogin,
     glassColorDark: ui.glassColorDark,
     glassColorLight: ui.glassColorLight,
     glassTextDark: ui.glassTextDark,
@@ -1127,6 +1659,22 @@ export function getUiAppearanceFormState() {
     density: ui.density,
     fontFamily: ui.fontFamily,
     hasCustomFont: ui.hasCustomFont,
+    hasCustomCoverFallback: ui.hasCustomCoverFallback,
+    hasCustomCover: ui.hasCustomCover,
+    coverFallbackUrl: ui.coverFallbackUrl || bundledCoverUrl('dark'),
+    coverFallbackLightUrl: ui.coverFallbackLightUrl || bundledCoverUrl('light'),
+    coverTitleFont: ui.coverTitleFont,
+    coverTitleSize: ui.coverTitleSize,
+    coverTitleX: ui.coverTitleX,
+    coverTitleY: ui.coverTitleY,
+    coverTitleColor: ui.coverTitleColor,
+    coverTitleShadow: ui.coverTitleShadow,
+    hasCustomManuscript: ui.hasCustomManuscript,
+    manuscriptWash: ui.manuscriptWash,
+    manuscriptFont: ui.manuscriptFont,
+    manuscriptInk: ui.manuscriptInk,
+    manuscriptSize: ui.manuscriptSize,
+    manuscriptText: ui.manuscriptText,
   };
 }
 
@@ -1171,6 +1719,10 @@ export function getPublicUiSettingsJson() {
     ui.radiusScale,
     ui.shadowPreset,
     ui.backgroundUrl,
+    ui.headerUrl,
+    ui.headerHeight,
+    ui.headerPosition,
+    ui.headerSize,
     ui.blur,
     ui.overlay,
   ].join(':');
@@ -1180,6 +1732,17 @@ export function getPublicUiSettingsJson() {
     faviconUrl: ui.faviconUrl,
     faviconAppleUrl: ui.faviconAppleUrl,
     backgroundUrl: ui.backgroundUrl,
+    headerUrl: ui.headerUrl,
+    headerHeight: ui.headerHeight,
+    headerPosition: ui.headerPosition,
+    headerSize: ui.headerSize,
+    hasHeader: ui.hasHeader,
+    hasCustomHeader: ui.hasCustomHeader,
+    showHeader: ui.showHeader,
+    showLogo: ui.showLogo,
+    coverFallbackUrl: ui.coverFallbackUrl || bundledCoverUrl('dark'),
+    coverFallbackLightUrl: ui.hasCustomCover ? (ui.coverFallbackUrl || bundledCoverUrl('dark')) : bundledCoverUrl('light'),
+    hasCustomCover: ui.hasCustomCover,
     hasLogo: ui.hasLogo,
     hasBackground: ui.hasBackground,
     hasCustomFont: ui.hasCustomFont,

@@ -20,6 +20,12 @@ const {
   resetUiThemeColors,
   resetUiThemeSliders,
   saveUiSettings,
+  saveCoverFallbackSettings,
+  coverFallbackToCssVars,
+  saveManuscriptSettings,
+  resetManuscriptSettings,
+  manuscriptToCssVars,
+  DEFAULT_MANUSCRIPT_TEXT,
   saveUiTypographySettings,
   resetUiThemeTypography,
   saveUiFontFile,
@@ -64,6 +70,70 @@ test('saveUiAsset stores logo and exposes cache-busted URL', async () => {
   assert.ok(ui.hasLogo);
   assert.match(ui.logoUrl, /^\/custom\/ui\/logo\?v=\d+$/);
   assert.ok(fs.existsSync(path.join(uiDir, 'logo.png')));
+});
+
+test('bundled header is on by default with current layout settings', () => {
+  invalidateUiCustomizationCache();
+  const ui = getUiCustomization();
+  assert.equal(ui.hasCustomHeader, false);
+  assert.equal(ui.hasHeader, true);
+  assert.match(ui.headerUrl, /^\/header\.png\?v=[0-9a-f]+$/);
+  assert.equal(ui.headerHeight, 180);
+  assert.equal(ui.headerPosition, 'center');
+  assert.equal(ui.headerSize, 'cover');
+  const vars = getThemeCssVars();
+  assert.ok(vars.some((v) => v.startsWith('--ui-header-image:url("/header.png?')));
+  assert.ok(vars.some((v) => v === '--ui-header-height:180px'));
+  assert.ok(vars.some((v) => v === '--ui-header-position:center'));
+  assert.ok(vars.some((v) => v === '--ui-header-size:cover'));
+  const pub = getPublicUiSettingsJson();
+  assert.equal(pub.hasHeader, true);
+  assert.equal(pub.hasCustomHeader, false);
+  assert.equal(pub.showHeader, true);
+  assert.equal(pub.showLogo, true);
+  assert.match(pub.headerUrl, /^\/header\.png\?v=[0-9a-f]+$/);
+});
+
+test('showHeader and showLogo can be turned off', () => {
+  invalidateUiCustomizationCache();
+  saveUiSettings({ showHeader: false, showLogo: false });
+  const ui = getUiCustomization();
+  assert.equal(ui.showHeader, false);
+  assert.equal(ui.showLogo, false);
+  assert.equal(ui.hasHeader, false);
+  const vars = getThemeCssVars();
+  assert.ok(!vars.some((v) => v.startsWith('--ui-header-image:')));
+  const pub = getPublicUiSettingsJson();
+  assert.equal(pub.hasHeader, false);
+  assert.equal(pub.showHeader, false);
+  assert.equal(pub.showLogo, false);
+  saveUiSettings({ showHeader: true, showLogo: true });
+});
+
+test('saveUiAsset stores header banner and public UI exposes it', async () => {
+  invalidateUiCustomizationCache();
+  await saveUiAsset('header', await tinyPngBuffer());
+  saveUiSettings({ headerHeight: 280, headerPosition: 'top', headerSize: 'cover' });
+  const ui = getUiCustomization();
+  assert.ok(ui.hasHeader);
+  assert.match(ui.headerUrl, /^\/custom\/ui\/header\?v=\d+$/);
+  assert.equal(ui.headerHeight, 280);
+  assert.equal(ui.headerPosition, 'top');
+  assert.equal(ui.headerSize, 'cover');
+  assert.ok(fs.existsSync(path.join(uiDir, 'header.webp')));
+  const vars = getThemeCssVars();
+  assert.ok(vars.some((v) => v.startsWith('--ui-header-image:')));
+  assert.ok(vars.some((v) => v === '--ui-header-height:280px'));
+  assert.ok(vars.some((v) => v === '--ui-header-position:top'));
+  assert.ok(vars.some((v) => v === '--ui-header-size:cover'));
+  const pub = getPublicUiSettingsJson();
+  assert.equal(pub.hasHeader, true);
+  assert.equal(pub.headerHeight, 280);
+  assert.equal(pub.headerPosition, 'top');
+  assert.equal(pub.headerSize, 'cover');
+  assert.match(pub.headerUrl, /^\/custom\/ui\/header\?v=\d+$/);
+  removeUiAsset('header');
+  saveUiSettings({ headerHeight: 180, headerPosition: 'center', headerSize: 'cover' });
 });
 
 test('normalizeHexColor expands short hex and rejects invalid values', () => {
@@ -180,8 +250,8 @@ test('resetUiThemeSliders clears saved slider settings', () => {
   assert.equal(hasUiThemeSlidersConfigured(), false);
   const ui = getUiCustomization();
   assert.equal(ui.blur, 0);
-  assert.equal(ui.overlay, 0);
-  assert.equal(ui.bgContrast, 80);
+  assert.equal(ui.overlay, 75);
+  assert.equal(ui.bgContrast, 5);
   assert.equal(ui.surfaceOpacity, 88);
   assert.equal(ui.surfaceBlur, 0);
 });
@@ -431,6 +501,103 @@ test('manuscript wash is on until the admin turns it off', () => {
   assert.equal(getUiCustomization().manuscriptWash, false);
   saveUiSettings({ manuscriptWash: true });
   assert.equal(getUiCustomization().manuscriptWash, true);
+});
+
+test('manuscript appearance settings clamp, persist and reset', () => {
+  invalidateUiCustomizationCache();
+  resetManuscriptSettings();
+  const defaults = getUiCustomization();
+  assert.equal(defaults.manuscriptFont, 'pochaevsk');
+  assert.equal(defaults.manuscriptInk, 2);
+  assert.equal(defaults.manuscriptSize, 100);
+  assert.equal(defaults.manuscriptText, '');
+  assert.equal(defaults.hasCustomManuscript, false);
+
+  saveManuscriptSettings({ manuscriptFont: 'nope', manuscriptInk: 999, manuscriptSize: 10, manuscriptText: '  hello  ' });
+  let ui = getUiCustomization();
+  assert.equal(ui.manuscriptFont, 'pochaevsk');
+  assert.equal(ui.manuscriptInk, 20);
+  assert.equal(ui.manuscriptSize, 60);
+  assert.equal(ui.manuscriptText, 'hello');
+  assert.equal(ui.hasCustomManuscript, true);
+  const vars = manuscriptToCssVars(ui);
+  assert.ok(vars.includes('--magic-ink-strength:20'));
+  assert.ok(vars.includes('--magic-manuscript-scale:0.6'));
+  assert.ok(vars.some((line) => line.includes('hello')));
+
+  saveManuscriptSettings({ manuscriptFont: 'garamond', manuscriptInk: 2, manuscriptSize: 100, manuscriptText: DEFAULT_MANUSCRIPT_TEXT });
+  ui = getUiCustomization();
+  assert.equal(ui.manuscriptFont, 'garamond');
+  assert.equal(ui.manuscriptInk, 2);
+  assert.equal(ui.manuscriptText, '');
+  assert.equal(ui.hasCustomManuscript, true);
+  assert.ok(!manuscriptToCssVars(ui).some((line) => line.startsWith('--magic-ink-strength:')));
+
+  const preview = getThemePreviewFromDraft({
+    manuscriptFont: 'sans',
+    manuscriptInk: '8',
+    manuscriptSize: '120',
+    manuscriptText: 'abc',
+    manuscriptWash: '1',
+  });
+  assert.equal(preview.manuscriptWebfont, 'source-sans-3');
+  assert.equal(preview.attrs.manuscript, true);
+  assert.ok(preview.vars.includes('--magic-ink-strength:8'));
+  assert.ok(preview.vars.some((line) => line.startsWith('--magic-manuscript-scale:1.2')));
+  assert.ok(preview.vars.some((line) => line.includes('abc')));
+
+  const previewOff = getThemePreviewFromDraft({ manuscriptWash: '0' });
+  assert.equal(previewOff.attrs.manuscript, false);
+
+  resetManuscriptSettings();
+  ui = getUiCustomization();
+  assert.equal(ui.manuscriptFont, 'pochaevsk');
+  assert.equal(ui.manuscriptInk, 2);
+  assert.equal(ui.manuscriptSize, 100);
+  assert.equal(ui.manuscriptText, '');
+  assert.equal(ui.hasCustomManuscript, false);
+});
+
+test('cover fallback title settings clamp and round-trip', () => {
+  invalidateUiCustomizationCache();
+  const before = getUiCustomization();
+  try {
+    saveCoverFallbackSettings({ coverTitleFont: 'nope', coverTitleSize: 999, coverTitleX: -100, coverTitleY: 3 });
+    let ui = getUiCustomization();
+    assert.equal(ui.coverTitleFont, 'serif');
+    assert.equal(ui.coverTitleSize, 160);
+    assert.equal(ui.coverTitleX, -24);
+    assert.equal(ui.coverTitleY, 3);
+    saveCoverFallbackSettings({ coverTitleFont: 'garamond', coverTitleSize: 130, coverTitleX: 6, coverTitleY: -4, coverTitleColor: '#112233', coverTitleShadow: 40 });
+    ui = getUiCustomization();
+    const vars = coverFallbackToCssVars(ui);
+    assert.equal(ui.coverTitleFont, 'garamond');
+    assert.equal(ui.coverTitleColor, '#112233');
+    assert.equal(ui.coverTitleShadow, 40);
+    assert.equal(ui.hasCustomCoverFallback, true);
+    assert.ok(vars.includes("--cover-title-font:'EB Garamond', Georgia, 'Times New Roman', serif"));
+    assert.ok(vars.includes('--cover-title-scale:1.3'));
+    assert.ok(vars.includes('--cover-title-x:6'));
+    assert.ok(vars.includes('--cover-title-y:-4'));
+    assert.ok(vars.includes('--cover-title-color:#112233'));
+    assert.ok(vars.includes('--cover-title-shadow:40'));
+    saveCoverFallbackSettings({ coverTitleShadow: 999 });
+    assert.equal(getUiCustomization().coverTitleShadow, 100);
+    const preview = getThemePreviewFromDraft({ coverTitleFont: 'sans', coverTitleSize: '80', coverTitleX: '2', coverTitleY: '-2', coverTitleColor: '#abcdef', coverTitleShadow: '0' });
+    assert.equal(preview.coverWebfont, 'source-sans-3');
+    assert.ok(preview.vars.some((line) => line.startsWith('--cover-title-scale:0.8')));
+    assert.ok(preview.vars.some((line) => line === '--cover-title-color:#abcdef'));
+    assert.ok(preview.vars.some((line) => line === '--cover-title-shadow:0'));
+  } finally {
+    saveCoverFallbackSettings({
+      coverTitleFont: before.coverTitleFont,
+      coverTitleSize: before.coverTitleSize,
+      coverTitleX: before.coverTitleX,
+      coverTitleY: before.coverTitleY,
+      coverTitleColor: before.coverTitleColor,
+      coverTitleShadow: before.coverTitleShadow,
+    });
+  }
 });
 
 test('saveUiSettings persists surface opacity', () => {

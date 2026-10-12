@@ -627,6 +627,20 @@ html[data-lite="1"] .page-link-active {
   color: var(--lite-accent-fg) !important;
 }
 
+html[data-lite="1"] .page-jump::after {
+  background: var(--lite-ink);
+}
+
+html[data-lite="1"] .page-jump-input {
+  min-width: var(--lite-touch);
+  min-height: var(--lite-touch);
+  border: 2px solid var(--lite-line);
+  border-radius: var(--lite-radius);
+  background: var(--lite-surface);
+  color: var(--lite-ink);
+  font-size: 0.95rem;
+}
+
 /* —— Login —— */
 .lite-main--login {
   padding: 24px var(--lite-pad);

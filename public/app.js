@@ -123,26 +123,62 @@ function fillManuscript(el) {
   if (el.textContent !== next) el.textContent = next;
 }
 
+/* Minified CSS stores the passage as \41d\435 escapes. getPropertyValue
+   keeps those escapes, so they must be decoded or the page prints the codes. */
+function decodeCssManuscript(raw) {
+  let text = String(raw || '').trim();
+  if (text.length >= 2 && ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'")))) {
+    text = text.slice(1, -1);
+  }
+  return text.replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)));
+}
+
+/** Бренд сайдбара повторяет высоту шапки, чтобы меню начиналось у контента. */
+function syncSidebarBrandToHeader() {
+  const banner = document.querySelector('.site-header-banner');
+  if (!banner) return;
+  const root = document.documentElement;
+  const apply = () => {
+    const height = banner.getBoundingClientRect().height;
+    if (height > 0) root.style.setProperty('--site-header-h', `${Math.round(height)}px`);
+  };
+  apply();
+  const img = banner.querySelector('img');
+  if (img && !img.complete) img.addEventListener('load', apply, { once: true });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(banner);
+  window.addEventListener('resize', apply);
+}
+
 function mountManuscriptWash() {
   const root = document.documentElement;
-  if (root.dataset.eink === '1' || root.dataset.uiManuscript === '0') return;
-  const raw = getComputedStyle(root).getPropertyValue('--magic-manuscript').trim();
-  const text = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')
-    ? raw.slice(1, -1).replace(/\\"/g, '"')
-    : raw;
-  if (!text) return;
+  if (root.dataset.eink === '1' || root.dataset.uiManuscript === '0') {
+    document.querySelectorAll('.magic-manuscript').forEach((el) => el.remove());
+    return;
+  }
+  const text = decodeCssManuscript(getComputedStyle(root).getPropertyValue('--magic-manuscript'));
+  if (!text) {
+    document.querySelectorAll('.magic-manuscript').forEach((el) => el.remove());
+    return;
+  }
   for (const host of document.querySelectorAll('.main-wrap, .login-shell')) {
-    if (host.querySelector('.magic-manuscript')) continue;
-    const el = document.createElement('p');
-    el.className = 'magic-manuscript';
-    el.setAttribute('aria-hidden', 'true');
-    el.dataset.passage = text;
-    el.textContent = text;
-    host.prepend(el);
+    let el = host.querySelector('.magic-manuscript');
+    if (!el) {
+      el = document.createElement('p');
+      el.className = 'magic-manuscript';
+      el.setAttribute('aria-hidden', 'true');
+      host.prepend(el);
+      const paint = () => fillManuscript(el);
+      requestAnimationFrame(paint);
+      if (document.fonts?.ready) document.fonts.ready.then(paint);
+      if (typeof ResizeObserver === 'function') new ResizeObserver(paint).observe(host);
+    }
+    if (el.dataset.passage !== text) {
+      el.dataset.passage = text;
+      el.textContent = text;
+    }
     const paint = () => fillManuscript(el);
     requestAnimationFrame(paint);
     if (document.fonts?.ready) document.fonts.ready.then(paint);
-    if (typeof ResizeObserver === 'function') new ResizeObserver(paint).observe(host);
   }
 }
 
@@ -151,7 +187,7 @@ function initHomeWelcomeReveal() {
   if (banner) revealHomeBlock(banner);
 }
 
-const HOME_QUOTE_ROTATE_MS = 20000;
+const HOME_ROTATE_MS = 12000;
 const HOME_QUOTE_FADE_MS = 650;
 
 function initHomeQuoteRotation() {
@@ -197,7 +233,7 @@ function initHomeQuoteRotation() {
       swap();
       banner.classList.remove('is-quote-swapping');
     }, HOME_QUOTE_FADE_MS);
-  }, HOME_QUOTE_ROTATE_MS);
+  }, HOME_ROTATE_MS);
 }
 
 /* Feeds --mx/--my to the pointer-lit covers and panels in styles.css. */
@@ -230,6 +266,34 @@ function renderCoverRatingBadgeHtml(libRate) {
   return `<span class="cover-rating-wrapper"><span class="cover-rating-badge cover-rating-${n}">${Array.from({ length: n }, () => '<span>★</span>').join('')}</span></span>`;
 }
 
+function coverFallbackPair() {
+  const root = document.documentElement;
+  const dark = root.getAttribute('data-cover-fallback') || '/book-fallback.png';
+  const light = root.getAttribute('data-cover-fallback-light') || '/book-fallback-light.png';
+  return { dark, light };
+}
+
+function coverFallbackImageHtml() {
+  const { dark, light } = coverFallbackPair();
+  if (dark === light) {
+    return `<img class="cover-fallback-image" draggable="false" src="${escapeHtml(dark)}" alt="">`;
+  }
+  return `<img class="cover-fallback-image cover-fallback-image--dark" draggable="false" src="${escapeHtml(dark)}" alt=""><img class="cover-fallback-image cover-fallback-image--light" draggable="false" src="${escapeHtml(light)}" alt="">`;
+}
+
+function syncCoverFallbackImages(dark, light) {
+  const root = document.documentElement;
+  root.setAttribute('data-cover-fallback', dark);
+  root.setAttribute('data-cover-fallback-light', light);
+  const html = coverFallbackImageHtml();
+  document.querySelectorAll('.cover-fallback').forEach((plate) => {
+    plate.querySelectorAll('.cover-fallback-image').forEach((img) => img.remove());
+    const overlay = plate.querySelector('.cover-fallback-overlay');
+    if (overlay) overlay.insertAdjacentHTML('beforebegin', html);
+    else plate.insertAdjacentHTML('afterbegin', html);
+  });
+}
+
 function heroCoverWashValue(book) {
   const url = String(apiBookPath(book?.id, 'cover-thumb') || '').replace(/"/g, '%22');
   return url ? `url('${url}')` : 'none';
@@ -253,7 +317,7 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
       <a class="hero-cover-link cover" href="${bookPagePath(book.id)}">
         <img class="cover-image hero-cover-image" loading="${eager ? 'eager' : 'lazy'}" draggable="false" src="${coverSrc}" data-cover-src="${coverSrc}" alt="${title}">
         <span class="cover-fallback hero-cover-fallback" hidden>
-          <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
+          ${coverFallbackImageHtml()}
           <span class="cover-fallback-overlay"></span>
           <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${escapeHtml(uiFormatAuthorsLabel(book.authorsList, book.authors) || uiT('book.authorUnknown'))}</span></span>
         </span>
@@ -286,10 +350,10 @@ function renderPremiumHeroCardHtml(book) {
 function renderPremiumHeroCarouselHtml(books, total) {
   if (!books.length) return '';
   if (books.length === 1) return renderPremiumHeroCardHtml(books[0]);
-  const slides = books.map((book, index) => `
-    <article class="hero-carousel-slide" data-hero-slide="${index}" ${index === 0 ? '' : 'aria-hidden="true"'}>
-      ${renderHeroSlideInnerHtml(book, { eager: index === 0, heading: 'h2' })}
-    </article>`).join('');
+  const slides = `
+    <article class="hero-carousel-slide" data-hero-slide>
+      ${renderHeroSlideInnerHtml(books[0], { eager: true, heading: 'h2' })}
+    </article>`;
   const dots = books.map((_, index) => `
     <button type="button" class="hero-carousel-dot${index === 0 ? ' is-active' : ''}" data-hero-dot="${index}" aria-label="${escapeHtml(uiTp('home.heroGoTo', { n: index + 1 }))}" ${index === 0 ? 'aria-current="true"' : ''}></button>`).join('');
   const more = total > books.length
@@ -322,49 +386,69 @@ function formatHeroAnnotationText(raw, isHtml) {
   return text;
 }
 
+const heroAnnotationCache = new Map();
+
+function paintHeroAnnotation(slot, text) {
+  if (!slot?.isConnected || !text) return;
+  slot.textContent = text;
+  slot.hidden = false;
+}
+
 function applyHeroBookAnnotation(book, root = document) {
   const slot = root.querySelector('[data-hero-annotation]');
   if (!slot || !book) return;
+  if (heroAnnotationCache.has(book.id)) {
+    paintHeroAnnotation(slot, heroAnnotationCache.get(book.id));
+    return;
+  }
   const text = formatHeroAnnotationText(book.annotation, book.annotationIsHtml);
   if (text) {
-    slot.textContent = text;
-    slot.hidden = false;
+    heroAnnotationCache.set(book.id, text);
+    paintHeroAnnotation(slot, text);
     return;
   }
   void fetchHeroBookAnnotation(book.id, slot);
 }
 
+function warmHeroAnnotation(book) {
+  if (!book || heroAnnotationCache.has(book.id) || book.annotation) return;
+  void fetchHeroBookAnnotation(book.id, null);
+}
+
 async function fetchHeroBookAnnotation(bookId, slotEl) {
-  const slot = slotEl || document.querySelector('[data-hero-annotation]');
-  if (!slot || !bookId) return;
+  if (!bookId) return;
+  if (heroAnnotationCache.has(bookId)) {
+    paintHeroAnnotation(slotEl, heroAnnotationCache.get(bookId));
+    return;
+  }
   try {
     const r = await fetch(apiBookPath(bookId, 'details'), { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
     const text = formatHeroAnnotationText(data.annotation, data.annotationIsHtml);
-    if (!text) return;
-    slot.textContent = text;
-    slot.hidden = false;
+    heroAnnotationCache.set(bookId, text);
+    paintHeroAnnotation(slotEl, text);
   } catch { /* ignore */ }
 }
 
 function initHeroCarousel(root, books) {
-  const track = root.querySelector('[data-hero-track]');
-  const slides = [...root.querySelectorAll('[data-hero-slide]')];
+  const slide = root.querySelector('[data-hero-slide]');
   const dots = [...root.querySelectorAll('[data-hero-dot]')];
   const status = root.querySelector('[data-hero-status]');
   const viewport = root.querySelector('[data-hero-viewport]');
-  if (!track || slides.length < 2) {
+  if (!slide || books.length < 2) {
     applyHeroBookAnnotation(books[0], root);
     return;
   }
   let index = 0;
+  let pending = null;
+  let fading = false;
+  let swapTimer = 0;
   let pointerStartX = 0;
   let pointerDelta = 0;
   let pointerActive = false;
   let timer = 0;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const AUTO_MS = 6500;
 
   const stopAuto = () => {
     if (timer) {
@@ -375,33 +459,56 @@ function initHeroCarousel(root, books) {
   const startAuto = () => {
     if (reduceMotion || document.hidden || root.matches(':hover, :focus-within')) return;
     stopAuto();
-    timer = window.setInterval(() => go(index + 1, { fromAuto: true }), AUTO_MS);
+    timer = window.setInterval(() => go(index + 1, { fromAuto: true }), HOME_ROTATE_MS);
   };
 
-  const go = (next, { fromAuto = false } = {}) => {
-    const count = books.length;
-    index = ((next % count) + count) % count;
-    track.style.transform = `translateX(-${index * 100}%)`;
-    slides.forEach((slide, i) => {
-      if (i === index) slide.removeAttribute('aria-hidden');
-      else slide.setAttribute('aria-hidden', 'true');
-    });
+  const show = (nextIndex) => {
+    index = nextIndex;
+    slide.innerHTML = renderHeroSlideInnerHtml(books[index], { eager: true, heading: 'h2' });
+    attachCoverErrorFallback(slide);
     dots.forEach((dot, i) => {
       const on = i === index;
       dot.classList.toggle('is-active', on);
       if (on) dot.setAttribute('aria-current', 'true');
       else dot.removeAttribute('aria-current');
     });
-    if (status) status.textContent = uiTp('home.heroSlide', { current: index + 1, total: count });
+    if (status) status.textContent = uiTp('home.heroSlide', { current: index + 1, total: books.length });
     const wash = root.querySelector('.hero-cover-wash');
     if (wash) wash.style.setProperty('--hero-cover', heroCoverWashValue(books[index]));
-    applyHeroBookAnnotation(books[index], slides[index]);
-    const neighbor = books[index + 1] || books[0];
-    if (neighbor && neighbor !== books[index]) applyHeroBookAnnotation(neighbor, slides[(index + 1) % count]);
+    applyHeroBookAnnotation(books[index], slide);
+    warmHeroAnnotation(books[(index + 1) % books.length]);
+    root.classList.remove('is-hero-swapping');
+  };
+
+  const commit = () => {
+    fading = false;
+    swapTimer = 0;
+    const target = pending;
+    pending = null;
+    if (target == null || target === index) {
+      root.classList.remove('is-hero-swapping');
+      return;
+    }
+    show(target);
+  };
+
+  const go = (next, { fromAuto = false } = {}) => {
+    const count = books.length;
+    const target = ((next % count) + count) % count;
     if (!fromAuto) {
       stopAuto();
       startAuto();
     }
+    if (target === index && !fading) return;
+    pending = target;
+    if (reduceMotion) {
+      commit();
+      return;
+    }
+    if (fading) return;
+    fading = true;
+    root.classList.add('is-hero-swapping');
+    swapTimer = window.setTimeout(commit, HOME_QUOTE_FADE_MS);
   };
 
   dots.forEach((dot) => {
@@ -455,8 +562,12 @@ function initHeroCarousel(root, books) {
     if (document.hidden) stopAuto();
     else startAuto();
   });
-  window.addEventListener('pagehide', stopAuto);
-  go(0);
+  window.addEventListener('pagehide', () => {
+    stopAuto();
+    if (swapTimer) clearTimeout(swapTimer);
+  });
+  applyHeroBookAnnotation(books[0], slide);
+  warmHeroAnnotation(books[1]);
   startAuto();
 }
 
@@ -757,18 +868,6 @@ let _cardDetailsFlushTimer = 0;
 let _cardDetailsFlushPending = false;
 let _cardDetailsObserver = null;
 
-function stripAnnotationPreviewText(raw, isHtml) {
-  let text = String(raw || '');
-  if (isHtml) {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = text;
-    text = tmp.textContent || tmp.innerText || '';
-  }
-  text = text.replace(/\s+/g, ' ').trim();
-  if (text.length > 220) text = `${text.slice(0, 217).trim()}…`;
-  return text;
-}
-
 function applyCardDetailsForId(id, details) {
   if (!id || !details) return;
   const cards = typeof findCardsByBookId === 'function' ? findCardsByBookId(id) : document.querySelectorAll(`[data-book-id="${CSS.escape(id)}"]`);
@@ -783,29 +882,6 @@ function applyCardDetailsForId(id, details) {
     }
     const hasRenderedImage = Boolean(img && img.complete && img.naturalWidth > 0);
     setCoverFallbackState(card, !details.coverAvailable && !hasRenderedImage);
-    let preview = card.querySelector('[data-card-annotation]');
-    const cover = card.querySelector('.cover');
-    if (preview && cover && !cover.contains(preview)) {
-      cover.appendChild(preview);
-    }
-    if (!preview) {
-      preview = document.createElement('div');
-      preview.className = 'card-annotation-preview';
-      preview.hidden = true;
-      preview.dataset.cardAnnotation = '';
-      (cover || card).appendChild(preview);
-    }
-    const excerpt = stripAnnotationPreviewText(details.annotation, details.annotationIsHtml);
-    if (excerpt) {
-      preview.textContent = excerpt;
-      preview.hidden = false;
-      preview.removeAttribute('hidden');
-      card.classList.add('has-annotation-preview');
-    } else {
-      preview.textContent = '';
-      preview.hidden = true;
-      card.classList.remove('has-annotation-preview');
-    }
   }
 }
 
@@ -940,11 +1016,12 @@ function pulseUi(el, className = 'ui-feedback-pulse') {
 function attachCatalogFilters() {
   const panel = document.querySelector('[data-catalog-filters]');
   if (!panel) return;
-  const list = panel.querySelector('.catalog-genre-list');
-  const search = panel.querySelector('[data-catalog-genre-search]');
+  const root = panel.closest('.catalog-page-intro') || panel;
+  const list = root.querySelector('.catalog-genre-list');
+  const search = root.querySelector('[data-catalog-genre-search]');
 
   const bindGenreSearch = () => {
-    const options = [...panel.querySelectorAll('.catalog-genre-option')];
+    const options = [...root.querySelectorAll('.catalog-genre-option')];
     if (!search || !options.length) return;
     search.oninput = () => {
       const q = search.value.trim().toLowerCase();
@@ -971,7 +1048,7 @@ function attachCatalogFilters() {
   if (minRate) params.set('minRate', minRate);
   if (hasSeries !== '') params.set('hasSeries', hasSeries);
   const selected = new Set(
-    [...panel.querySelectorAll('input[name="genre"]:checked')].map((el) => el.value)
+    [...root.querySelectorAll('input[name="genre"]:checked')].map((el) => el.value)
   );
   fetch(`/api/search/genres?${params.toString()}`, { credentials: 'same-origin' })
     .then((r) => (r.ok ? r.json() : null))
@@ -979,6 +1056,7 @@ function attachCatalogFilters() {
       const loading = list.querySelector('[data-catalog-genres-loading]');
       if (loading) loading.remove();
       const items = Array.isArray(data?.items) ? data.items : [];
+      const formId = panel.id || 'catalog-filters';
       const html = items.map((g) => {
         const name = String(g.name || '');
         if (!name || selected.has(name)) return '';
@@ -988,7 +1066,7 @@ function attachCatalogFilters() {
         const countHtml = count != null
           ? `<span class="catalog-genre-count muted">${escapeHtml(String(count))}</span>`
           : '';
-        return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(searchHay)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}"><span class="catalog-genre-label">${escapeHtml(label)}</span>${countHtml}</label>`;
+        return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(searchHay)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}" form="${escapeHtml(formId)}"><span class="catalog-genre-label">${escapeHtml(label)}</span>${countHtml}</label>`;
       }).join('');
       if (html) list.insertAdjacentHTML('beforeend', html);
       else if (!list.querySelector('.catalog-genre-option')) {
@@ -3277,6 +3355,99 @@ function attachTopbarSearchToggle() {
   });
 }
 
+/** Desktop: поиск свёрнут в капсулу и раскрывается при фокусе (gooey-фильтр в CSS). */
+function attachGooeySearch() {
+  const form = document.querySelector('[data-gooey-search]');
+  const input = form?.querySelector('#global-search-input');
+  if (!form || !input) return;
+  const orb = form.querySelector('[data-gooey-search-orb]');
+  const setOpen = (open) => form.classList.toggle('is-open', open);
+  if (input.value.trim() || document.activeElement === input) setOpen(true);
+
+  input.addEventListener('focus', () => setOpen(true));
+  form.addEventListener('focusout', (event) => {
+    if (form.contains(event.relatedTarget)) return;
+    if (!input.value.trim()) setOpen(false);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !input.value.trim()) input.blur();
+  });
+  orb?.addEventListener('click', () => {
+    if (!form.classList.contains('is-open') || !input.value.trim()) {
+      input.focus();
+      return;
+    }
+    if (typeof form.requestSubmit === 'function') form.requestSubmit();
+    else form.submit();
+  });
+}
+
+/** Вкладки внутри страниц админки: выбор запоминается на время сессии, `#id` в URL открывает нужную вкладку. */
+function attachAdminTabs() {
+  document.querySelectorAll('[data-admin-tabs]').forEach((nav) => {
+    const group = nav.getAttribute('data-admin-tabs');
+    const tabs = [...nav.querySelectorAll('[data-admin-tab]')];
+    const panels = [...document.querySelectorAll('[data-admin-tab-panel]')]
+      .filter((panel) => panel.getAttribute('data-admin-tab-group') === group);
+    if (!tabs.length || !panels.length) return;
+    const storeKey = `admin-tab:${location.pathname}:${group}`;
+    const ids = tabs.map((tab) => tab.getAttribute('data-admin-tab'));
+    const select = (id, { remember = true, focus = false } = {}) => {
+      const active = ids.includes(id) ? id : ids[0];
+      tabs.forEach((tab) => {
+        const on = tab.getAttribute('data-admin-tab') === active;
+        tab.classList.toggle('is-active', on);
+        tab.setAttribute('aria-selected', on ? 'true' : 'false');
+        tab.tabIndex = on ? 0 : -1;
+        if (on && focus) tab.focus();
+      });
+      panels.forEach((panel) => {
+        panel.hidden = panel.getAttribute('data-admin-tab-panel') !== active;
+      });
+      if (remember) {
+        try { sessionStorage.setItem(storeKey, active); } catch { /* private mode */ }
+      }
+    };
+    const fromHash = decodeURIComponent((location.hash || '').slice(1));
+    let initial = ids.includes(fromHash) ? fromHash : '';
+    if (!initial) {
+      try { initial = sessionStorage.getItem(storeKey) || ''; } catch { initial = ''; }
+    }
+    select(initial, { remember: false });
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => select(tab.getAttribute('data-admin-tab')));
+      tab.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+        event.preventDefault();
+        const next = (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        select(tabs[next].getAttribute('data-admin-tab'), { focus: true });
+      });
+    });
+  });
+}
+
+/** Быстрый фильтр длинных списков админки (языки, жанры): `data-admin-filter="#id"` у поля поиска. */
+function attachAdminFilters() {
+  document.querySelectorAll('[data-admin-filter]').forEach((input) => {
+    const root = document.querySelector(input.getAttribute('data-admin-filter'));
+    if (!root) return;
+    input.addEventListener('input', () => {
+      const query = input.value.trim().toLowerCase();
+      root.querySelectorAll('tbody tr').forEach((row) => {
+        row.classList.toggle('is-filtered-out', Boolean(query) && !row.textContent.toLowerCase().includes(query));
+      });
+      root.querySelectorAll('.acg').forEach((group) => {
+        const hasRows = [...group.querySelectorAll('tbody tr')].some((row) => !row.classList.contains('is-filtered-out'));
+        group.classList.toggle('is-filtered-out', Boolean(query) && !hasRows);
+        if (query && hasRows) group.dataset.open = '1';
+      });
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') event.preventDefault();
+    });
+  });
+}
+
 /** Скрывает компактный topbar при скролле вниз, показывает при скролле вверх. */
 function attachTopbarAutoHide() {
   const topbar = document.querySelector('[data-topbar]');
@@ -3534,17 +3705,19 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
   const coverRating = _libRateClamped ? `<span class="cover-rating-wrapper"><span class="cover-rating-badge cover-rating-${_libRateClamped}">${Array.from({ length: _libRateClamped }, () => '<span>★</span>').join('')}</span></span>` : '';
   return `<article class="card" ${cardAttrs}>
     ${batchCb}
+    <div class="card-cover">
     <a class="cover" href="${bookPagePath(book.id)}" data-role="cover">
       <img class="cover-image" loading="lazy" draggable="false" src="${apiBookPath(book.id, 'cover-thumb')}" data-cover-src="${apiBookPath(book.id, 'cover-thumb')}" alt="${title}">
       <span class="cover-fallback" hidden>
-        <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
+        ${coverFallbackImageHtml()}
         <span class="cover-fallback-overlay"></span>
         <span class="cover-fallback-copy"><span class="cover-fallback-title">${title}</span><span class="cover-fallback-author">${escapeHtml(uiFormatAuthorsLabel(book.authorsList, book.authors) || uiT('book.authorUnknown'))}</span></span>
       </span>
       ${getReadBookIdSet().has(book.id) ? `<span class="read-badge">${READ_BADGE_SVG}</span>` : ''}
       ${coverRating}
-      <div class="card-annotation-preview" hidden data-card-annotation></div>
     </a>
+    <div class="card-cover-actions">${downloadMenu}<a class="button card-cover-action" href="${bookPagePath(book.id)}">${escapeHtml(uiT('card.more'))}</a></div>
+    </div>
     <div class="meta">
       <h3><a href="${bookPagePath(book.id)}">${title}</a></h3>
       <div class="author">${book.authors ? uiRenderAuthorLinks(book.authorsList, book.authors, `ajax-a-${book.id}`) : escapeHtml(uiT('book.authorUnknown'))}</div>
@@ -3552,7 +3725,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
       ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
       ${readActions
         ? `<div class="card-actions card-actions-read"><a class="button button-primary download-menu-trigger-compact" href="${readPagePath(book.id)}">${READ_BOOK_ICON_SVG}${escapeHtml(uiT('home.heroReadBook'))}</a></div>`
-        : downloadMenu ? `<div class="card-actions">${downloadMenu}</div>` : ''}
+        : ''}
     </div>
   </article>`;
 }
@@ -5308,6 +5481,10 @@ function attachUiAppearanceUpload() {
     syncDynamicBaseColorInputs();
   }
 
+  function syncHeaderSections(hasHeader) {
+    page.querySelector('[data-ui-header-section]')?.toggleAttribute('hidden', !hasHeader);
+  }
+
   function applyUiAssetState(asset, ui, appearance) {
     const block = page.querySelector(`[data-ui-upload-status="${asset}"]`)?.closest('.ui-asset-block')
       || page.querySelector(`#ui-${asset}-input`)?.closest('.admin-field-group, .ui-asset-block, .ui-font-upload-toolbar');
@@ -5346,6 +5523,40 @@ function attachUiAppearanceUpload() {
       schedulePreview();
       return;
     }
+    if (asset === 'header') {
+      if (preview) {
+        preview.innerHTML = ui.headerUrl
+          ? `<img src="${escapeHtml(ui.headerUrl)}" alt="" class="ui-asset-preview ui-asset-preview--bg">`
+          : `<span class="muted">${escapeHtml(uiT('admin.ui.noHeader'))}</span>`;
+      }
+      if (removeForm) removeForm.hidden = !ui.hasCustomHeader;
+      syncHeaderSections(true);
+      schedulePreview();
+      return;
+    }
+    if (asset === 'cover') {
+      const dark = ui.coverFallbackUrl || '/book-fallback.png';
+      const light = ui.coverFallbackLightUrl || (ui.hasCustomCover ? dark : '/book-fallback-light.png');
+      syncCoverFallbackImages(dark, light);
+      if (preview) {
+        preview.innerHTML = ui.hasCustomCover
+          ? `<img src="${escapeHtml(dark)}" alt="" class="ui-asset-preview">`
+          : `<span class="muted">${escapeHtml(uiT('admin.ui.defaultAsset'))}</span>`;
+      }
+      if (removeForm) removeForm.hidden = !ui.hasCustomCover;
+      if (appearance && typeof appearance.hasCustomCoverFallback === 'boolean') {
+        setResetWrapVisible('cover', appearance.hasCustomCoverFallback);
+      } else if (ui.hasCustomCover) {
+        setResetWrapVisible('cover', true);
+      }
+      if (typeof appearance?.coverTitleColor === 'string' && appearance.coverTitleColor) {
+        const colorInput = page.querySelector('[name="coverTitleColor"]');
+        if (colorInput) colorInput.value = appearance.coverTitleColor;
+        patchDirtyFormBaseline('ui-main-form', ['coverTitleColor']);
+      }
+      schedulePreview();
+      return;
+    }
     if (asset === 'font') {
       const fontWrap = block?.querySelector('.ui-font-upload-preview');
       if (fontWrap) {
@@ -5378,7 +5589,9 @@ function attachUiAppearanceUpload() {
     const statusEl = page.querySelector(`[data-ui-upload-status="${asset}"]`);
     input.addEventListener('change', () => {
       const file = input.files?.[0];
-      if (file) uploadUiAsset(asset, file, statusEl);
+      if (!file) return;
+      uploadUiAsset(asset, file, statusEl);
+      input.value = '';
     });
   });
 
@@ -5544,6 +5757,16 @@ function attachUiAppearanceUpload() {
     setRootAttr('data-ui-theme', attrs.theme);
     setRootAttr('data-ui-sliders', attrs.sliders);
     setRootAttr('data-ui-bg', attrs.bg);
+    setRootAttr('data-ui-header', attrs.header);
+    if (attrs.headerFit === 'cover' || attrs.headerFit === 'contain') {
+      document.documentElement.setAttribute('data-ui-header-fit', attrs.headerFit);
+    } else {
+      document.documentElement.removeAttribute('data-ui-header-fit');
+    }
+    if (attrs.logo === false) document.documentElement.setAttribute('data-ui-logo', '0');
+    else document.documentElement.removeAttribute('data-ui-logo');
+    if (attrs.manuscript === false) document.documentElement.setAttribute('data-ui-manuscript', '0');
+    else document.documentElement.removeAttribute('data-ui-manuscript');
     setRootAttr('data-ui-shape', attrs.shape);
     setRootAttr('data-ui-typography', attrs.typography);
     if (data.webfont && /^[a-z0-9-]+$/.test(data.webfont)) {
@@ -5556,6 +5779,29 @@ function attachUiAppearanceUpload() {
       }
       if (previewFontLink.href !== href) previewFontLink.href = href;
     }
+    if (data.coverWebfont && /^[a-z0-9-]+$/.test(data.coverWebfont)) {
+      const href = new URL(`/fonts/${data.coverWebfont}.css`, location.origin).href;
+      let coverLink = document.getElementById('ui-preview-cover-font');
+      if (!coverLink) {
+        coverLink = document.createElement('link');
+        coverLink.rel = 'stylesheet';
+        coverLink.id = 'ui-preview-cover-font';
+        document.head.appendChild(coverLink);
+      }
+      if (coverLink.href !== href) coverLink.href = href;
+    }
+    if (data.manuscriptWebfont && /^[a-z0-9-]+$/.test(data.manuscriptWebfont)) {
+      const href = new URL(`/fonts/${data.manuscriptWebfont}.css`, location.origin).href;
+      let manuscriptLink = document.getElementById('ui-preview-manuscript-font');
+      if (!manuscriptLink) {
+        manuscriptLink = document.createElement('link');
+        manuscriptLink.rel = 'stylesheet';
+        manuscriptLink.id = 'ui-preview-manuscript-font';
+        document.head.appendChild(manuscriptLink);
+      }
+      if (manuscriptLink.href !== href) manuscriptLink.href = href;
+    }
+    mountManuscriptWash();
     if (previewBar) previewBar.hidden = !showBar;
   }
 
@@ -5618,6 +5864,14 @@ function attachUiAppearanceUpload() {
   }
   radiusPresetSel?.addEventListener('change', () => { syncRadiusScaleField(); setResetWrapVisible('shape', true); schedulePreview(); });
   syncRadiusScaleField();
+
+  const manuscriptWashChk = page.querySelector('[name="manuscriptWash"]');
+  const manuscriptFields = page.querySelector('[data-ui-manuscript-fields]');
+  function syncManuscriptFields() {
+    if (manuscriptFields) manuscriptFields.hidden = Boolean(manuscriptWashChk) && !manuscriptWashChk.checked;
+  }
+  manuscriptWashChk?.addEventListener('change', syncManuscriptFields);
+  syncManuscriptFields();
 
   // Accent / overlay color: hex label + auto checkbox enable/disable.
   function bindAutoColor(colorSel, autoAttr, hexAttr, autoHiddenId, resetSection) {
@@ -5697,12 +5951,24 @@ function attachUiAppearanceUpload() {
   page.addEventListener('input', (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (target.closest('[data-ui-appearance-page]') && target.form === mainForm) schedulePreview();
+    if (target.closest('[data-ui-appearance-page]') && target.form === mainForm) {
+      if (String(target.name || '').startsWith('coverTitle')) setResetWrapVisible('cover', true);
+      if (String(target.name || '').startsWith('manuscript') && target.name !== 'manuscriptWash') {
+        setResetWrapVisible('manuscript', true);
+      }
+      schedulePreview();
+    }
   });
   page.addEventListener('change', (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (target.closest('[data-ui-appearance-page]') && target.form === mainForm) schedulePreview();
+    if (target.closest('[data-ui-appearance-page]') && target.form === mainForm) {
+      if (String(target.name || '').startsWith('coverTitle')) setResetWrapVisible('cover', true);
+      if (String(target.name || '').startsWith('manuscript') && target.name !== 'manuscriptWash') {
+        setResetWrapVisible('manuscript', true);
+      }
+      schedulePreview();
+    }
   });
   page.querySelector('#admin-site-name')?.addEventListener('input', schedulePreview);
   page.querySelector('#admin-home-subtitle')?.addEventListener('input', schedulePreview);
@@ -5723,6 +5989,9 @@ function attachUiAppearanceUpload() {
       }
       if (input.name === 'radiusScale') setResetWrapVisible('shape', true);
       if (input.name === 'headingScale') setResetWrapVisible('typography', true);
+      if (input.name === 'manuscriptInk' || input.name === 'manuscriptSize') {
+        setResetWrapVisible('manuscript', true);
+      }
       schedulePreview();
     };
     input.addEventListener('input', sync);
@@ -5834,11 +6103,38 @@ function attachUiAppearanceUpload() {
     });
   }
 
+  function applyManuscriptState(st) {
+    const font = page.querySelector('[name="manuscriptFont"]');
+    if (font) font.value = st.manuscriptFont || 'pochaevsk';
+    setRangeField('manuscriptInk', st.manuscriptInk);
+    setRangeField('manuscriptSize', st.manuscriptSize);
+    const text = page.querySelector('[name="manuscriptText"]');
+    if (text) text.value = st.manuscriptText || '';
+  }
+
+  function applyCoverState(st) {
+    const font = page.querySelector('[name="coverTitleFont"]');
+    if (font) font.value = st.coverTitleFont;
+    const color = page.querySelector('[name="coverTitleColor"]');
+    if (color && st.coverTitleColor) color.value = st.coverTitleColor;
+    setRangeField('coverTitleSize', st.coverTitleSize);
+    setRangeField('coverTitleX', st.coverTitleX);
+    setRangeField('coverTitleY', st.coverTitleY);
+    setRangeField('coverTitleShadow', st.coverTitleShadow);
+    applyUiAssetState('cover', {
+      coverFallbackUrl: st.coverFallbackUrl,
+      coverFallbackLightUrl: st.coverFallbackLightUrl,
+      hasCustomCover: st.hasCustomCover,
+    }, st);
+  }
+
   function updateResetWraps(st) {
     setResetWrapVisible('sliders', st.hasCustomThemeSliders);
     setResetWrapVisible('colors', st.hasCustomThemeColors);
     setResetWrapVisible('shape', st.hasCustomThemeShape);
     setResetWrapVisible('typography', st.hasCustomThemeTypography);
+    setResetWrapVisible('cover', st.hasCustomCoverFallback);
+    setResetWrapVisible('manuscript', st.hasCustomManuscript);
   }
 
   const RESET_FLASH = {
@@ -5846,6 +6142,8 @@ function attachUiAppearanceUpload() {
     colors: 'admin.ui.flashResetColors',
     shape: 'admin.ui.flashResetShape',
     typography: 'admin.ui.flashResetTypography',
+    cover: 'admin.ui.flashResetCover',
+    manuscript: 'admin.ui.flashResetManuscript',
   };
 
   async function runAppearanceReset(section) {
@@ -5869,6 +6167,8 @@ function attachUiAppearanceUpload() {
       else if (section === 'colors') applyColorsState(st);
       else if (section === 'shape') applyShapeState(st);
       else if (section === 'typography') applyTypographyState(st);
+      else if (section === 'cover') applyCoverState(st);
+      else if (section === 'manuscript') applyManuscriptState(st);
       updateResetWraps(st);
       schedulePreview();
       patchDirtyFormBaseline('ui-main-form', section);
@@ -6873,6 +7173,9 @@ attachSidebarToggle();
 initAppDownloadUi();
 initAppPairingUi();
 attachTopbarSearchToggle();
+attachGooeySearch();
+attachAdminTabs();
+attachAdminFilters();
 attachTopbarAutoHide();
 attachThemeToggle();
 attachCatalogFilters();
@@ -6905,6 +7208,7 @@ attachSmartSearch();
 attachBookIllustrationLightbox();
 loadHomeRecommendationsProgressively();
 loadHomeContinueProgressively();
+syncSidebarBrandToHeader();
 mountManuscriptWash();
 initHomeWelcomeReveal();
 initHomeQuoteRotation();
@@ -6953,6 +7257,8 @@ const UI_APPEARANCE_FIELD_GROUPS = {
   ],
   shape: ['radiusPreset', 'radiusScale', 'shadowPreset'],
   typography: ['fontSize', 'fontFamily', 'density', 'headingScale'],
+  cover: ['coverTitleFont', 'coverTitleColor', 'coverTitleSize', 'coverTitleX', 'coverTitleY', 'coverTitleShadow'],
+  manuscript: ['manuscriptFont', 'manuscriptInk', 'manuscriptSize', 'manuscriptText'],
 };
 
 function patchDirtyFormBaseline(formId, sectionOrFields) {
@@ -7359,6 +7665,40 @@ function attachAdminUserFormAutofillGuard() {
     loadSuppressed(suppPage);
   }
 
+  function fmtScanWhen(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso || '');
+    return d.toLocaleString(document.documentElement.lang || undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  /* Поиск дубликатов запускается только кнопкой; здесь же видно, когда он выполнялся в последний раз. */
+  function renderScanCard(scan) {
+    const info = scan
+      ? uiTp('admin.duplicates.scanLast', {
+        when: fmtScanWhen(scan.scannedAt),
+        groups: scan.totalGroups,
+        delete: scan.willDelete,
+        sec: Math.max(0, Math.round((Number(scan.tookMs) || 0) / 1000))
+      })
+      : uiT('admin.duplicates.scanNever');
+    return '<div class="admin-card" style="margin-bottom:16px" data-dup-scan-card>'
+      + '<div class="admin-card-title">' + escapeHtml(uiT('admin.duplicates.scanTitle')) + '</div>'
+      + '<p class="muted" style="margin:0 0 6px">' + escapeHtml(info) + '</p>'
+      + (scan ? '<p class="muted" style="font-size:.85em;margin:0 0 12px">' + escapeHtml(uiT('admin.duplicates.scanStale')) + '</p>' : '<div style="height:6px"></div>')
+      + '<button type="button" class="button-primary" data-dup-scan>'
+      + escapeHtml(uiT(scan ? 'admin.duplicates.scanBtnAgain' : 'admin.duplicates.scanBtn'))
+      + '</button></div>';
+  }
+
+  function wireScanButton() {
+    const btn = resultsWrap.querySelector('[data-dup-scan]');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+      currentPage = 1;
+      dupAction('/api/admin/duplicates/scan', {}, null, false, btn);
+    });
+  }
+
   function renderAutoCleanPanel(preview) {
     if (!preview || preview.willDelete <= 0) return '';
     return '<div class="admin-card admin-dup-auto-clean" style="margin-bottom:20px;box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent-color, var(--accent)) 35%, transparent)">'
@@ -7635,10 +7975,7 @@ function attachAdminUserFormAutofillGuard() {
     currentPage = Math.max(1, page || 1);
     container.setAttribute('data-page', String(currentPage));
     const token = ++dupReqToken;
-    if (firstLoadDup) {
-      resultsWrap.innerHTML = '<div class="admin-card"><div class="admin-card-title">' + escapeHtml(uiT('admin.duplicates.searching'))
-        + '</div><p class="muted">' + escapeHtml(uiT('admin.duplicates.searchingHint')) + '</p></div>';
-    } else {
+    if (!firstLoadDup) {
       spinner(true); dim(resultsWrap, true);
     }
     const q = 'page=' + currentPage + (currentFilter ? '&filter=' + encodeURIComponent(currentFilter) : '');
@@ -7657,7 +7994,13 @@ function attachAdminUserFormAutofillGuard() {
           pollAutoClean();
           return;
         }
-        resultsWrap.innerHTML = renderAutoCleanPanel(data.preview)
+        if (!data.scan) {
+          resultsWrap.innerHTML = renderScanCard(null);
+          wireScanButton();
+          return;
+        }
+        resultsWrap.innerHTML = renderScanCard(data.scan)
+          + renderAutoCleanPanel(data.preview)
           + '<div class="admin-card">'
           + '<div class="admin-card-title">' + escapeHtml(uiT('admin.duplicates.cardTitle')) + '</div>'
           + '<div class="admin-card-subtitle">' + escapeHtml(uiT('admin.duplicates.cardSubtitle')) + '</div>'
@@ -7666,6 +8009,7 @@ function attachAdminUserFormAutofillGuard() {
           + renderPagination(data.total, data.pageSize, data.page, 'data-dup-page')
           + '</div>';
         wireDupActions();
+        wireScanButton();
       })
       .catch(function(err) {
         if (token !== dupReqToken) return;
@@ -7886,5 +8230,16 @@ function initAppPairingUi() {
     }
   });
 }
+
+document.querySelectorAll('.page-jump').forEach((form) => {
+  const input = form.querySelector('.page-jump-input');
+  if (!input) return;
+  const syncCaret = () => {
+    const digits = String(input.value || '').replace(/\D/g, '').length || 1;
+    form.style.setProperty('--page-digits', String(digits));
+  };
+  syncCaret();
+  input.addEventListener('input', syncCaret);
+});
 
 // PWA: Service Worker registered by pageShell with versioned URL

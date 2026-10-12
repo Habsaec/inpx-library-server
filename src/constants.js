@@ -70,4 +70,4 @@ export const CSRF_EXEMPT_PATHS = new Set([
 ]);
 
 // --- Safe admin redirects ---
-export const SAFE_ADMIN_REDIRECTS = new Set(['/admin', '/admin/users', '/admin/smtp', '/admin/events']);
+export const SAFE_ADMIN_REDIRECTS = new Set(['/admin', '/admin/users', '/admin/smtp', '/admin/events', '/admin/content']);

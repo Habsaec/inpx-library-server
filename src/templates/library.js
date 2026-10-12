@@ -3,7 +3,7 @@
  */
 import {
   escapeHtml, sanitizeHtml, csrfHiddenField, pageShell,
-  renderBookGrid, renderFavoriteBookGrid, renderEntityGrid, renderCover,
+  renderBookGrid, renderFavoriteBookGrid, renderEntityGrid, renderCardCover,
   renderPagination, renderSortControl, renderEmptyState,
   renderDownloadMenu, renderBatchDownloadToolbar, renderScopeDownloadMenu,
   renderHomeShelf, renderMiniBookList, renderDiscoveryTiles,
@@ -16,6 +16,7 @@ import {
   browseTotalLine, canDownloadInUi, canSendToEmailInUi, renderAuthorLinks, renderSeriesLinks, renderWelcomeQuoteAuthor, isWelcomeQuoteAuthorLinkable,
   STATIC_ASSET_VERSION, siteTitleForDisplay, READ_CHECK_SVG, renderFaviconLinks,
   bookPagePath, readPagePath, apiBookPath, liteBookPagePath, liteReadPagePath,
+  renderCoverFallbackImage,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
   formatLocaleDateLong, serializeClientI18n,
   formatAuthorLabel, formatLanguageLabel,
@@ -54,7 +55,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     <section class="welcome-hero-banner home-reveal"${continueAttr}>
       <div class="welcome-hero-mark cover" aria-hidden="true">
         <span class="cover-fallback">
-          <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+          ${renderCoverFallbackImage()}
           <span class="cover-fallback-overlay"></span>
           <span class="cover-fallback-copy">
             <span class="cover-fallback-title">${escapeHtml(t('home.quoteCoverTitle'))}</span>
@@ -75,7 +76,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
 }
 
 function buildCatalogQueryParams({
-  query = '', field = 'books', sort = 'title', order = '', genres = [], letter = '',
+  query = '', field = '', sort = 'title', order = '', genres = [], letter = '',
   lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genreMode = 'or', view = ''
 } = {}) {
   const p = new URLSearchParams();
@@ -97,7 +98,7 @@ function buildCatalogQueryParams({
   return p;
 }
 
-function catalogChipHref(baseParams, removeKey, removeValue = null) {
+function catalogChipHref(baseParams, removeKey, removeValue = null, action = '/catalog') {
   const p = new URLSearchParams(baseParams.toString());
   if (removeKey === 'genre' && removeValue != null) {
     const kept = p.getAll('genre').filter((g) => g !== removeValue);
@@ -108,7 +109,14 @@ function catalogChipHref(baseParams, removeKey, removeValue = null) {
   }
   p.delete('page');
   const qs = p.toString();
-  return qs ? `/catalog?${qs}` : '/catalog';
+  return qs ? `${action}?${qs}` : action;
+}
+
+function renderViewToggle({ href, isListView }) {
+  const gridIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
+  const listIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
+  const label = isListView ? t('browse.viewGrid') : t('browse.viewList');
+  return `<a class="button view-toggle" href="${escapeHtml(href)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${isListView ? gridIcon : listIcon}</a>`;
 }
 
 function renderCatalogSearchHints(searchHints, query = '') {
@@ -183,28 +191,33 @@ function sortGenreOptionsAlpha(options = []) {
 function renderCatalogFilterPanel({
   query, field, sort, order, genres = [], letter, lang, format, year, minRate = 0,
   hasSeries = null, genreMode = 'or', langs = [], formats = [], genreOptions = [], genreOptionsLazy = false,
-  view = ''
+  view = '',
+  action = '/catalog',
+  formId = 'catalog-filters',
+  showLang = true,
+  showGenreMode = true
 }) {
   const selected = new Set(genres);
   const baseParams = buildCatalogQueryParams({
     query, field, sort, order, genres, letter, lang, format, year, minRate, hasSeries, genreMode, view
   });
+  const chipHref = (key, value) => catalogChipHref(baseParams, key, value, action);
   const chips = [];
   for (const g of genres) {
-    chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(catalogChipHref(baseParams, 'genre', g))}"><span>${escapeHtml(tp('catalog.filter.genre', { value: formatGenreLabel(g) }))}</span><span aria-hidden="true">×</span></a>`);
+    chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('genre', g))}"><span>${escapeHtml(tp('catalog.filter.genre', { value: formatGenreLabel(g) }))}</span><span aria-hidden="true">×</span></a>`);
   }
-  if (lang) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(catalogChipHref(baseParams, 'lang'))}"><span>${escapeHtml(tp('catalog.filter.lang', { value: lang.toUpperCase() }))}</span><span aria-hidden="true">×</span></a>`);
-  if (format) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(catalogChipHref(baseParams, 'format'))}"><span>${escapeHtml(tp('catalog.filter.format', { value: format.toUpperCase() }))}</span><span aria-hidden="true">×</span></a>`);
-  if (year) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(catalogChipHref(baseParams, 'year'))}"><span>${escapeHtml(tp('catalog.filter.year', { value: String(year) }))}</span><span aria-hidden="true">×</span></a>`);
-  if (minRate >= 1) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(catalogChipHref(baseParams, 'minRate'))}"><span>${escapeHtml(tp('catalog.filter.minRate', { value: String(minRate) }))}</span><span aria-hidden="true">×</span></a>`);
-  if (hasSeries === 1) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(catalogChipHref(baseParams, 'hasSeries'))}"><span>${escapeHtml(t('catalog.filter.hasSeries'))}</span><span aria-hidden="true">×</span></a>`);
-  if (hasSeries === 0) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(catalogChipHref(baseParams, 'hasSeries'))}"><span>${escapeHtml(t('catalog.filter.noSeries'))}</span><span aria-hidden="true">×</span></a>`);
+  if (showLang && lang) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('lang'))}"><span>${escapeHtml(tp('catalog.filter.lang', { value: lang.toUpperCase() }))}</span><span aria-hidden="true">×</span></a>`);
+  if (format) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('format'))}"><span>${escapeHtml(tp('catalog.filter.format', { value: format.toUpperCase() }))}</span><span aria-hidden="true">×</span></a>`);
+  if (year) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('year'))}"><span>${escapeHtml(tp('catalog.filter.year', { value: String(year) }))}</span><span aria-hidden="true">×</span></a>`);
+  if (minRate >= 1) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('minRate'))}"><span>${escapeHtml(tp('catalog.filter.minRate', { value: String(minRate) }))}</span><span aria-hidden="true">×</span></a>`);
+  if (hasSeries === 1) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('hasSeries'))}"><span>${escapeHtml(t('catalog.filter.hasSeries'))}</span><span aria-hidden="true">×</span></a>`);
+  if (hasSeries === 0) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('hasSeries'))}"><span>${escapeHtml(t('catalog.filter.noSeries'))}</span><span aria-hidden="true">×</span></a>`);
 
   const sortedGenreOptions = sortGenreOptionsAlpha(genreOptions);
   const selectedGenreChecks = genres.map((name) => {
     const label = formatGenreLabel(name);
     const search = `${name} ${label}`.toLowerCase();
-    return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(search)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}" checked><span class="catalog-genre-label">${escapeHtml(label)}</span></label>`;
+    return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(search)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}" form="${escapeHtml(formId)}" checked><span class="catalog-genre-label">${escapeHtml(label)}</span></label>`;
   }).join('');
   const genreChecks = sortedGenreOptions.map((g) => {
     const name = g.name || '';
@@ -215,7 +228,7 @@ function renderCatalogFilterPanel({
     const countHtml = count != null
       ? `<span class="catalog-genre-count muted">${escapeHtml(String(count))}</span>`
       : '';
-    return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(search)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}"><span class="catalog-genre-label">${escapeHtml(label)}</span>${countHtml}</label>`;
+    return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(search)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}" form="${escapeHtml(formId)}"><span class="catalog-genre-label">${escapeHtml(label)}</span>${countHtml}</label>`;
   }).join('');
   const lazyAttrs = genreOptionsLazy
     ? ` data-catalog-genres-lazy="1" data-genres-q="${escapeHtml(query || '')}" data-genres-lang="${escapeHtml(lang || '')}" data-genres-format="${escapeHtml(format || '')}" data-genres-year="${escapeHtml(year ? String(year) : '')}" data-genres-min-rate="${escapeHtml(minRate >= 1 ? String(minRate) : '')}" data-genres-has-series="${escapeHtml(hasSeries === 0 || hasSeries === 1 ? String(hasSeries) : '')}"`
@@ -227,79 +240,79 @@ function renderCatalogFilterPanel({
   const hasActive = chips.length > 0;
   const resetParams = buildCatalogQueryParams({ query, field, sort, order, letter, view });
   const resetQs = resetParams.toString();
-  const resetHref = resetQs ? `/catalog?${resetQs}` : '/catalog';
+  const resetHref = resetQs ? `${action}?${resetQs}` : action;
   const summaryCount = hasActive ? ` (${chips.length})` : '';
+  const filterFormId = formId;
   return `
-    <form class="catalog-filter-panel" method="get" action="/catalog" data-catalog-filters${lazyAttrs}>
+    <form id="${filterFormId}" class="catalog-filter-panel" method="get" action="${escapeHtml(action)}" data-catalog-filters${lazyAttrs}>
       ${query ? `<input type="hidden" name="q" value="${escapeHtml(query)}">` : ''}
-      <input type="hidden" name="field" value="${escapeHtml(field || 'books')}">
+      ${field ? `<input type="hidden" name="field" value="${escapeHtml(field)}">` : ''}
       <input type="hidden" name="sort" value="${escapeHtml(sort || 'title')}">
       ${order ? `<input type="hidden" name="order" value="${escapeHtml(order)}">` : ''}
       ${letter ? `<input type="hidden" name="letter" value="${escapeHtml(letter)}">` : ''}
       ${view === 'list' ? '<input type="hidden" name="view" value="list">' : ''}
       <div class="catalog-filter-bar">
         <details class="catalog-filter-shell">
-          <summary class="catalog-filter-summary">
+          <summary class="button catalog-filter-summary">
             <span class="catalog-filter-summary-label">${escapeHtml(t('catalog.filtersTitle'))}${escapeHtml(summaryCount)}</span>
           </summary>
-          <div class="catalog-filter-body">
-            <details class="catalog-filter-details"${genres.length ? ' open' : ''}>
-              <summary>${escapeHtml(t('catalog.filtersGenres'))}${genres.length ? ` (${genres.length})` : ''}</summary>
-              <div class="catalog-genre-panel">
-                <div class="catalog-genre-search-row">
-                  <input type="search" class="catalog-genre-search" data-catalog-genre-search placeholder="${escapeHtml(t('catalog.filtersGenreSearch'))}" autocomplete="off">
-                  <select class="catalog-genre-mode" name="genreMode" aria-label="${escapeHtml(t('catalog.filtersGenreMode'))}" title="${escapeHtml(t('catalog.filtersGenreMode'))}" onchange="this.form.submit()">
-                    <option value=""${genreMode === 'and' ? '' : ' selected'}>${escapeHtml(t('catalog.filtersGenreModeAny'))}</option>
-                    <option value="and"${genreMode === 'and' ? ' selected' : ''}>${escapeHtml(t('catalog.filtersGenreModeAll'))}</option>
-                  </select>
-                </div>
-                <div class="catalog-genre-list" role="group" aria-label="${escapeHtml(t('catalog.filtersGenres'))}">${genreListHtml}</div>
-              </div>
-            </details>
-            <div class="catalog-filter-row catalog-filter-row-inline">
-              <label class="catalog-filter-field">
-                <span class="muted">${escapeHtml(t('catalog.allLanguages'))}</span>
-                <select name="lang" onchange="this.form.submit()">
-                  <option value="">${escapeHtml(t('catalog.allLanguages'))}</option>
-                  ${langs.map((l) => `<option value="${escapeHtml(l)}"${l === lang ? ' selected' : ''}>${escapeHtml(l.toUpperCase())}</option>`).join('')}
-                </select>
-              </label>
-              <label class="catalog-filter-field">
-                <span class="muted">${escapeHtml(t('catalog.allFormats'))}</span>
-                <select name="format" onchange="this.form.submit()">
-                  <option value="">${escapeHtml(t('catalog.allFormats'))}</option>
-                  ${formats.map((f) => `<option value="${escapeHtml(f)}"${f === format ? ' selected' : ''}>${escapeHtml(f.toUpperCase())}</option>`).join('')}
-                </select>
-              </label>
-              <label class="catalog-filter-field catalog-filter-field-narrow">
-                <span class="muted">${escapeHtml(t('catalog.year'))}</span>
-                <input type="number" name="year" min="1800" max="2100" placeholder="${escapeHtml(t('catalog.year'))}" value="${year || ''}" onchange="this.form.submit()">
-              </label>
-              <label class="catalog-filter-field catalog-filter-field-narrow">
-                <span class="muted">${escapeHtml(t('catalog.filtersMinRate'))}</span>
-                <select name="minRate" onchange="this.form.submit()">
-                  <option value="">${escapeHtml(t('catalog.filtersAnyRate'))}</option>
-                  ${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${minRate === n ? ' selected' : ''}>${n}+</option>`).join('')}
-                </select>
-              </label>
-              <label class="catalog-filter-field catalog-filter-field-narrow">
-                <span class="muted">${escapeHtml(t('catalog.filtersSeries'))}</span>
-                <select name="hasSeries" onchange="this.form.submit()">
-                  <option value="">${escapeHtml(t('catalog.filtersSeriesAny'))}</option>
-                  <option value="1"${hasSeries === 1 ? ' selected' : ''}>${escapeHtml(t('catalog.filtersSeriesYes'))}</option>
-                  <option value="0"${hasSeries === 0 ? ' selected' : ''}>${escapeHtml(t('catalog.filtersSeriesNo'))}</option>
-                </select>
-              </label>
-              <div class="catalog-filter-actions">
-                <button type="submit" class="button">${escapeHtml(t('catalog.filtersApply'))}</button>
-              </div>
-            </div>
-          </div>
         </details>
-        ${hasActive ? `<div class="catalog-filter-chips" aria-label="${escapeHtml(t('catalog.filtersActive'))}">${chips.join('')}</div>` : ''}
-        ${hasActive ? `<a class="catalog-filter-reset" href="${escapeHtml(resetHref)}">${escapeHtml(t('catalog.filtersReset'))}</a>` : ''}
+        ${hasActive ? `<div class="catalog-filter-active"><div class="catalog-filter-chips" aria-label="${escapeHtml(t('catalog.filtersActive'))}">${chips.join('')}</div><a class="catalog-filter-reset" href="${escapeHtml(resetHref)}">${escapeHtml(t('catalog.filtersReset'))}</a></div>` : ''}
       </div>
-    </form>`;
+    </form>
+    <div class="catalog-filter-body">
+      <details class="catalog-filter-details"${genres.length ? ' open' : ''}>
+        <summary>${escapeHtml(t('catalog.filtersGenres'))}${genres.length ? ` (${genres.length})` : ''}</summary>
+        <div class="catalog-genre-panel">
+          <div class="catalog-genre-search-row">
+            <input type="search" class="catalog-genre-search" data-catalog-genre-search placeholder="${escapeHtml(t('catalog.filtersGenreSearch'))}" autocomplete="off">
+            ${showGenreMode ? `<select class="catalog-genre-mode" name="genreMode" form="${filterFormId}" aria-label="${escapeHtml(t('catalog.filtersGenreMode'))}" title="${escapeHtml(t('catalog.filtersGenreMode'))}" onchange="this.form.submit()">
+              <option value=""${genreMode === 'and' ? '' : ' selected'}>${escapeHtml(t('catalog.filtersGenreModeAny'))}</option>
+              <option value="and"${genreMode === 'and' ? ' selected' : ''}>${escapeHtml(t('catalog.filtersGenreModeAll'))}</option>
+            </select>` : ''}
+          </div>
+          <div class="catalog-genre-list" role="group" aria-label="${escapeHtml(t('catalog.filtersGenres'))}">${genreListHtml}</div>
+        </div>
+      </details>
+      <div class="catalog-filter-row catalog-filter-row-inline">
+        ${showLang ? `<label class="catalog-filter-field">
+          <span class="muted">${escapeHtml(t('catalog.allLanguages'))}</span>
+          <select name="lang" form="${filterFormId}" onchange="this.form.submit()">
+            <option value="">${escapeHtml(t('catalog.allLanguages'))}</option>
+            ${langs.map((l) => `<option value="${escapeHtml(l)}"${l === lang ? ' selected' : ''}>${escapeHtml(l.toUpperCase())}</option>`).join('')}
+          </select>
+        </label>` : ''}
+        <label class="catalog-filter-field">
+          <span class="muted">${escapeHtml(t('catalog.allFormats'))}</span>
+          <select name="format" form="${filterFormId}" onchange="this.form.submit()">
+            <option value="">${escapeHtml(t('catalog.allFormats'))}</option>
+            ${formats.map((f) => `<option value="${escapeHtml(f)}"${f === format ? ' selected' : ''}>${escapeHtml(f.toUpperCase())}</option>`).join('')}
+          </select>
+        </label>
+        <label class="catalog-filter-field catalog-filter-field-narrow">
+          <span class="muted">${escapeHtml(t('catalog.year'))}</span>
+          <input type="number" name="year" form="${filterFormId}" min="1800" max="2100" placeholder="${escapeHtml(t('catalog.year'))}" value="${year || ''}" onchange="this.form.submit()">
+        </label>
+        <label class="catalog-filter-field catalog-filter-field-narrow">
+          <span class="muted">${escapeHtml(t('catalog.filtersMinRate'))}</span>
+          <select name="minRate" form="${filterFormId}" onchange="this.form.submit()">
+            <option value="">${escapeHtml(t('catalog.filtersAnyRate'))}</option>
+            ${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${minRate === n ? ' selected' : ''}>${n}+</option>`).join('')}
+          </select>
+        </label>
+        <label class="catalog-filter-field catalog-filter-field-narrow">
+          <span class="muted">${escapeHtml(t('catalog.filtersSeries'))}</span>
+          <select name="hasSeries" form="${filterFormId}" onchange="this.form.submit()">
+            <option value="">${escapeHtml(t('catalog.filtersSeriesAny'))}</option>
+            <option value="1"${hasSeries === 1 ? ' selected' : ''}>${escapeHtml(t('catalog.filtersSeriesYes'))}</option>
+            <option value="0"${hasSeries === 0 ? ' selected' : ''}>${escapeHtml(t('catalog.filtersSeriesNo'))}</option>
+          </select>
+        </label>
+        <div class="catalog-filter-actions">
+          <button type="submit" class="button button-primary" form="${filterFormId}">${escapeHtml(t('catalog.filtersApply'))}</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 export function renderSearchOverview({
@@ -487,58 +500,62 @@ export function renderCatalog({
   const pageHeading = hasQueryContext ? t('catalog.resultsTitle') : t('catalog.title');
   const viewToggle = isBookField
     ? (() => {
-      const gridParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, view: '' });
-      const listParams = buildCatalogQueryParams({ query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, view: 'list' });
-      gridParams.set('view', 'grid');
-      const gridIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
-      const listIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
-      return `<div class="view-toggle" role="group" aria-label="${escapeHtml(t('browse.viewGrid'))} / ${escapeHtml(t('browse.viewList'))}">
-          <a class="view-toggle-btn${isListView ? '' : ' is-active'}" href="/catalog?${gridParams.toString()}" title="${escapeHtml(t('browse.viewGrid'))}" aria-label="${escapeHtml(t('browse.viewGrid'))}" ${isListView ? '' : 'aria-current="true"'}>${gridIcon}</a>
-          <a class="view-toggle-btn${isListView ? ' is-active' : ''}" href="/catalog?${listParams.toString()}" title="${escapeHtml(t('browse.viewList'))}" aria-label="${escapeHtml(t('browse.viewList'))}" ${isListView ? 'aria-current="true"' : ''}>${listIcon}</a>
-        </div>`;
+      const nextParams = buildCatalogQueryParams({
+        query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode,
+        view: isListView ? '' : 'list'
+      });
+      if (!isListView) nextParams.set('view', 'list');
+      return renderViewToggle({ href: `/catalog?${nextParams.toString()}`, isListView });
     })()
     : '';
+  const filterPanel = isBookField ? renderCatalogFilterPanel({
+    query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, langs, formats, genreOptions, genreOptionsLazy,
+    view: isListView ? 'list' : ''
+  }) : '';
   const content = `
-    <section class="hero">
-      <div class="section-title">
+    <section class="page-intro catalog-page-intro">
+      <div class="page-intro-copy">
         <h1>${escapeHtml(pageHeading)}</h1>
-        <div class="actions">
-          ${viewToggle}
-          ${renderSortControl({
-            action: '/catalog',
-            sort,
-            order,
-            query,
-            field,
-            genre: genreCsv,
-            options: sortOptions,
-            extraHidden: {
-              ...(lang ? { lang } : {}),
-              ...(format ? { format } : {}),
-              ...(year ? { year: String(year) } : {}),
-              ...(minRate >= 1 ? { minRate: String(minRate) } : {}),
-              ...((hasSeries === 0 || hasSeries === 1) ? { hasSeries: String(hasSeries) } : {}),
-              ...(genreMode === 'and' ? { genreMode: 'and' } : {}),
-              ...(letter ? { letter } : {}),
-              ...(isListView ? { view: 'list' } : {})
-            }
-          })}
-        </div>
       </div>
-      ${searchNavBlock}
-      ${isBookField ? renderCatalogFilterPanel({
-        query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, langs, formats, genreOptions, genreOptionsLazy,
-        view: isListView ? 'list' : ''
-      }) : ''}
-      ${letter && !query ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(tp('catalog.letterResults', { letter: letter.toUpperCase() }))}</div>` : ''}
-      ${resultsMarkup}
-      ${renderPagination(catalogPageBase, page, pageSize, total)}
-    </section>`;
+      ${filterPanel}
+      <div class="actions">
+        ${viewToggle}
+        ${renderSortControl({
+          action: '/catalog',
+          sort,
+          order,
+          query,
+          field,
+          genre: genreCsv,
+          options: sortOptions,
+          extraHidden: {
+            ...(lang ? { lang } : {}),
+            ...(format ? { format } : {}),
+            ...(year ? { year: String(year) } : {}),
+            ...(minRate >= 1 ? { minRate: String(minRate) } : {}),
+            ...((hasSeries === 0 || hasSeries === 1) ? { hasSeries: String(hasSeries) } : {}),
+            ...(genreMode === 'and' ? { genreMode: 'and' } : {}),
+            ...(letter ? { letter } : {}),
+            ...(isListView ? { view: 'list' } : {})
+          }
+        })}
+      </div>
+    </section>
+    ${searchNavBlock}
+    ${letter && !query ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(tp('catalog.letterResults', { letter: letter.toUpperCase() }))}</div>` : ''}
+    ${resultsMarkup}
+    ${renderPagination(catalogPageBase, page, pageSize, total)}`;
   return pageShell({ title: t('catalog.title'), content, user, query, field, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('catalog.title') }], currentPath: '/catalog', csrfToken, readBookIds });
 }
 
 
-export function renderLibraryView({ view, title, subtitle = '', items, total, page, pageSize, type = '', itemType = '', sort = 'title', order = '', listView = false, user, stats, indexStatus, csrfToken = '', readBookIds = null, readSeriesNames = null, computing = false, userStats = null }) {
+export function renderLibraryView({
+  view, title, subtitle = '', items, total, page, pageSize, type = '', itemType = '',
+  sort = 'title', order = '', listView = false, user, stats, indexStatus, csrfToken = '',
+  readBookIds = null, readSeriesNames = null, computing = false, userStats = null,
+  genres = [], lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genreMode = 'or',
+  langs = [], formats = [], genreOptions = []
+}) {
   const navCounts = userStats ? {
     books: userStats.bookmarkCount,
     authors: userStats.favoriteAuthorsCount,
@@ -546,20 +563,6 @@ export function renderLibraryView({ view, title, subtitle = '', items, total, pa
     shelves: userStats.shelvesCount,
     read: userStats.readBooksCount
   } : null;
-  if (computing) {
-    const content = `
-      <section class="page-intro">
-        <div class="page-intro-copy">
-          <h1>${escapeHtml(title)}</h1>
-          ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ''}
-        </div>
-      </section>
-      <section class="library-shelf library-shelf-primary">
-        ${renderSkeletonGrid(12)}
-      </section>
-      <script>setTimeout(function(){location.reload()},2500)</script>`;
-    return pageShell({ title, content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], currentPath: `/library/${view}`, csrfToken, readBookIds });
-  }
   const emptyStates = {
     recent: {
       title: t('library.empty.recent.title'),
@@ -594,6 +597,9 @@ export function renderLibraryView({ view, title, subtitle = '', items, total, pa
 
   const isSeries = itemType === 'series';
   const isListView = !isSeries && listView;
+  const genreList = Array.isArray(genres) ? genres.filter(Boolean) : [];
+  const showFilters = !isSeries && (view === 'recent' || view === 'recommended');
+  const filterAction = `/library/${view}`;
   const countHintLabel = view === 'continue' || view === 'recommended' || view === 'read' ? t('library.countInSection') : t('library.countInCatalog');
   const totalN = Math.max(0, Math.floor(Number(total) || 0));
   const totalNum = formatLocaleInt(totalN);
@@ -605,21 +611,51 @@ export function renderLibraryView({ view, title, subtitle = '', items, total, pa
     { value: 'series', label: t('sort.bySeries') },
     { value: 'rating', label: t('sort.byRating') }
   ];
-  const viewParams = new URLSearchParams();
-  if (sort) viewParams.set('sort', sort);
-  if (order) viewParams.set('order', order);
+  const viewParams = buildCatalogQueryParams({
+    sort, order, genres: genreList, lang, format, year, minRate, hasSeries, genreMode,
+    view: isListView ? 'list' : ''
+  });
   if (type) viewParams.set('type', type);
+  const filterHidden = {
+    ...(type ? { type } : {}),
+    ...(lang ? { lang } : {}),
+    ...(format ? { format } : {}),
+    ...(year ? { year: String(year) } : {}),
+    ...(minRate >= 1 ? { minRate: String(minRate) } : {}),
+    ...((hasSeries === 0 || hasSeries === 1) ? { hasSeries: String(hasSeries) } : {}),
+    ...(genreMode === 'and' ? { genreMode: 'and' } : {}),
+    ...(isListView ? { view: 'list' } : {})
+  };
+  const viewToggle = isSeries
+    ? ''
+    : (() => {
+      const nextParams = buildCatalogQueryParams({
+        sort, order, genres: genreList, lang, format, year, minRate, hasSeries, genreMode,
+        view: isListView ? '' : 'list'
+      });
+      if (type) nextParams.set('type', type);
+      if (!isListView) nextParams.set('view', 'list');
+      const qs = nextParams.toString();
+      return renderViewToggle({ href: qs ? `${filterAction}?${qs}` : filterAction, isListView });
+    })();
+  const filterPanel = showFilters
+    ? renderCatalogFilterPanel({
+      sort, order, genres: genreList, lang, format, year, minRate, hasSeries, genreMode,
+      langs, formats, genreOptions,
+      view: isListView ? 'list' : '',
+      action: filterAction,
+      formId: `library-filters-${view}`
+    })
+    : '';
   const sortControl = isSeries
     ? ''
-    : `<div class="actions">${renderSortControl({
-      action: `/library/${view}`,
+    : renderSortControl({
+      action: filterAction,
       sort,
       order,
       options: sortOptions,
-      extraHidden: {
-        ...(type ? { type } : {})
-      }
-    })}</div>`;
+      extraHidden: filterHidden
+    });
   const listBatch = Boolean(isListView && canDownloadInUi(user) && items.length);
   const booksMarkup = isListView
     ? (listBatch
@@ -627,15 +663,27 @@ export function renderLibraryView({ view, title, subtitle = '', items, total, pa
       : renderBookFlibustaList(items, { user, batchSelect: false }))
     : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: false, user, readBookIds });
   const currentPathQs = viewParams.toString();
-  const currentPath = currentPathQs ? `/library/${view}?${currentPathQs}` : `/library/${view}`;
-  const content = `
-    <section class="page-intro">
+  const currentPath = currentPathQs ? `${filterAction}?${currentPathQs}` : filterAction;
+  const pageIntro = `
+    <section class="page-intro catalog-page-intro">
       <div class="page-intro-copy">
         <h1>${escapeHtml(title)}</h1>
         ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ''}
       </div>
-      ${sortControl}
-    </section>
+      ${filterPanel}
+      ${isSeries ? '' : `<div class="actions">${viewToggle}${sortControl}</div>`}
+    </section>`;
+  if (computing) {
+    const content = `
+      ${pageIntro}
+      <section class="library-shelf library-shelf-primary">
+        ${renderSkeletonGrid(12)}
+      </section>
+      <script>setTimeout(function(){location.reload()},2500)</script>`;
+    return pageShell({ title, content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], currentPath, csrfToken, readBookIds });
+  }
+  const content = `
+    ${pageIntro}
     ${view === 'read' ? renderAccountNav('read', navCounts) : ''}
     ${items.length
       ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(countHintLabel)}: <strong>${totalNum}</strong> ${totalBookWord}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
@@ -730,7 +778,7 @@ export function renderBook({
           <div class="cover ${hasRealCover ? '' : 'cover-fallback-active'}">
             <img class="cover-image" src="${apiBookPath(book.id, 'cover')}" alt="${escapeHtml(book.title)}">
             <span class="cover-fallback" ${hasRealCover ? 'hidden' : ''} aria-hidden="${hasRealCover ? 'true' : 'false'}">
-              <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+              ${renderCoverFallbackImage()}
               <span class="cover-fallback-overlay"></span>
               <span class="cover-fallback-copy">
                 <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
@@ -809,7 +857,7 @@ export function renderBook({
             </div>
           </div>
           <div class="book-edit-actions">
-            <button type="submit">${escapeHtml(t('book.edit.save'))}</button>
+            <button type="submit" class="button-primary">${escapeHtml(t('book.edit.save'))}</button>
             <button type="button" class="button" data-book-edit-cancel>${escapeHtml(t('common.cancel'))}</button>
           </div>
         </form>
@@ -821,7 +869,7 @@ export function renderBook({
       <div class="section-title">
         <h2>${escapeHtml(similar.title || t('book.similar'))}</h2>
       </div>
-      ${similar.items?.length ? renderBookGrid(similar.items, { isAuthenticated, batchSelect: false, user, hideDownloads: Boolean(similar.hideDownloads), readBookIds }) : renderEmptyState({ title: t('book.similarEmptyTitle'), text: t('book.similarEmptyText') })}
+      ${similar.items?.length ? renderBookGrid(similar.items, { isAuthenticated, batchSelect: false, user, readBookIds }) : renderEmptyState({ title: t('book.similarEmptyTitle'), text: t('book.similarEmptyText') })}
     </section>`;
   return pageShell({ title: book.title, content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: parentLibraryLabel, href: parentLibraryHref }, { label: book.title }], currentPath: '', csrfToken, readBookIds });
 }
@@ -969,47 +1017,35 @@ export function renderFavorites({
 }
 
 
-function renderGroupedEntityGrid(groups, facetBasePath, readSeriesNames = null) {
-  if (!groups || !groups.length) return '';
-  const isSeries = facetBasePath.includes('series');
-  const seriesBadge = (name) => isSeries && readSeriesNames && readSeriesNames.has(name) ? `<span class="read-series-badge">${READ_CHECK_SVG}</span>` : '';
-  return `<div class="genre-grouped-list">${groups.map(g => `
-    <details class="genre-group">
-      <summary class="genre-group-header"><span class="genre-group-title">${escapeHtml(g.groupName)}</span><span class="genre-group-count muted">${g.items.length}</span></summary>
-      <div class="table-list entity-list genre-group-items">
-        ${g.items.map(item => `
-          <a class="table-row table-row-link" href="${facetBasePath}/${encodeURIComponent(item.name)}">
-            <div style="display:flex;align-items:center">
-              <span><strong>${escapeHtml(item.displayName || item.name)}</strong><br>
-              <span class="muted">${countLabel('book', item.bookCount)} ${escapeHtml(t('entity.inLibrary'))}</span></span>
-              ${seriesBadge(item.name)}
-            </div>
-          </a>
-        `).join('')}
-      </div>
-    </details>
-  `).join('')}</div>`;
-}
-
-export function renderBrowsePage({ title, items, total, page, pageSize, user, stats, query, letter = '', path, facetBasePath, indexStatus, sort, order = '', csrfToken = '', genreGroups = null, readSeriesNames = null }) {
+export function renderBrowsePage({ title, items, total, page, pageSize, user, stats, query, letter = '', path, facetBasePath, indexStatus, sort, order = '', csrfToken = '', readSeriesNames = null }) {
   const letterParam = letter ? `&letter=${encodeURIComponent(letter)}` : '';
   const paginationBase = `${path}?sort=${encodeURIComponent(sort || 'count')}${letterParam}`;
   const browseLabels = { '/authors': t('nav.authors'), '/series': t('nav.series'), '/genres': t('nav.genres'), '/languages': t('nav.languages') };
   const letterHint = letter && !query
     ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(tp('catalog.letterResults', { letter: letter.toUpperCase() }))}</div>`
     : '';
+  const resetHref = `${path}?sort=${encodeURIComponent(sort || 'count')}`;
   const content = `
-    <section class="page-intro page-intro-slim">
+    <section class="page-intro catalog-page-intro">
       <div class="page-intro-copy">
         <h1>${escapeHtml(title)}</h1>
         <p>${escapeHtml(t('browse.intro'))}</p>
       </div>
-      <div class="page-intro-actions">
+      <form class="search-form browse-filter" action="${path}" method="get">
+        <input name="q" value="${escapeHtml(query || '')}" placeholder="${escapeHtml(t('browse.placeholder'))}">
+        <input type="hidden" name="sort" value="${escapeHtml(sort || 'count')}">
+        ${order ? `<input type="hidden" name="order" value="${escapeHtml(order)}">` : ''}
+        ${letter ? `<input type="hidden" name="letter" value="${escapeHtml(letter)}">` : ''}
+        <button type="submit" class="button">${escapeHtml(t('browse.submit'))}</button>
+        ${query || letter ? `<a class="button" href="${escapeHtml(resetHref)}">${escapeHtml(t('browse.reset'))}</a>` : ''}
+      </form>
+      <div class="actions">
         ${renderSortControl({
           action: path,
           sort,
           order,
           query,
+          extraHidden: letter ? { letter } : {},
           options: [
             { value: 'count', label: t('sort.byBookCount') },
             { value: 'name', label: t('sort.byName') }
@@ -1019,16 +1055,8 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
     </section>
     ${letterHint}
     <div class="list-context-hint list-context-hint-spacious">${browseTotalLine(path, total, query)}</div>
-    <form class="search-form browse-filter" action="${path}" method="get" style="margin-bottom:16px; max-width:460px;">
-      <input name="q" value="${escapeHtml(query || '')}" placeholder="${escapeHtml(t('browse.placeholder'))}">
-      <input type="hidden" name="sort" value="${escapeHtml(sort || 'count')}">
-      <div class="actions">
-        <button type="submit">${escapeHtml(t('browse.submit'))}</button>
-        ${query || letter ? `<a class="button" href="${path}?sort=${encodeURIComponent(sort || 'count')}">${escapeHtml(t('browse.reset'))}</a>` : ''}
-      </div>
-    </form>
-    ${genreGroups ? renderGroupedEntityGrid(genreGroups, facetBasePath, readSeriesNames) : renderEntityGrid(items, facetBasePath, query || letter ? t('browse.emptyFiltered') : t('browse.empty'), readSeriesNames)}
-    ${genreGroups ? '' : renderPagination(paginationBase, page, pageSize, total, query)}
+    ${renderEntityGrid(items, facetBasePath, query || letter ? t('browse.emptyFiltered') : t('browse.empty'), readSeriesNames)}
+    ${renderPagination(paginationBase, page, pageSize, total, query)}
   `;
   const alphabet = { path, sort: 'name', label: browseLabels[path] || title, activeLetter: letter };
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
@@ -1170,7 +1198,7 @@ export function renderAuthorFacetPage({
   const heroFallback = authorPortraitUrl
     ? ''
     : `<span class="cover-fallback author-facet-fallback" aria-hidden="true">
-        <img class="cover-fallback-image" src="/book-fallback.png" alt="">
+              ${renderCoverFallbackImage()}
         <span class="cover-fallback-overlay"></span>
         <span class="cover-fallback-copy">
           <span class="cover-fallback-title">${escapeHtml(displayName || title)}</span>
@@ -1369,7 +1397,7 @@ export function renderShelves({ shelves = [], user, stats, indexStatus, csrfToke
       </div>
       <form data-shelf-create class="shelf-create-form">
         <input type="text" name="name" placeholder="${escapeHtml(t('shelves.newPlaceholder'))}" required>
-        <button type="submit">${escapeHtml(t('shelves.create'))}</button>
+        <button type="submit" class="button-primary">${escapeHtml(t('shelves.create'))}</button>
       </form>
       ${shelves.length ? `
         <div class="table-list entity-list">
@@ -1422,13 +1450,12 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
         ${uniqueBooks.map((book) => `
           <article class="card" ${bookCardDataAttrs(book.id)}>
             ${shelfBatch ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} ${batchBookIdDataAttr(book.id)} aria-label="${escapeHtml(t('batch.selectAria'))}"></label>` : ''}
-            ${renderCover(book, { readBookIds })}
+            ${renderCardCover(book, { readBookIds, downloadHtml: renderDownloadMenu(book, { compact: true, user }) })}
             <div class="meta">
               <h3><a href="${bookPagePath(book.id)}">${escapeHtml(book.title)}</a></h3>
               <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `shelf-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
               ${book.seriesList?.length ? `<div class="card-series">${renderSeriesLinks(book.seriesList, { limit: 1, popoverId: `shelf-s-${book.id}` })}</div>` : ''}
               <div class="card-actions card-actions-favorites">
-                ${shelfBatch ? '' : renderDownloadMenu(book, { compact: true, user })}
                 <button class="button card-remove-favorite-action" type="button" data-shelf-remove-book="${escapeHtml(book.id)}" data-shelf-id="${shelf.id}">${escapeHtml(t('book.remove'))}</button>
               </div>
             </div>
@@ -2003,7 +2030,7 @@ export function renderProfileSettings({
             ? `<form method="post" action="/profile/email" class="vertical-form" style="margin-top:8px;">
                  ${csrfHiddenField(csrfToken)}
                  <div><input type="email" name="ereaderEmail" value="${escapeHtml(ereaderEmail)}" placeholder="kindle@kindle.com"></div>
-                 <div class="actions"><button type="submit">${escapeHtml(t('profile.save'))}</button></div>
+                 <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button></div>
                </form>`
             : `<p class="muted" style="margin:4px 0 0;font-size:12px;">${escapeHtml(t('profile.ereaderEmail.accessDenied'))}</p>`}
         </div>
@@ -2019,7 +2046,7 @@ export function renderProfileSettings({
               : ''}
             <div><input type="password" name="newPassword" placeholder="${escapeHtml(t('profile.newPassword'))}" autocomplete="new-password" required></div>
             <div><input type="password" name="confirmPassword" placeholder="${escapeHtml(t('profile.confirmPassword'))}" autocomplete="new-password" required></div>
-            <div class="actions"><button type="submit">${escapeHtml(hasLocalPassword ? t('profile.changeBtn') : t('profile.setPasswordBtn'))}</button></div>
+            <div class="actions"><button type="submit" class="button-primary">${escapeHtml(hasLocalPassword ? t('profile.changeBtn') : t('profile.setPasswordBtn'))}</button></div>
           </form>
         </div>
       </div>
@@ -2049,7 +2076,7 @@ export function renderProfileSettings({
                 </select>
               </label>
             </div>
-            <div class="actions"><button type="submit">${escapeHtml(t('profile.save'))}</button></div>
+            <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button></div>
           </form>
         </div>
       </div>

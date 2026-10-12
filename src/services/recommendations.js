@@ -12,7 +12,9 @@ import {
   getReadBooks,
   splitAuthorValues,
   parseGenreList,
-  parseHasSeries
+  parseGenreMode,
+  parseHasSeries,
+  listGenresForBookIds
 } from '../inpx.js';
 import { db, getReadBookIdSet, onViewRebuild } from '../db.js';
 import { t } from '../i18n.js';
@@ -366,9 +368,10 @@ function scheduleRecommendationBuild(username) {
 }
 
 /** Additive catalog filters over an in-memory recommendation pool. */
-function filterRecommendedPool(books, { genre = '', format = '', year = 0, minRate = 0, hasSeries = null } = {}) {
+function filterRecommendedPool(books, { genre = '', genreMode = 'or', lang = '', format = '', year = 0, minRate = 0, hasSeries = null } = {}) {
   if (!Array.isArray(books) || books.length === 0) return [];
   const genres = parseGenreList(genre);
+  const language = String(lang || '').trim().toLowerCase();
   const fmt = String(format || '').trim().toLowerCase();
   const rate = Math.floor(Number(minRate) || 0);
   const seriesFlag = hasSeries === 0 || hasSeries === 1 ? hasSeries : parseHasSeries(hasSeries);
@@ -376,6 +379,9 @@ function filterRecommendedPool(books, { genre = '', format = '', year = 0, minRa
   const hasYear = y >= 1800 && y <= 2100;
 
   let list = books;
+  if (language) {
+    list = list.filter((b) => String(b?.lang || '').toLowerCase() === language);
+  }
   if (rate >= 1) {
     list = list.filter((b) => (Number(b?.libRate) || 0) >= rate);
   }
@@ -394,13 +400,25 @@ function filterRecommendedPool(books, { genre = '', format = '', year = 0, minRa
   if (genres.length && list.length) {
     const idPh = list.map(() => '?').join(',');
     const genrePh = genres.map(() => '?').join(',');
-    const rows = db.prepare(`
-      SELECT DISTINCT bg.book_id AS id
-      FROM book_genres bg
-      JOIN genres_catalog g ON g.id = bg.genre_id
-      WHERE bg.book_id IN (${idPh})
-        AND g.name IN (${genrePh})
-    `).all(...list.map((b) => b.id), ...genres);
+    const ids = list.map((b) => b.id);
+    const mode = parseGenreMode(genreMode);
+    const rows = mode === 'and' && genres.length > 1
+      ? db.prepare(`
+          SELECT bg.book_id AS id
+          FROM book_genres bg
+          JOIN genres_catalog g ON g.id = bg.genre_id
+          WHERE bg.book_id IN (${idPh})
+            AND g.name IN (${genrePh})
+          GROUP BY bg.book_id
+          HAVING COUNT(DISTINCT g.name) = ?
+        `).all(...ids, ...genres, genres.length)
+      : db.prepare(`
+          SELECT DISTINCT bg.book_id AS id
+          FROM book_genres bg
+          JOIN genres_catalog g ON g.id = bg.genre_id
+          WHERE bg.book_id IN (${idPh})
+            AND g.name IN (${genrePh})
+        `).all(...ids, ...genres);
     const ok = new Set(rows.map((r) => r.id));
     list = list.filter((b) => ok.has(b.id));
   }
@@ -440,6 +458,8 @@ export function getRecommendedLibraryView({
   page = 1,
   pageSize = 24,
   genre = '',
+  genreMode = 'or',
+  lang = '',
   format = '',
   year = 0,
   minRate = 0,
@@ -453,10 +473,26 @@ export function getRecommendedLibraryView({
     scheduleRecommendationBuild(normalizedUsername);
     return { total: 0, items: [], computing: true };
   }
-  const filtered = filterRecommendedPool(recommended, { genre, format, year, minRate, hasSeries });
+  const filtered = filterRecommendedPool(recommended, { genre, genreMode, lang, format, year, minRate, hasSeries });
   const sorted = sortRecommendedBooks(filtered, sort);
   const offset = (page - 1) * pageSize;
   return { total: sorted.length, items: sorted.slice(offset, offset + pageSize), computing: false };
+}
+
+export function listRecommendedSectionGenres({
+  username = '',
+  lang = '',
+  format = '',
+  year = 0,
+  minRate = 0,
+  hasSeries = null
+} = {}) {
+  const normalizedUsername = String(username || '').trim();
+  if (!normalizedUsername) return [];
+  const recommended = readTimedCache(recommendedViewCache, normalizedUsername);
+  if (!recommended) return [];
+  const filtered = filterRecommendedPool(recommended, { lang, format, year, minRate, hasSeries });
+  return listGenresForBookIds(filtered.map((book) => book.id));
 }
 
 export function getHomeRecommendations({ username = '' }) {
@@ -475,7 +511,7 @@ export function buildSimilarBooks(book) {
       [book.id]
     ).slice(0, MAX);
     if (seriesItems.length) {
-      return { title: t('book.otherInSeries'), items: seriesItems, hideDownloads: true };
+      return { title: t('book.otherInSeries'), items: seriesItems };
     }
     /* Singleton / empty series → fall through to author (e.g. only this book in series). */
   }

@@ -22,7 +22,7 @@ import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireBrowseAuth, requireBrowseOrOpds, requireWebAuth, requireAdminWeb } from '../middleware/auth.js';
 import { getCachedPageData, getStaleOrSchedule, clearPageDataCache, invalidateUserPageCaches } from '../services/cache.js';
 import { logSystemEvent } from '../services/system-events.js';
-import { getRecommendedLibraryView, getHomeRecommendations, buildSimilarBooks } from '../services/recommendations.js';
+import { getRecommendedLibraryView, getHomeRecommendations, buildSimilarBooks, listRecommendedSectionGenres } from '../services/recommendations.js';
 import { bookPagePath, apiBookPath } from '../utils/book-ref.js';
 import { safePage } from '../utils/safe-int.js';
 import {
@@ -74,7 +74,8 @@ import {
   splitAuthorValues,
   listGenresGrouped,
   listSearchGenres,
-  hasContinueBooks
+  hasContinueBooks,
+  listRecentSectionGenres
 } from '../inpx.js';
 import { getDistinctLanguages, getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
@@ -87,7 +88,7 @@ import {
   readFlibustaBookReviewHtml,
   readFlibustaAuthorBioHtml
 } from '../flibusta-sidecar.js';
-import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup, getGenreGroups } from '../genre-map.js';
+import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup } from '../genre-map.js';
 import { clearCardHtmlCache } from '../templates/shared.js';
 
 // --- Library routes ---
@@ -464,24 +465,25 @@ export function registerLibraryRoutes(app, deps) {
     };
     const genres = parseGenreList(req.query.genre);
     const genre = genres.join(',');
+    const genreMode = parseGenreMode(req.query.genreMode);
     const lang = String(req.query.lang || '').trim();
     const format = String(req.query.format || '').trim();
     const year = Number(req.query.year) || 0;
     const minRate = Math.min(5, Math.max(0, Math.floor(Number(req.query.minRate) || 0)));
     const hasSeries = parseHasSeries(req.query.hasSeries);
-    const filterKey = `${genre}:${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
+    const filterKey = `${genre}:${genreMode}:${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
     const canUseSharedCache = view === 'recent';
-    const libraryOpts = { page, pageSize, sort, order, genre, lang, format, year, minRate, hasSeries };
+    const libraryOpts = { page, pageSize, sort, order, genre, genreMode, lang, format, year, minRate, hasSeries };
     const result = canUseSharedCache
       ? getStaleOrSchedule(
-        `library:${view}:v5:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
+        `library:${view}:v6:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
         () => getLibraryView(view, libraryOpts),
         PAGE_CACHE_TTL_MS,
         { total: 0, items: [] }
       )
       : view === 'recommended'
         ? getRecommendedLibraryView({
-          page, pageSize, username: user?.username || '', genre, format, year, minRate, hasSeries, sort
+          page, pageSize, username: user?.username || '', genre, genreMode, lang, format, year, minRate, hasSeries, sort
         })
         : getStaleOrSchedule(
           `library:${view}:${user?.username || ''}:sort:${sort}:${order}:p${page}:s${pageSize}`,
@@ -493,6 +495,22 @@ export function registerLibraryRoutes(app, deps) {
     const readBookIds = user && !isReadSeriesList ? getReadBookIdSet(user.username) : null;
     const readSeriesNames = user && isReadSeriesList ? getFullyReadSeriesNames(user.username) : null;
     const userStats = user ? getUserStats(user.username) : null;
+    const showFilters = view === 'recent' || view === 'recommended';
+    const langs = showFilters ? getDistinctLanguages() : [];
+    const formats = showFilters ? getDistinctFormats() : [];
+    const extraFilterKey = `${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
+    const genreOptions = view === 'recent'
+      ? getCachedPageData(
+        `library:recent:genres:${extraFilterKey}`,
+        () => listRecentSectionGenres({ lang, format, year, minRate, hasSeries }),
+        PAGE_CACHE_TTL_MS
+      )
+      : view === 'recommended'
+        ? listRecommendedSectionGenres({
+          username: user?.username || '',
+          lang, format, year, minRate, hasSeries
+        })
+        : [];
     res.send(renderLibraryView({
       view,
       title: titles[view] || t('library.titleFallback'),
@@ -511,7 +529,17 @@ export function registerLibraryRoutes(app, deps) {
       readBookIds,
       readSeriesNames,
       computing: Boolean(result.computing),
-      userStats
+      userStats,
+      genres,
+      lang,
+      format,
+      year,
+      minRate,
+      hasSeries,
+      genreMode,
+      langs,
+      formats,
+      genreOptions
     }));
   });
 
@@ -564,36 +592,6 @@ export function registerLibraryRoutes(app, deps) {
     const page = safePage(req.query.page);
     const pageSize = 50;
     const stats = getCachedStats();
-
-    // Grouped view when no search/letter filter and first page
-    if (!query && !letter && page === 1 && (sort === 'count' || sort === 'name')) {
-      const allGenres = getStaleOrSchedule(`browse:genres:grouped:${sort}`, () => listGenresGrouped({ sort }), PAGE_CACHE_TTL_MS, []);
-      const groups = getGenreGroups();
-      const grouped = [];
-      const entries = sort === 'name'
-        ? Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0], getLocale()))
-        : Object.entries(groups);
-      for (const [groupName, codes] of entries) {
-        const codesSet = new Set(codes);
-        const items = allGenres.filter(g => codesSet.has(g.name));
-        if (items.length) grouped.push({ groupName, items });
-      }
-      // Uncategorized
-      const allGrouped = new Set(Object.values(groups).flat());
-      const uncategorized = allGenres.filter(g => !allGrouped.has(g.name));
-      if (uncategorized.length) grouped.push({ groupName: t('genre.other'), items: uncategorized });
-
-      res.send(renderBrowsePage({
-        title: t('nav.genres'),
-        items: allGenres, total: allGenres.length, page, pageSize: allGenres.length,
-        user: req.user || null, stats, query, letter,
-        path: '/genres', facetBasePath: '/facet/genres',
-        indexStatus: getIndexStatus(), sort, order, csrfToken: req.csrfToken || '',
-        genreGroups: grouped
-      }));
-      return;
-    }
-
     const cacheKey = `browse:genres:${page}:${sort}:${order}:${letter}:${query}`;
     const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, order, letter }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({

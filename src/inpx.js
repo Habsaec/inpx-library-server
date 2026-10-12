@@ -225,6 +225,8 @@ function clearRuntimeQueryCaches() {
   authorGroupedCache.clear();
   archiveStemLookupCache.clear();
   _facetStmtCache.clear();
+  dupGroupsCache.clear();
+  _dupSummaryCache = null;
   _distinctLangsCache = null;
   _distinctFormatsCache = null;
 }
@@ -244,6 +246,7 @@ export function invalidateDuplicatesCache() {
   facetDedupTotalCache.clear();
   facetBooksCache.clear();
   facetSummaryCache.clear();
+  dupGroupsCache.clear();
   _dupSummaryCache = null;
   _browseTotalMemo = null;
   _authorsTotalMemo.clear();
@@ -278,7 +281,55 @@ export function repairBookJunctionLinks() {
 
 /* Короткий кеш сводки по дубликатам: один полный проход вместо двух (total + preview). */
 let _dupSummaryCache = null;
-const DUP_SUMMARY_TTL_MS = 60_000;
+/* Результат поиска дубликатов живёт до изменения каталога (invalidateDuplicatesCache / reindex / edit),
+   иначе каждый заход на страницу заново гонял GROUP BY по всей библиотеке. TTL — страховка. */
+const DUP_SUMMARY_TTL_MS = 600_000;
+const DUP_GROUPS_TTL_MS = 600_000;
+const dupGroupsCache = new Map();
+const DUP_SCAN_META_KEY = 'duplicates_last_scan';
+
+/** Метаданные последнего ручного поиска дубликатов: { scannedAt, tookMs, totalGroups, totalBooks, willDelete } или null. */
+export function getDuplicateScanMeta() {
+  try {
+    const raw = getMeta(DUP_SCAN_META_KEY);
+    if (!raw) return null;
+    const meta = JSON.parse(raw);
+    return meta && meta.scannedAt ? meta : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ручной поиск дубликатов по названию+автору: сохраняет ключи групп в duplicate_scan_keys
+ * и сводку в meta, чтобы страница показывала прошлый результат без повторного прохода по библиотеке.
+ */
+export function runDuplicateScan() {
+  const t0 = Date.now();
+  db.transaction(() => {
+    db.prepare('DELETE FROM duplicate_scan_keys').run();
+    db.prepare(`
+      INSERT INTO duplicate_scan_keys(title_sort, author_sort)
+      SELECT title_sort, COALESCE(author_sort, '')
+      FROM active_books
+      WHERE title_sort IS NOT NULL AND title_sort != ''
+      GROUP BY title_sort, COALESCE(author_sort, '')
+      HAVING COUNT(*) > 1
+    `).run();
+  })();
+  dupGroupsCache.clear();
+  _dupSummaryCache = null;
+  const summary = getDuplicatesSummary();
+  const meta = {
+    scannedAt: new Date().toISOString(),
+    tookMs: Date.now() - t0,
+    totalGroups: summary.totalGroups,
+    totalBooks: summary.totalBooks,
+    willDelete: summary.willDelete
+  };
+  setMeta(DUP_SCAN_META_KEY, JSON.stringify(meta));
+  return meta;
+}
 let _stmtDupSummary = null;
 let _stmtDupLibSummary = null;
 let _stmtDupTitlePairSummary = null;
@@ -5295,13 +5346,9 @@ export function getBookDuplicateCandidates(_bookId, _limit = 8) {
 
 // ─── Duplicate detection ─────────────────────────────────────────
 
-const DUP_KEYS_CTE = `
+const DUP_SNAPSHOT_KEYS_CTE = `
   dup_keys AS (
-    SELECT title_sort, COALESCE(author_sort, '') AS author_sort
-    FROM active_books
-    WHERE title_sort IS NOT NULL AND title_sort != ''
-    GROUP BY title_sort, COALESCE(author_sort, '')
-    HAVING COUNT(*) > 1
+    SELECT title_sort, author_sort FROM duplicate_scan_keys
   )`;
 
 const DUP_AUTHOR_FILTER_SQL = `(CAST(? AS INTEGER) = 0 OR instr(dk.author_sort, ?) > 0 OR instr(dk.title_sort, ?) > 0)`;
@@ -5312,11 +5359,15 @@ export function getDuplicateGroups({ page = 1, pageSize = 50, filter = '' } = {}
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safePageSize = Math.max(1, Math.min(200, Math.floor(Number(pageSize) || 50)));
   const offset = (safePage - 1) * safePageSize;
+  if (!getDuplicateScanMeta()) return { total: 0, groups: [], scanned: false };
+  const cacheKey = `${safePage}|${safePageSize}|${needle}`;
+  const cachedGroups = readTimedCache(dupGroupsCache, cacheKey);
+  if (cachedGroups) return cachedGroups;
 
   /* Пагинация по авторам в SQL: раньше все дубликаты грузились в RAM
      (на 400k копий страница админки зависала и кнопка автоочистки не появлялась). */
   _stmtDupAuthorTotal ??= db.prepare(`
-    WITH ${DUP_KEYS_CTE}
+    WITH ${DUP_SNAPSHOT_KEYS_CTE}
     SELECT COUNT(*) AS count FROM (
       SELECT dk.author_sort FROM dup_keys dk
       WHERE ${DUP_AUTHOR_FILTER_SQL}
@@ -5324,7 +5375,7 @@ export function getDuplicateGroups({ page = 1, pageSize = 50, filter = '' } = {}
     )
   `);
   _stmtDupAuthorPage ??= db.prepare(`
-    WITH ${DUP_KEYS_CTE},
+    WITH ${DUP_SNAPSHOT_KEYS_CTE},
     author_page AS (
       SELECT dk.author_sort FROM dup_keys dk
       WHERE ${DUP_AUTHOR_FILTER_SQL}
@@ -5353,18 +5404,50 @@ export function getDuplicateGroups({ page = 1, pageSize = 50, filter = '' } = {}
     }
     current.items.push(row);
   }
-  return { total, groups };
+  /* Снимок мог устареть (книгу удалили/скрыли): наборы из одной копии больше не дубликаты. */
+  for (const group of groups) {
+    const perTitle = new Map();
+    for (const item of group.items) {
+      const k = item.title_sort || '';
+      perTitle.set(k, (perTitle.get(k) || 0) + 1);
+    }
+    group.items = group.items.filter((item) => perTitle.get(item.title_sort || '') > 1);
+  }
+  const result = { total, groups: groups.filter((group) => group.items.length), scanned: true };
+  writeTimedCache(dupGroupsCache, cacheKey, result, DUP_GROUPS_TTL_MS, 40);
+  return result;
 }
 
 export function softDeleteBook(bookId) {
-  const book = db.prepare('SELECT id, title, authors FROM books WHERE id = ? AND deleted = 0').get(String(bookId));
+  const book = db.prepare('SELECT id, title, authors, title_sort, author_sort FROM books WHERE id = ? AND deleted = 0').get(String(bookId));
   if (!book) return 0;
   /* Одна книга — точечный ±1 вместо полного пересчёта (минуты блокировки на большой БД). */
   const wasVisible = isBookInActiveView(bookId);
   db.prepare('UPDATE books SET deleted = 1 WHERE id = ?').run(String(bookId));
   suppressBook(bookId, book.title || '', book.authors || '', 'user');
   if (wasVisible) adjustCatalogCountsForBook(bookId, -1);
+  if (wasVisible) adjustDuplicateScanAfterDelete(book);
   return 1;
+}
+
+/** После ручного удаления копии держим снимок и сводку последнего поиска в актуальном виде. */
+function adjustDuplicateScanAfterDelete(book) {
+  const meta = getDuplicateScanMeta();
+  if (!meta || !book.title_sort) return;
+  const authorSort = book.author_sort || '';
+  const inSnapshot = db.prepare('SELECT 1 FROM duplicate_scan_keys WHERE title_sort = ? AND author_sort = ?').get(book.title_sort, authorSort);
+  if (!inSnapshot) return;
+  const remaining = Number(db.prepare(`
+    SELECT COUNT(*) AS c FROM active_books WHERE title_sort = ? AND COALESCE(author_sort, '') = ?
+  `).get(book.title_sort, authorSort)?.c) || 0;
+  meta.willDelete = Math.max(0, (Number(meta.willDelete) || 0) - 1);
+  meta.totalBooks = Math.max(0, (Number(meta.totalBooks) || 0) - 1);
+  if (remaining < 2) {
+    db.prepare('DELETE FROM duplicate_scan_keys WHERE title_sort = ? AND author_sort = ?').run(book.title_sort, authorSort);
+    meta.totalBooks = Math.max(0, meta.totalBooks - remaining);
+    meta.totalGroups = Math.max(0, (Number(meta.totalGroups) || 0) - 1);
+  }
+  setMeta(DUP_SCAN_META_KEY, JSON.stringify(meta));
 }
 
 /**
@@ -5428,6 +5511,9 @@ export async function autoCleanDuplicates({ onProgress } = {}) {
       onProgress: (p) => report(p.stage, { ...p, total, deleted: totalDeleted, groups: groupsCleaned })
     });
 
+    /* Результат автоочистки — обновляем сохранённый поиск (копии скрыты, ключи групп устарели). */
+    if (getDuplicateScanMeta()) runDuplicateScan();
+
     console.log(`[autoCleanDuplicates] groups=${groupsCleaned} deleted=${totalDeleted} in ${Date.now() - t0}ms`);
     report('done', { percent: 100, total, deleted: totalDeleted, groups: groupsCleaned });
     return { groupsCleaned, totalDeleted };
@@ -5443,8 +5529,13 @@ export function previewAutoClean() {
    * что давало O(N²) и подвешивало процессор на больших библиотеках.
    * Заменено на один проход GROUP BY (через общий кеш сводки).
    */
-  const { totalGroups, totalBooks, willDelete } = getDuplicatesSummary();
-  return { totalGroups, totalBooks, willDelete: Math.max(0, willDelete) };
+  const meta = getDuplicateScanMeta();
+  if (!meta) return { totalGroups: 0, totalBooks: 0, willDelete: 0 };
+  return {
+    totalGroups: Number(meta.totalGroups) || 0,
+    totalBooks: Number(meta.totalBooks) || 0,
+    willDelete: Math.max(0, Number(meta.willDelete) || 0)
+  };
 }
 
 export function getStats() {
@@ -6896,6 +6987,7 @@ export function getRecentArrivals({
   sort = 'recent',
   order = '',
   genre = '',
+  genreMode = 'or',
   lang = '',
   format = '',
   year = 0,
@@ -6911,7 +7003,7 @@ export function getRecentArrivals({
 
   const whereParts = [`${ISO_DATE_PRED('b')}`, 'SUBSTR(b.date, 1, 10) >= ?'];
   const whereParams = [bounds.cutoff];
-  const genreFilter = buildGenreFilterSql(genre);
+  const genreFilter = buildGenreFilterSql(genre, genreMode);
   if (genreFilter) {
     whereParts.push(genreFilter.where.replace(/active_books\./g, 'b.'));
     whereParams.push(...genreFilter.params);
@@ -6946,6 +7038,70 @@ export function getRecentArrivals({
   attachSeriesListsToBooks(items);
   attachCachedAnnotationsToBooks(items);
   return { total, items };
+}
+
+/** Genres that actually appear in the novinki window, with counts from that window. */
+export function listRecentSectionGenres({
+  lang = '',
+  format = '',
+  year = 0,
+  minRate = 0,
+  hasSeries = null
+} = {}) {
+  const bounds = resolveRecentCatalogCutoff();
+  if (!bounds) return [];
+
+  const whereParts = [`${ISO_DATE_PRED('b')}`, 'SUBSTR(b.date, 1, 10) >= ?'];
+  const whereParams = [bounds.cutoff];
+  for (const ef of buildCatalogExtraFilters({ lang, format, year, minRate, hasSeries })) {
+    whereParts.push(ef.where.replace(/active_books\./g, 'b.'));
+    whereParams.push(...ef.params);
+  }
+
+  const excludedSet = getExcludedGenreSet();
+  const rows = db.prepare(`
+    SELECT g.name AS name,
+           COALESCE(g.display_name, g.name) AS displayName,
+           COUNT(DISTINCT bg.book_id) AS bookCount
+    FROM active_books b
+    JOIN book_genres bg ON bg.book_id = b.id
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    WHERE ${whereParts.join(' AND ')}
+    GROUP BY g.id
+  `).all(...whereParams);
+
+  const filtered = excludedSet.size ? rows.filter((g) => !excludedSet.has(g.name)) : rows;
+  return filtered
+    .map((row) => ({
+      name: row.name,
+      displayName: row.displayName || row.name,
+      bookCount: Math.max(0, Math.floor(Number(row.bookCount) || 0))
+    }))
+    .sort((a, b) => String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''), 'ru', { sensitivity: 'base' }));
+}
+
+export function listGenresForBookIds(bookIds = []) {
+  const ids = [...new Set((Array.isArray(bookIds) ? bookIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const excludedSet = getExcludedGenreSet();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT g.name AS name,
+           COALESCE(g.display_name, g.name) AS displayName,
+           COUNT(DISTINCT bg.book_id) AS bookCount
+    FROM book_genres bg
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    WHERE bg.book_id IN (${placeholders})
+    GROUP BY g.id
+  `).all(...ids);
+  const filtered = excludedSet.size ? rows.filter((g) => !excludedSet.has(g.name)) : rows;
+  return filtered
+    .map((row) => ({
+      name: row.name,
+      displayName: row.displayName || row.name,
+      bookCount: Math.max(0, Math.floor(Number(row.bookCount) || 0))
+    }))
+    .sort((a, b) => String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''), 'ru', { sensitivity: 'base' }));
 }
 
 let _stmtLibSections = null;
@@ -7027,6 +7183,7 @@ export function getLibraryView(view = 'recent', {
   sort = 'recent',
   order = '',
   genre = '',
+  genreMode = 'or',
   lang = '',
   format = '',
   year = 0,
@@ -7137,7 +7294,7 @@ export function getLibraryView(view = 'recent', {
   }
 
   // Новинки: окно по INPX date + те же additive-фильтры, что у /api/catalog.
-  return getRecentArrivals({ page, pageSize, sort, order, genre, lang, format, year, minRate, hasSeries });
+  return getRecentArrivals({ page, pageSize, sort, order, genre, genreMode, lang, format, year, minRate, hasSeries });
 }
 
 export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {

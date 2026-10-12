@@ -6,7 +6,7 @@ import {
   renderEventDetailsHtml, renderAlert,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
   formatLocaleDateShort, formatLocaleDateTimeShort, formatLanguageLabel,
-  formatGenreLabel
+  formatGenreLabel, renderCoverFallbackImage
 } from './shared.js';
 
 function renderCollapsibleAdminCard({ id, title, subtitle = '', body, open = false }) {
@@ -21,6 +21,17 @@ function renderCollapsibleAdminCard({ id, title, subtitle = '', body, open = fal
         ${body}
       </div>
     </details>`;
+}
+/** Вкладки внутри страницы админки (клиентские; без JS показываются все панели). */
+function renderAdminTabs(group, tabs, ariaLabel = '') {
+  return `
+    <nav class="admin-tabs" data-admin-tabs="${escapeHtml(group)}" role="tablist"${ariaLabel ? ` aria-label="${escapeHtml(ariaLabel)}"` : ''}>
+      ${tabs.map((tab, index) => `<button type="button" role="tab" class="button admin-tab${index === 0 ? ' is-active' : ''}" data-admin-tab="${escapeHtml(tab.id)}" aria-selected="${index === 0 ? 'true' : 'false'}">${escapeHtml(tab.label)}</button>`).join('')}
+    </nav>`;
+}
+
+function renderAdminTabPanel(group, id, body) {
+  return `<div class="admin-tab-panel" data-admin-tab-group="${escapeHtml(group)}" data-admin-tab-panel="${escapeHtml(id)}" role="tabpanel">${body}</div>`;
 }
 import { getGenreGroups } from '../genre-map.js';
 import { config } from '../config.js';
@@ -38,6 +49,7 @@ import {
   TELEGRAM_DEFAULT_NEW_BOOKS_ANNOUNCE,
 } from '../telegram-bot-defaults.js';
 import { buildGlassPanelBackground, adjustLightTextForGlassOpacity, DEFAULT_GLASS_LIGHT, DEFAULT_GLASS_DARK, MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX, MIN_HEADING_SCALE, MAX_HEADING_SCALE, MIN_RADIUS_SCALE, MAX_RADIUS_SCALE, THEME_PRESETS } from '../services/theme-engine.js';
+import { COVER_TITLE_FONTS, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK, MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_TEXT, DEFAULT_MANUSCRIPT_FONT } from '../services/ui-customization.js';
 export function renderOperations({ user, stats = {}, indexStatus = {}, operations = {}, defaultLocale = 'auto', csrfToken = '' }) {
   /* Сплошной цвет по тому же градиенту (для одиночных элементов — donut, иконки и т.п.).
      0-70% → зелёный → жёлтый; 70-100% → жёлтый → красный. */
@@ -237,22 +249,6 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
       </div>
 
       <div class="admin-card">
-        <form action="/admin/settings/site-name" method="post" data-track-dirty>
-          ${csrfHiddenField(csrfToken)}
-          <div class="admin-field-group" style="margin-top:12px">
-            <label for="admin-default-locale">${escapeHtml(t('admin.defaultLocale'))}</label>
-            <select id="admin-default-locale" name="defaultLocale" style="max-width:280px">
-              <option value="auto" ${defaultLocale === 'auto' || (defaultLocale !== 'ru' && defaultLocale !== 'en') ? 'selected' : ''}>${escapeHtml(t('admin.defaultLocaleAuto'))}</option>
-              <option value="ru" ${defaultLocale === 'ru' ? 'selected' : ''}>${escapeHtml(t('admin.defaultLocaleRu'))}</option>
-              <option value="en" ${defaultLocale === 'en' ? 'selected' : ''}>${escapeHtml(t('admin.defaultLocaleEn'))}</option>
-            </select>
-            <span class="admin-field-hint">${escapeHtml(t('admin.defaultLocaleHint'))}</span>
-          </div>
-          <div class="admin-actions-row">
-            <button type="submit">${escapeHtml(t('admin.save'))}</button>
-          </div>
-        </form>
-        <hr class="admin-divider">
         <div class="admin-action-item">
           <div class="admin-action-item-info">
             <strong>${escapeHtml(t('admin.sourcesBlock'))}</strong>
@@ -328,6 +324,10 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
             </div>
           </div>
         </div>
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-card-title">${escapeHtml(t('admin.maintenance.title'))}</div>
         <div class="admin-action-item">
           <div class="admin-action-item-info">
             <strong>${escapeHtml(t('admin.ftsRebuild'))}</strong>
@@ -480,7 +480,7 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
             </div>
           </div>
           <div class="admin-actions-row">
-            <button type="submit">${escapeHtml(t('admin.save'))}</button>
+            <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
           </div>
         </form>
         ${!isSelf(account) ? `
@@ -505,35 +505,64 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
   const content = `
     ${flash ? renderAlert('success', flash) : ''}
 
+    ${renderAdminTabs('users', [
+      { id: 'users', label: t('admin.users.tabUsers') },
+      { id: 'access', label: t('admin.users.tabAccess') },
+      { id: 'sso', label: t('admin.users.tabSso') }
+    ])}
+
+    ${renderAdminTabPanel('users', 'users', `
     <div class="admin-card">
-      <div class="admin-card-title">${escapeHtml(t('admin.smtp.passwordResetTitle'))}</div>
-      <div class="admin-card-subtitle">${escapeHtml(t('admin.smtp.passwordResetHint'))}</div>
-      <form method="POST" action="/admin/settings/password-reset" data-track-dirty>
-        ${csrfHiddenField(csrfToken)}
-        <div class="admin-field-group" style="flex-direction:row;align-items:center;gap:10px;">
-          <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;">
-            <input type="hidden" name="enabled" value="0">
-            <input type="checkbox" name="enabled" value="1" ${passwordResetEnabled ? 'checked' : ''} style="accent-color:var(--accent);width:16px;height:16px;">
-            ${escapeHtml(t('admin.smtp.passwordResetEnabled'))}
-          </label>
+      <div class="admin-inline-row" style="align-items:baseline;margin-bottom:10px;">
+        <span class="admin-section-label" style="font-size:14px;margin-bottom:0;text-transform:none;letter-spacing:0;">${escapeHtml(t('admin.users.usersTitle'))}</span>
+        <span class="muted" style="font-size:12px;">${escapeHtml(tp('admin.users.total', { users: countLabel('user', users.length), admins: countLabel('admin', adminCount) }))}</span>
+      </div>
+      ${admins.length ? `
+        <div class="admin-section-label">${escapeHtml(tp('admin.users.adminsGroup', { n: admins.length }))}</div>
+        <div class="table-list admin-users-list" style="margin-bottom:16px;">
+          ${renderUserRows(admins)}
         </div>
-        <div class="admin-field-group">
-          <label>${escapeHtml(t('admin.smtp.publicBaseUrl'))}</label>
-          <input type="url" name="publicBaseUrl" value="${escapeHtml(publicBaseUrl || '')}" placeholder="https://books.example.com" autocomplete="off">
-          <span class="admin-field-hint">${escapeHtml(t('admin.smtp.publicBaseUrlHint'))}</span>
+      ` : ''}
+      ${regularUsers.length ? `
+        <div class="admin-section-label">${escapeHtml(tp('admin.users.usersGroup', { n: regularUsers.length }))}</div>
+        <div class="table-list admin-users-list">
+          ${renderUserRows(regularUsers)}
+        </div>
+      ` : renderEmptyState({ title: t('admin.users.emptyTitle'), text: t('admin.users.emptyText') })}
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-title">${escapeHtml(t('admin.users.newUser'))}</div>
+      <form action="/admin/users/create" method="post">
+        ${csrfHiddenField(csrfToken)}
+        <div class="admin-form-grid admin-form-grid--3">
+          <div class="admin-field-group">
+            <label for="new-username">${escapeHtml(t('login.username'))}</label>
+            <input id="new-username" name="username" autocomplete="off">
+          </div>
+          <div class="admin-field-group">
+            <label for="new-password">${escapeHtml(t('login.password'))}</label>
+            <input id="new-password" type="password" name="password" autocomplete="new-password">
+          </div>
+          <div class="admin-field-group">
+            <label for="new-role">${escapeHtml(t('admin.users.role'))}</label>
+            <select id="new-role" name="role">
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
         </div>
         <div class="admin-actions-row">
-          <button type="submit">${escapeHtml(t('admin.save'))}</button>
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.users.create'))}</button>
         </div>
       </form>
     </div>
+    `)}
 
-    ${renderCollapsibleAdminCard({
-      id: 'oidc',
-      title: t('admin.oidc.title'),
-      subtitle: t('admin.oidc.subtitle'),
-      open: Boolean(oidc?.enabled),
-      body: `
+    ${renderAdminTabPanel('users', 'sso', `
+    <div class="admin-card admin-card--form">
+      <div class="admin-card-title">${escapeHtml(t('admin.oidc.title'))}</div>
+      <div class="admin-card-subtitle">${escapeHtml(t('admin.oidc.subtitle'))}</div>
       <form method="POST" action="/admin/settings/oidc" data-track-dirty>
         ${csrfHiddenField(csrfToken)}
         <div class="admin-field-group" style="flex-direction:row;align-items:center;gap:10px;">
@@ -597,13 +626,15 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
           </label>
         </div>
         <div class="admin-actions-row">
-          <button type="submit">${escapeHtml(t('admin.save'))}</button>
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
         </div>
-      </form>`
-    })}
+      </form>
+    </div>
+    `)}
 
+    ${renderAdminTabPanel('users', 'access', `
     <div class="admin-card">
-      <form method="post" action="/admin/settings/anonymous-access" class="admin-action-item" data-track-dirty>
+      <form method="post" action="/admin/settings/anonymous-access" class="admin-action-item admin-action-item--stack" data-track-dirty>
         ${csrfHiddenField(csrfToken)}
         <div class="admin-action-item-info">
           <strong>${escapeHtml(t('admin.users.anonymous'))}</strong>
@@ -627,7 +658,7 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
           </div>
         </div>
         <div class="admin-actions-row">
-          <button type="submit">${escapeHtml(t('admin.save'))}</button>
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
         </div>
       </form>
       <div class="admin-action-item">
@@ -654,7 +685,7 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
         </div>
         <div class="admin-actions-row">
           <button type="submit" name="inviteAction" value="generate">${escapeHtml(t('admin.users.inviteGenerate'))}</button>
-          <button type="submit" name="inviteAction" value="save">${escapeHtml(t('admin.save'))}</button>
+          <button type="submit" class="button-primary" name="inviteAction" value="save">${escapeHtml(t('admin.save'))}</button>
         </div>
         <div id="registration-invite-link-wrap" class="admin-field-group" style="flex:1 1 100%;margin:8px 0 0;${registrationInviteUrl ? '' : 'display:none;'}">
           <label for="registration-invite-url">${escapeHtml(t('admin.users.inviteLink'))}</label>
@@ -686,54 +717,13 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
               </div>
             </div>
             <div class="admin-actions-row">
-              <button type="submit">${escapeHtml(t('admin.save'))}</button>
+              <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
             </div>
           </form>
         </div>
       </details>
-      <hr class="admin-divider">
-      <div class="admin-card-title">${escapeHtml(t('admin.users.newUser'))}</div>
-      <form action="/admin/users/create" method="post">
-        ${csrfHiddenField(csrfToken)}
-        <div class="admin-form-grid admin-form-grid--3">
-          <div class="admin-field-group">
-            <label for="new-username">${escapeHtml(t('login.username'))}</label>
-            <input id="new-username" name="username" autocomplete="off">
-          </div>
-          <div class="admin-field-group">
-            <label for="new-password">${escapeHtml(t('login.password'))}</label>
-            <input id="new-password" type="password" name="password" autocomplete="new-password">
-          </div>
-          <div class="admin-field-group">
-            <label for="new-role">${escapeHtml(t('admin.users.role'))}</label>
-            <select id="new-role" name="role">
-              <option value="user">user</option>
-              <option value="admin">admin</option>
-            </select>
-          </div>
-        </div>
-        <div class="admin-actions-row">
-          <button type="submit">${escapeHtml(t('admin.users.create'))}</button>
-        </div>
-      </form>
-      <hr class="admin-divider">
-      <div class="admin-inline-row" style="align-items:baseline;margin-bottom:10px;">
-        <span class="admin-section-label" style="font-size:14px;margin-bottom:0;text-transform:none;letter-spacing:0;">${escapeHtml(t('admin.users.usersTitle'))}</span>
-        <span class="muted" style="font-size:12px;">${escapeHtml(tp('admin.users.total', { users: countLabel('user', users.length), admins: countLabel('admin', adminCount) }))}</span>
-      </div>
-      ${admins.length ? `
-        <div class="admin-section-label">${escapeHtml(tp('admin.users.adminsGroup', { n: admins.length }))}</div>
-        <div class="table-list admin-users-list" style="margin-bottom:16px;">
-          ${renderUserRows(admins)}
-        </div>
-      ` : ''}
-      ${regularUsers.length ? `
-        <div class="admin-section-label">${escapeHtml(tp('admin.users.usersGroup', { n: regularUsers.length }))}</div>
-        <div class="table-list admin-users-list">
-          ${renderUserRows(regularUsers)}
-        </div>
-      ` : renderEmptyState({ title: t('admin.users.emptyTitle'), text: t('admin.users.emptyText') })}
     </div>
+    `)}
   `;
   return pageShell({ title: t('admin.nav.users'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('admin.nav.users') }], mode: 'admin', currentPath: '/admin/users', csrfToken });
 }
@@ -820,21 +810,20 @@ export function renderAdminContent({
   downloadFilenameStyle = 'translit-full',
   fb2WebpMode = 'keep',
   showDeletedBooks = false,
+  defaultLocale = 'auto',
   flash = '',
   csrfToken = ''
 }) {
   const langExcludedCount = languages.filter(l => excludedLangSet.has(l.code)).length;
   const genreExcludedCount = genres.filter(g => excludedGenreSet.has(g.code)).length;
-  const downloadFormatRows = getConfiguredDownloadFormats().map((code) => {
+  const downloadFormatChips = getConfiguredDownloadFormats().map((code) => {
     const checked = !disabledDownloadFormatSet.has(code);
+    const label = FORMAT_LABELS[code] || code.toUpperCase();
     return `
-      <tr class="${checked ? '' : 'lang-row-disabled'}">
-        <td data-label="" style="text-align:center">
-          <input type="checkbox" name="enabled_download_format" value="${escapeHtml(code)}" aria-label="${escapeHtml(FORMAT_LABELS[code] || code.toUpperCase())}" ${checked ? 'checked' : ''}>
-        </td>
-        <td data-label="${escapeHtml(t('admin.content.thName'))}">${escapeHtml(FORMAT_LABELS[code] || code.toUpperCase())}</td>
-        <td data-label="${escapeHtml(t('admin.content.thCode'))}" class="muted">${escapeHtml(code)}</td>
-      </tr>`;
+      <label class="admin-chip-toggle" title="${escapeHtml(code)}">
+        <input type="checkbox" name="enabled_download_format" value="${escapeHtml(code)}" ${checked ? 'checked' : ''}>
+        <span>${escapeHtml(label)}</span>
+      </label>`;
   }).join('');
 
   const langRows = languages.map(lang => {
@@ -953,23 +942,27 @@ export function renderAdminContent({
 
   const content = `
     ${flash ? renderAlert('success', flash) : ''}
-    <div class="admin-card" style="margin-bottom:16px;border-left:4px solid var(--accent-color)">
-      <div class="admin-card-title">${escapeHtml(t('admin.content.statsTitle'))}</div>
-      <p class="muted" style="margin:8px 0">${escapeHtml(tp('admin.content.statsDesc', { langTotal: languages.length, langExcluded: langExcludedCount, genreTotal: genres.length, genreExcluded: genreExcludedCount }))}</p>
+    <div class="admin-card admin-card--form" style="margin-bottom:16px">
+      <form action="/admin/settings/site-name" method="post" data-track-dirty>
+        ${csrfHiddenField(csrfToken)}
+        <input type="hidden" name="redirectTo" value="/admin/content">
+        <div class="admin-field-group">
+          <label for="admin-default-locale">${escapeHtml(t('admin.defaultLocale'))}</label>
+          <select id="admin-default-locale" name="defaultLocale" style="max-width:280px">
+            <option value="auto" ${defaultLocale === 'auto' || (defaultLocale !== 'ru' && defaultLocale !== 'en') ? 'selected' : ''}>${escapeHtml(t('admin.defaultLocaleAuto'))}</option>
+            <option value="ru" ${defaultLocale === 'ru' ? 'selected' : ''}>${escapeHtml(t('admin.defaultLocaleRu'))}</option>
+            <option value="en" ${defaultLocale === 'en' ? 'selected' : ''}>${escapeHtml(t('admin.defaultLocaleEn'))}</option>
+          </select>
+          <span class="admin-field-hint">${escapeHtml(t('admin.defaultLocaleHint'))}</span>
+        </div>
+        <div class="admin-actions-row">
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
+        </div>
+      </form>
     </div>
+    <p class="muted" style="margin:0 0 14px">${escapeHtml(tp('admin.content.statsDesc', { langTotal: languages.length, langExcluded: langExcludedCount, genreTotal: genres.length, genreExcluded: genreExcludedCount }))}</p>
     <form method="POST" action="/admin/content">
       ${csrfHiddenField(csrfToken)}
-      <div class="admin-card" style="margin-bottom:16px">
-        <div class="admin-card-title">${escapeHtml(t('admin.content.deletedSection'))}</div>
-        <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.deletedHint'))}</p>
-        <label class="admin-check-row" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
-          <input type="checkbox" name="show_deleted_books" value="1" ${showDeletedBooks ? 'checked' : ''} style="margin-top:3px">
-          <span>
-            <strong>${escapeHtml(t('admin.content.deletedToggle'))}</strong>
-            <span class="muted" style="display:block;margin-top:4px;font-size:13px">${escapeHtml(t('admin.content.deletedToggleHint'))}</span>
-          </span>
-        </label>
-      </div>
       <div class="admin-card" style="margin-bottom:16px">
         <div class="admin-card-title" style="display:flex;align-items:center;gap:12px">
           ${escapeHtml(t('admin.content.downloadSection'))}
@@ -980,39 +973,44 @@ export function renderAdminContent({
         </div>
         <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.downloadHint'))}</p>
         ${config.fb2cngPath ? '' : `<p class="muted admin-compact-btn" style="margin:0 0 12px;">${escapeHtml(t('admin.content.downloadFb2cngHint'))}</p>`}
-        <table class="admin-table">
-          <thead>
-            <tr>
-              <th style="width:50px;text-align:center"></th>
-              <th>${escapeHtml(t('admin.content.thName'))}</th>
-              <th>${escapeHtml(t('admin.content.thCode'))}</th>
-            </tr>
-          </thead>
-          <tbody>${downloadFormatRows}</tbody>
-        </table>
+        <div class="admin-chip-group">${downloadFormatChips}</div>
       </div>
       <div class="admin-card" style="margin-bottom:16px">
-        <div class="admin-card-title">${escapeHtml(t('admin.content.filenameSection'))}</div>
-        <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.filenameHint'))}</p>
-        <div class="admin-field-group">
-          <label for="download-filename-style">${escapeHtml(t('admin.content.filenameLabel'))}</label>
-          <select id="download-filename-style" name="download_filename_style" style="max-width:420px">
-            ${DOWNLOAD_FILENAME_STYLES.map((style) => `
-              <option value="${escapeHtml(style)}" ${downloadFilenameStyle === style ? 'selected' : ''}>${escapeHtml(t(`admin.content.filename.${style}`))}</option>
-            `).join('')}
-          </select>
+        <div class="admin-card-title">${escapeHtml(t('admin.content.deliveryTitle'))}</div>
+        <div class="admin-subsection">
+          <div class="admin-subsection-title">${escapeHtml(t('admin.content.deletedSection'))}</div>
+          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.deletedHint'))}</p>
+          <label class="admin-check-row" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+            <input type="checkbox" name="show_deleted_books" value="1" ${showDeletedBooks ? 'checked' : ''} style="margin-top:3px">
+            <span>
+              <strong>${escapeHtml(t('admin.content.deletedToggle'))}</strong>
+              <span class="muted" style="display:block;margin-top:4px;font-size:13px">${escapeHtml(t('admin.content.deletedToggleHint'))}</span>
+            </span>
+          </label>
         </div>
-      </div>
-      <div class="admin-card" style="margin-bottom:16px">
-        <div class="admin-card-title">${escapeHtml(t('admin.content.webpSection'))}</div>
-        <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.webpHint'))}</p>
-        <div class="admin-field-group">
-          <label for="fb2-webp-images">${escapeHtml(t('admin.content.webpLabel'))}</label>
-          <select id="fb2-webp-images" name="fb2_webp_images" style="max-width:420px">
-            ${FB2_WEBP_MODES.map((mode) => `
-              <option value="${escapeHtml(mode)}" ${fb2WebpMode === mode ? 'selected' : ''}>${escapeHtml(t(`admin.content.webp.${mode}`))}</option>
-            `).join('')}
-          </select>
+        <div class="admin-subsection">
+          <div class="admin-subsection-title">${escapeHtml(t('admin.content.filenameSection'))}</div>
+          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.filenameHint'))}</p>
+          <div class="admin-field-group">
+            <label for="download-filename-style">${escapeHtml(t('admin.content.filenameLabel'))}</label>
+            <select id="download-filename-style" name="download_filename_style" style="max-width:420px">
+              ${DOWNLOAD_FILENAME_STYLES.map((style) => `
+                <option value="${escapeHtml(style)}" ${downloadFilenameStyle === style ? 'selected' : ''}>${escapeHtml(t(`admin.content.filename.${style}`))}</option>
+              `).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="admin-subsection">
+          <div class="admin-subsection-title">${escapeHtml(t('admin.content.webpSection'))}</div>
+          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.webpHint'))}</p>
+          <div class="admin-field-group">
+            <label for="fb2-webp-images">${escapeHtml(t('admin.content.webpLabel'))}</label>
+            <select id="fb2-webp-images" name="fb2_webp_images" style="max-width:420px">
+              ${FB2_WEBP_MODES.map((mode) => `
+                <option value="${escapeHtml(mode)}" ${fb2WebpMode === mode ? 'selected' : ''}>${escapeHtml(t(`admin.content.webp.${mode}`))}</option>
+              `).join('')}
+            </select>
+          </div>
         </div>
       </div>
       <div class="admin-card" style="margin-bottom:16px">
@@ -1022,8 +1020,10 @@ export function renderAdminContent({
             <input type="checkbox" id="lang-toggle-all" title="${escapeHtml(t('admin.content.toggleAll'))}">
             <span class="muted">${escapeHtml(t('admin.content.toggleAll'))}</span>
           </label>
+          <input type="search" class="admin-list-filter" data-admin-filter="#admin-lang-list" placeholder="${escapeHtml(t('admin.content.filterPlaceholder'))}" aria-label="${escapeHtml(t('admin.content.filterPlaceholder'))}" autocomplete="off">
         </div>
         <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.langHint'))}</p>
+        <div id="admin-lang-list">
         <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
           <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
             <span style="flex:1 1 auto;font-weight:600;font-size:15px">${escapeHtml(tp('admin.content.langListTitle', { total: languages.length }))}</span>
@@ -1044,6 +1044,7 @@ export function renderAdminContent({
             </table>
           </div>
         </div>
+        </div>
       </div>
       <div class="admin-card" style="margin-bottom:16px">
         <div class="admin-card-title" style="display:flex;align-items:center;gap:12px">
@@ -1052,15 +1053,16 @@ export function renderAdminContent({
             <input type="checkbox" id="genre-toggle-all" title="${escapeHtml(t('admin.content.toggleAll'))}">
             <span class="muted">${escapeHtml(t('admin.content.toggleAll'))}</span>
           </label>
+          <input type="search" class="admin-list-filter" data-admin-filter="#admin-genre-list" placeholder="${escapeHtml(t('admin.content.filterPlaceholder'))}" aria-label="${escapeHtml(t('admin.content.filterPlaceholder'))}" autocomplete="off">
         </div>
         <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.genreHint'))}</p>
-        <div class="acg-list">
+        <div class="acg-list" id="admin-genre-list">
           ${genreGroupsHtml.join('')}
         </div>
       </div>
-      <div class="admin-inline-row" style="margin-top:16px;gap:12px;">
-        <button type="submit" class="button button-primary">${escapeHtml(t('admin.content.save'))}</button>
-        <span class="muted admin-compact-btn">${escapeHtml(t('admin.content.saveHint'))}</span>
+      <div class="admin-appearance-save">
+        <button type="submit" class="button button-primary admin-appearance-save-btn">${escapeHtml(t('admin.content.save'))}</button>
+        <span class="muted admin-compact-btn" style="align-self:center">${escapeHtml(t('admin.content.saveHint'))}</span>
       </div>
     </form>
     <script>
@@ -1213,7 +1215,7 @@ function renderScanScheduleForm({ csrfToken, scanSchedule, scanScheduleNextRunAt
   return `
     <form action="/admin/settings/scan-schedule" method="post" data-track-dirty data-scan-schedule-form>
       ${csrfHiddenField(csrfToken)}
-      <div class="admin-action-item">
+      <div class="admin-action-item admin-action-item--stack">
         <div class="admin-action-item-info">
           <strong>${escapeHtml(t('admin.schedule.title'))}</strong>
           <span class="muted">${escapeHtml(t('admin.schedule.hint'))}</span>
@@ -1276,7 +1278,7 @@ function renderScanScheduleForm({ csrfToken, scanSchedule, scanScheduleNextRunAt
           </details>
         </div>
         <div class="admin-actions-row">
-          <button type="submit">${escapeHtml(t('admin.save'))}</button>
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
         </div>
       </div>
     </form>
@@ -1334,7 +1336,7 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
             <input type="text" class="admin-input-sm" data-edit-path="${s.id}" value="${escapeHtml(s.path)}" style="width:320px">
           </div>
           <button type="button" class="admin-compact-btn" data-check-edit="${s.id}">${escapeHtml(t('admin.sources.checkPath'))}</button>
-          <button type="button" class="admin-compact-btn" data-save-edit="${s.id}">${escapeHtml(t('admin.save'))}</button>
+          <button type="button" class="admin-compact-btn button-primary" data-save-edit="${s.id}">${escapeHtml(t('admin.save'))}</button>
           <button type="button" class="admin-compact-btn" data-cancel-edit="${s.id}">${escapeHtml(t('common.cancel'))}</button>
         </div>
         <span data-edit-hint="${s.id}" style="font-size:0.85em;margin-top:6px;display:block"></span>
@@ -1371,17 +1373,19 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
       <hr class="admin-divider">
       <div class="admin-card-title" style="font-size:1em">${escapeHtml(t('admin.sources.addTitle'))}</div>
       <form id="add-source-form">
-        <div class="admin-field-group">
-          <label for="source-name">${escapeHtml(t('admin.sources.name'))}</label>
-          <input id="source-name" name="name" placeholder="${escapeHtml(t('admin.sources.placeholderName'))}" autocomplete="off" required>
-        </div>
-        <div class="admin-field-group">
-          <label for="source-path">${escapeHtml(t('admin.sources.path'))}</label>
-          <input id="source-path" name="path" placeholder="${escapeHtml(t('admin.sources.placeholderPath'))}" autocomplete="off" required>
-          <span class="admin-field-hint">${escapeHtml(t('admin.sources.pathHint'))}</span>
+        <div class="admin-form-grid admin-form-grid--align-start admin-form-grid--gap-12">
+          <div class="admin-field-group">
+            <label for="source-name">${escapeHtml(t('admin.sources.name'))}</label>
+            <input id="source-name" name="name" placeholder="${escapeHtml(t('admin.sources.placeholderName'))}" autocomplete="off" required>
+          </div>
+          <div class="admin-field-group">
+            <label for="source-path">${escapeHtml(t('admin.sources.path'))}</label>
+            <input id="source-path" name="path" placeholder="${escapeHtml(t('admin.sources.placeholderPath'))}" autocomplete="off" required>
+            <span class="admin-field-hint">${escapeHtml(t('admin.sources.pathHint'))}</span>
+          </div>
         </div>
         <div class="admin-actions-row">
-          <button type="submit" id="add-source-btn">${escapeHtml(t('admin.sources.addBtn'))}</button>
+          <button type="submit" id="add-source-btn" class="button-primary">${escapeHtml(t('admin.sources.addBtn'))}</button>
         </div>
       </form>
       <hr class="admin-divider">
@@ -1397,10 +1401,10 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
   return pageShell({ title: t('admin.sources.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('admin.sources.title') }], mode: 'admin', currentPath: '/admin/sources', csrfToken });
 }
 
-export function renderAdminSmtp({ user, stats, indexStatus, smtp = {}, flash = '', csrfToken = '' }) {
+export function renderAdminSmtp({ user, stats, indexStatus, smtp = {}, passwordResetEnabled = false, publicBaseUrl = '', flash = '', csrfToken = '' }) {
   const content = `
     ${flash ? renderAlert('success', flash) : ''}
-    <div class="admin-card">
+    <div class="admin-card admin-card--form">
       <div class="admin-card-title">${escapeHtml(t('admin.smtp.cardTitle'))}</div>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.smtp.cardSubtitle'))}</div>
       <form method="POST" action="/admin/smtp" data-track-dirty>
@@ -1435,8 +1439,31 @@ export function renderAdminSmtp({ user, stats, indexStatus, smtp = {}, flash = '
           <input type="email" name="from" value="${escapeHtml(smtp.from || '')}" placeholder="your@gmail.com">
         </div>
         <div class="admin-actions-row" style="margin-top:6px;">
-          <button type="submit">${escapeHtml(t('admin.save'))}</button>
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
           <button type="submit" name="test" value="1">${escapeHtml(t('admin.smtp.test'))}</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="admin-card admin-card--form">
+      <div class="admin-card-title">${escapeHtml(t('admin.smtp.passwordResetTitle'))}</div>
+      <div class="admin-card-subtitle">${escapeHtml(t('admin.smtp.passwordResetHint'))}</div>
+      <form method="POST" action="/admin/settings/password-reset" data-track-dirty>
+        ${csrfHiddenField(csrfToken)}
+        <div class="admin-field-group" style="flex-direction:row;align-items:center;gap:10px;">
+          <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;">
+            <input type="hidden" name="enabled" value="0">
+            <input type="checkbox" name="enabled" value="1" ${passwordResetEnabled ? 'checked' : ''} style="accent-color:var(--accent);width:16px;height:16px;">
+            ${escapeHtml(t('admin.smtp.passwordResetEnabled'))}
+          </label>
+        </div>
+        <div class="admin-field-group">
+          <label>${escapeHtml(t('admin.smtp.publicBaseUrl'))}</label>
+          <input type="url" name="publicBaseUrl" value="${escapeHtml(publicBaseUrl || '')}" placeholder="https://books.example.com" autocomplete="off">
+          <span class="admin-field-hint">${escapeHtml(t('admin.smtp.publicBaseUrlHint'))}</span>
+        </div>
+        <div class="admin-actions-row">
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
         </div>
       </form>
     </div>`;
@@ -1454,21 +1481,30 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
   const announceChatCount = Number(tg.announceChatCount) || 0;
   const content = `
     ${flash ? renderAlert('success', flash) : ''}
-    <div class="admin-card">
-      <div class="admin-card-title">${escapeHtml(t('admin.telegram.cardTitle'))}</div>
-      <div class="admin-card-subtitle">${escapeHtml(t('admin.telegram.cardSubtitle'))}</div>
-      <p class="admin-field-hint" style="margin:0 0 14px;">${escapeHtml(t('admin.telegram.botAvatarHint'))}</p>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;">
-        <span style="width:10px;height:10px;border-radius:50%;background:${statusColor};display:inline-block;flex-shrink:0;"></span>
-        <span class="muted" style="font-size:13px;">${statusLabel}</span>
-      </div>
-      <form method="POST" action="/admin/telegram" data-track-dirty>
-        ${csrfHiddenField(csrfToken)}
+    <form method="POST" action="/admin/telegram" data-track-dirty>
+      ${csrfHiddenField(csrfToken)}
+      <div class="admin-card admin-card--form">
+        <div class="admin-card-title">${escapeHtml(t('admin.telegram.connectionTitle'))}</div>
+        <div class="admin-card-subtitle">${escapeHtml(t('admin.telegram.cardSubtitle'))}</div>
+        <p class="admin-field-hint" style="margin:0 0 14px;">${escapeHtml(t('admin.telegram.botAvatarHint'))}</p>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+          <span style="width:10px;height:10px;border-radius:50%;background:${statusColor};display:inline-block;flex-shrink:0;"></span>
+          <span class="muted" style="font-size:13px;">${statusLabel}</span>
+        </div>
+        <div class="admin-field-group" style="flex-direction:row;align-items:center;gap:10px;">
+          <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;">
+            <input type="checkbox" name="enabled" value="1" ${tg.enabled !== false ? 'checked' : ''} style="accent-color:var(--accent);width:16px;height:16px;">
+            ${escapeHtml(t('admin.telegram.enabled'))}
+          </label>
+        </div>
         <div class="admin-field-group">
           <label>${escapeHtml(t('admin.telegram.token'))}</label>
           <input type="password" name="token" value="" placeholder="${tokenSaved ? escapeHtml(t('admin.telegram.tokenSavedPlaceholder')) : '123456789:AAxxxxxx...'}" autocomplete="new-password">
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.tokenHint'))} <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:var(--accent);">@BotFather</a>${tokenSaved ? ` · ${escapeHtml(t('admin.telegram.tokenSavedHint'))}` : ''}</span>
         </div>
+      </div>
+      <div class="admin-card admin-card--form">
+        <div class="admin-card-title">${escapeHtml(t('admin.telegram.accessTitle'))}</div>
         <div class="admin-field-group">
           <label>${escapeHtml(t('admin.telegram.allowedUsers'))}</label>
           <input type="text" name="allowedUsers" value="${escapeHtml(tg.allowedUsers || '')}" placeholder="123456789, 987654321">
@@ -1483,6 +1519,9 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
           </select>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.accessModeHint'))}</span>
         </div>
+      </div>
+      <div class="admin-card admin-card--form">
+        <div class="admin-card-title">${escapeHtml(t('admin.telegram.textsTitle'))}</div>
         <div class="admin-field-group">
           <label>${escapeHtml(t('admin.telegram.profileDescription'))}</label>
           <textarea name="profileDescription" rows="6">${escapeHtml(profileDescription)}</textarea>
@@ -1498,8 +1537,10 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
           <textarea name="welcomeMessage" rows="8">${escapeHtml(welcomeMessage)}</textarea>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.welcomeMessageHint'))}</span>
         </div>
+      </div>
+      <div class="admin-card admin-card--form">
+        <div class="admin-card-title">${escapeHtml(t('admin.telegram.newBooksAnnounce'))}</div>
         <div class="admin-field-group">
-          <label>${escapeHtml(t('admin.telegram.newBooksAnnounce'))}</label>
           <span class="admin-field-hint" style="margin-bottom:8px;">${escapeHtml(tp('admin.telegram.newBooksAnnounceHint', { count: announceChatCount }))}</span>
           <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;margin-bottom:10px;">
             <input type="checkbox" name="newBooksAnnounceEnabled" value="1" ${tg.newBooksAnnounceEnabled ? 'checked' : ''} style="accent-color:var(--accent);width:16px;height:16px;">
@@ -1514,18 +1555,12 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
           </div>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.testAnnounceHint'))}</span>
         </div>
-        <div class="admin-field-group" style="flex-direction:row;align-items:center;gap:10px;margin-top:4px;">
-          <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;">
-            <input type="checkbox" name="enabled" value="1" ${tg.enabled !== false ? 'checked' : ''} style="accent-color:var(--accent);width:16px;height:16px;">
-            ${escapeHtml(t('admin.telegram.enabled'))}
-          </label>
-        </div>
-        <div class="admin-actions-row" style="margin-top:6px;">
-          <button type="submit">${escapeHtml(t('admin.save'))}</button>
-          <button type="submit" name="test" value="1">${escapeHtml(t('admin.telegram.test'))}</button>
-        </div>
-      </form>
-    </div>`;
+      </div>
+      <div class="admin-appearance-save">
+        <button type="submit" class="button button-primary admin-appearance-save-btn">${escapeHtml(t('admin.save'))}</button>
+        <button type="submit" name="test" value="1" style="align-self:center">${escapeHtml(t('admin.telegram.test'))}</button>
+      </div>
+    </form>`;
   return pageShell({ title: t('admin.telegram.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('admin.telegram.title') }], mode: 'admin', currentPath: '/admin/telegram', csrfToken });
 }
 
@@ -1542,6 +1577,9 @@ export function renderAdminAppearance({
   const bgPreview = ui.backgroundUrl
     ? `<img src="${escapeHtml(ui.backgroundUrl)}" alt="" class="ui-asset-preview ui-asset-preview--bg">`
     : `<span class="muted">${escapeHtml(t('admin.ui.noBackground'))}</span>`;
+  const headerPreview = ui.headerUrl
+    ? `<img src="${escapeHtml(ui.headerUrl)}" alt="" class="ui-asset-preview ui-asset-preview--bg">`
+    : `<span class="muted">${escapeHtml(t('admin.ui.noHeader'))}</span>`;
   const fontPreview = ui.hasCustomFont
     ? `<div class="ui-font-preview">${escapeHtml(t('admin.ui.fontPreviewSample'))}</div>`
     : `<span class="muted">${escapeHtml(t('admin.ui.fontCustomEmpty'))}</span>`;
@@ -1690,6 +1728,12 @@ export function renderAdminAppearance({
         <span>${escapeHtml(t('admin.ui.livePreviewActive'))}</span>
       </div>
 
+      ${renderAdminTabs('appearance', [
+        { id: 'brand', label: t('admin.ui.tabBrand') },
+        { id: 'background', label: t('admin.ui.tabBackground') },
+        { id: 'theme', label: t('admin.ui.tabTheme') }
+      ])}
+      <div class="admin-tab-panel" data-admin-tab-group="appearance" data-admin-tab-panel="brand" role="tabpanel">
       <!-- 1. Брендинг -->
       <div class="admin-card">
         <div class="admin-card-title">${escapeHtml(t('admin.ui.sectionBranding'))}</div>
@@ -1717,25 +1761,60 @@ export function renderAdminAppearance({
         <div class="admin-card-subtitle">${escapeHtml(t('admin.ui.sectionAssetsHint'))}</div>
         ${assetBlock('logo', t('admin.ui.logoTitle'), t('admin.ui.logoHint'), logoPreview, ui.hasLogo, `
           <label class="admin-checkbox-label ui-asset-checkbox">
+            <input type="checkbox" form="ui-main-form" name="showLogo" value="1" ${ui.showLogo !== false ? 'checked' : ''}>
+            ${escapeHtml(t('admin.ui.showLogo'))}
+          </label>
+          <label class="admin-checkbox-label ui-asset-checkbox">
             <input type="checkbox" form="ui-main-form" name="showLogoOnLogin" value="1" ${ui.showLogoOnLogin !== false ? 'checked' : ''}>
             ${escapeHtml(t('admin.ui.showLogoOnLogin'))}
           </label>`)}
         <hr class="admin-divider">
         ${assetBlock('favicon', t('admin.ui.faviconTitle'), t('admin.ui.faviconHint'), faviconPreview, Boolean(ui.faviconUrl))}
-        <hr class="admin-divider">
-        ${assetBlock('background', t('admin.ui.backgroundTitle'), t('admin.ui.backgroundHint'), bgPreview, ui.hasBackground)}
       </div>
 
-      <!-- 3. Эффекты -->
       <div class="admin-card">
-        <div class="admin-card-title">${escapeHtml(t('admin.ui.sectionEffects'))}</div>
-        <div class="admin-card-subtitle">${escapeHtml(t('admin.ui.sectionEffectsHint'))}</div>
-        <label class="admin-checkbox-label">
-          <input type="checkbox" form="ui-main-form" name="manuscriptWash" value="1" ${ui.manuscriptWash !== false ? 'checked' : ''}>
-          ${escapeHtml(t('admin.ui.manuscriptWash'))}
-        </label>
+        ${assetBlock('header', t('admin.ui.headerTitle'), t('admin.ui.headerHint'), headerPreview, ui.hasCustomHeader, `
+          <label class="admin-checkbox-label ui-asset-checkbox">
+            <input type="checkbox" form="ui-main-form" name="showHeader" value="1" ${ui.showHeader !== false ? 'checked' : ''}>
+            ${escapeHtml(t('admin.ui.showHeader'))}
+          </label>`)}
+        ${`<div data-ui-header-section>`}
+        <hr class="admin-divider">
+        <div class="admin-form-grid admin-form-grid--gap-12">
+          <div class="admin-field-group">
+            <label for="ui-header-height">${escapeHtml(t('admin.ui.headerHeight'))}</label>
+            <input type="range" id="ui-header-height" name="headerHeight" form="ui-main-form" min="${MIN_HEADER_HEIGHT}" max="${MAX_HEADER_HEIGHT}" step="10" value="${ui.headerHeight}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.headerHeightHint'))} <strong data-ui-range-value="headerHeight">${ui.headerHeight}</strong></span>
+          </div>
+          <div class="admin-field-group">
+            <label for="ui-headerPosition">${escapeHtml(t('admin.ui.headerPosition'))}</label>
+            ${selectPreset('headerPosition', ui.headerPosition, ['center', 'top', 'bottom'], {
+              center: t('admin.ui.bgPositionCenter'),
+              top: t('admin.ui.bgPositionTop'),
+              bottom: t('admin.ui.bgPositionBottom'),
+            })}
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.headerPositionHint'))}</span>
+          </div>
+        </div>
+        <div class="admin-form-grid admin-form-grid--gap-12" style="margin-top:12px">
+          <div class="admin-field-group">
+            <label for="ui-headerSize">${escapeHtml(t('admin.ui.headerSize'))}</label>
+            ${selectPreset('headerSize', ui.headerSize, ['contain', 'cover'], {
+              contain: t('admin.ui.bgSizeContain'),
+              cover: t('admin.ui.bgSizeCover'),
+            })}
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.headerSizeHint'))}</span>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      </div>
+      <div class="admin-tab-panel" data-admin-tab-group="appearance" data-admin-tab-panel="background" role="tabpanel">
+      <div class="admin-card">
+        ${assetBlock('background', t('admin.ui.backgroundTitle'), t('admin.ui.backgroundHint'), bgPreview, ui.hasBackground)}
         ${`<div data-ui-bg-section${ui.hasBackground ? '' : ' hidden'}>`}
-        <div class="admin-section-label">${escapeHtml(t('admin.ui.sectionBackgroundOverlay'))}</div>
+        <hr class="admin-divider">
         <div class="admin-form-grid admin-form-grid--gap-12">
           <div class="admin-field-group">
             <label for="ui-bg-blur">${escapeHtml(t('admin.ui.bgBlur'))}</label>
@@ -1800,8 +1879,98 @@ export function renderAdminAppearance({
             <input type="hidden" name="overlayColorAutoLight" id="ui-overlay-auto-light" value="${ui.overlayColorAutoLight ? '1' : '0'}" form="ui-main-form">
           </div>
         </div>
-        <hr class="admin-divider">
         </div>
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-card-title">${escapeHtml(t('admin.ui.sectionCover'))}</div>
+        <div class="admin-card-subtitle">${escapeHtml(t('admin.ui.sectionCoverHint'))}</div>
+        <div class="card cover-fallback-sample" aria-hidden="true">
+          <div class="cover cover-fallback-active">
+            <span class="cover-fallback">
+              ${renderCoverFallbackImage()}
+              <span class="cover-fallback-overlay"></span>
+              <span class="cover-fallback-copy">
+                <span class="cover-fallback-title">${escapeHtml(t('admin.ui.coverPreviewTitle'))}</span>
+                <span class="cover-fallback-author">${escapeHtml(t('admin.ui.coverPreviewAuthor'))}</span>
+              </span>
+            </span>
+          </div>
+        </div>
+        ${assetBlock('cover', t('admin.ui.coverImage'), t('admin.ui.coverImageHint'), ui.coverFallbackUrl ? `<img src="${escapeHtml(ui.coverFallbackUrl)}" alt="" class="ui-asset-preview">` : `<span class="muted">${escapeHtml(t('admin.ui.defaultAsset'))}</span>`, ui.hasCustomCover)}
+        <div class="admin-form-grid admin-form-grid--gap-12" style="margin-top:12px">
+          <div class="admin-field-group">
+            <label for="ui-cover-title-font">${escapeHtml(t('admin.ui.coverTitleFont'))}</label>
+            <select id="ui-cover-title-font" name="coverTitleFont" form="ui-main-form" class="admin-preset-select">
+              ${Object.keys(COVER_TITLE_FONTS).map((id) => `<option value="${id}"${ui.coverTitleFont === id ? ' selected' : ''}>${escapeHtml(t('admin.ui.coverFont.' + id))}</option>`).join('')}
+            </select>
+          </div>
+          <div class="admin-field-group">
+            <label for="ui-cover-title-color">${escapeHtml(t('admin.ui.coverTitleColor'))}</label>
+            <input type="color" id="ui-cover-title-color" name="coverTitleColor" form="ui-main-form" value="${escapeHtml(ui.coverTitleColor || '#f6f1e6')}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.coverTitleColorHint'))}</span>
+          </div>
+          <div class="admin-field-group">
+            <label for="ui-cover-title-shadow">${escapeHtml(t('admin.ui.coverTitleShadow'))}</label>
+            <input type="range" id="ui-cover-title-shadow" name="coverTitleShadow" form="ui-main-form" min="${MIN_COVER_TITLE_SHADOW}" max="${MAX_COVER_TITLE_SHADOW}" step="1" value="${ui.coverTitleShadow ?? DEFAULT_COVER_TITLE_SHADOW}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.coverTitleShadowHint'))} <strong data-ui-range-value="coverTitleShadow">${ui.coverTitleShadow ?? DEFAULT_COVER_TITLE_SHADOW}</strong></span>
+          </div>
+          <div class="admin-field-group">
+            <label for="ui-cover-title-size">${escapeHtml(t('admin.ui.coverTitleSize'))}</label>
+            <input type="range" id="ui-cover-title-size" name="coverTitleSize" form="ui-main-form" min="${MIN_COVER_TITLE_SIZE}" max="${MAX_COVER_TITLE_SIZE}" step="5" value="${ui.coverTitleSize ?? 100}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.coverTitleSizeHint'))} <strong data-ui-range-value="coverTitleSize">${ui.coverTitleSize ?? 100}</strong></span>
+          </div>
+        </div>
+        <div class="admin-form-grid admin-form-grid--gap-12" style="margin-top:12px">
+          <div class="admin-field-group">
+            <label for="ui-cover-title-x">${escapeHtml(t('admin.ui.coverTitleX'))}</label>
+            <input type="range" id="ui-cover-title-x" name="coverTitleX" form="ui-main-form" min="${MIN_COVER_TITLE_OFFSET}" max="${MAX_COVER_TITLE_OFFSET}" step="1" value="${ui.coverTitleX ?? 0}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.coverTitleXHint'))} <strong data-ui-range-value="coverTitleX">${ui.coverTitleX ?? 0}</strong></span>
+          </div>
+          <div class="admin-field-group">
+            <label for="ui-cover-title-y">${escapeHtml(t('admin.ui.coverTitleY'))}</label>
+            <input type="range" id="ui-cover-title-y" name="coverTitleY" form="ui-main-form" min="${MIN_COVER_TITLE_OFFSET}" max="${MAX_COVER_TITLE_OFFSET}" step="1" value="${ui.coverTitleY ?? 0}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.coverTitleYHint'))} <strong data-ui-range-value="coverTitleY">${ui.coverTitleY ?? 0}</strong></span>
+          </div>
+        </div>
+        ${`<div class="admin-card-reset" data-ui-reset-wrap="cover"${ui.hasCustomCoverFallback ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="cover">${escapeHtml(t('admin.ui.resetCover'))}</button></div>`}
+      </div>
+
+      <!-- 3. Эффекты -->
+      <div class="admin-card">
+        <div class="admin-card-title">${escapeHtml(t('admin.ui.sectionEffects'))}</div>
+        <div class="admin-card-subtitle">${escapeHtml(t('admin.ui.sectionEffectsHint'))}</div>
+        <label class="admin-checkbox-label">
+          <input type="checkbox" form="ui-main-form" name="manuscriptWash" value="1" ${ui.manuscriptWash !== false ? 'checked' : ''}>
+          ${escapeHtml(t('admin.ui.manuscriptWash'))}
+        </label>
+        <div data-ui-manuscript-fields${ui.manuscriptWash === false ? ' hidden' : ''}>
+          <div class="admin-form-grid admin-form-grid--gap-12" style="margin-top:12px">
+            <div class="admin-field-group">
+              <label for="ui-manuscript-font">${escapeHtml(t('admin.ui.manuscriptFont'))}</label>
+              <select id="ui-manuscript-font" name="manuscriptFont" form="ui-main-form" class="admin-preset-select">
+                ${Object.keys(COVER_TITLE_FONTS).map((id) => `<option value="${id}"${(ui.manuscriptFont || DEFAULT_MANUSCRIPT_FONT) === id ? ' selected' : ''}>${escapeHtml(t('admin.ui.coverFont.' + id))}</option>`).join('')}
+              </select>
+            </div>
+            <div class="admin-field-group">
+              <label for="ui-manuscript-ink">${escapeHtml(t('admin.ui.manuscriptInk'))}</label>
+              <input type="range" id="ui-manuscript-ink" name="manuscriptInk" form="ui-main-form" min="${MIN_MANUSCRIPT_INK}" max="${MAX_MANUSCRIPT_INK}" step="1" value="${ui.manuscriptInk ?? DEFAULT_MANUSCRIPT_INK}">
+              <span class="admin-field-hint">${escapeHtml(t('admin.ui.manuscriptInkHint'))} <strong data-ui-range-value="manuscriptInk">${ui.manuscriptInk ?? DEFAULT_MANUSCRIPT_INK}</strong></span>
+            </div>
+            <div class="admin-field-group">
+              <label for="ui-manuscript-size">${escapeHtml(t('admin.ui.manuscriptSize'))}</label>
+              <input type="range" id="ui-manuscript-size" name="manuscriptSize" form="ui-main-form" min="${MIN_MANUSCRIPT_SIZE}" max="${MAX_MANUSCRIPT_SIZE}" step="5" value="${ui.manuscriptSize ?? DEFAULT_MANUSCRIPT_SIZE}">
+              <span class="admin-field-hint">${escapeHtml(t('admin.ui.manuscriptSizeHint'))} <strong data-ui-range-value="manuscriptSize">${ui.manuscriptSize ?? DEFAULT_MANUSCRIPT_SIZE}</strong></span>
+            </div>
+          </div>
+          <div class="admin-field-group" style="margin-top:12px">
+            <label for="ui-manuscript-text">${escapeHtml(t('admin.ui.manuscriptText'))}</label>
+            <textarea id="ui-manuscript-text" name="manuscriptText" form="ui-main-form" rows="5" maxlength="${MAX_MANUSCRIPT_TEXT}" placeholder="${escapeHtml(t('admin.ui.manuscriptTextPlaceholder'))}">${escapeHtml(ui.manuscriptText || '')}</textarea>
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.manuscriptTextHint'))}</span>
+          </div>
+          ${`<div class="admin-card-reset" data-ui-reset-wrap="manuscript"${ui.hasCustomManuscript ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="manuscript">${escapeHtml(t('admin.ui.resetManuscript'))}</button></div>`}
+        </div>
+        <hr class="admin-divider">
         <div class="admin-section-label">${escapeHtml(t('admin.ui.sectionPanels'))}</div>
         <div class="admin-form-grid admin-form-grid--gap-12">
           <div class="admin-field-group">
@@ -1817,6 +1986,9 @@ export function renderAdminAppearance({
         </div>
         ${`<div class="admin-card-reset" data-ui-reset-wrap="sliders"${ui.hasCustomThemeSliders ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="sliders">${escapeHtml(t('admin.ui.resetSliders'))}</button></div>`}
       </div>
+
+      </div>
+      <div class="admin-tab-panel" data-admin-tab-group="appearance" data-admin-tab-panel="theme" role="tabpanel">
 
       <!-- 4. Цвета темы -->
       <div class="admin-card">
@@ -1934,6 +2106,8 @@ export function renderAdminAppearance({
           </div>
         </div>
         ${`<div class="admin-card-reset" data-ui-reset-wrap="typography"${ui.hasCustomThemeTypography ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="typography">${escapeHtml(t('admin.ui.resetTypography'))}</button></div>`}
+      </div>
+
       </div>
 
       <!-- Основная форма сохранения -->

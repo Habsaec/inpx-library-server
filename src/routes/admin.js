@@ -35,6 +35,8 @@ import {
 import { checkForUpdate, downloadUpdateAsset } from '../services/update-check.js';
 import {
   getUiCustomization, saveUiAsset, removeUiAsset, saveUiSettings,
+  saveCoverFallbackSettings, resetCoverFallbackSettings,
+  saveManuscriptSettings, resetManuscriptSettings,
   resetUiThemeColors, resetUiThemeSliders,
   resetUiThemeShape, resetUiThemeTypography,
   saveUiShapeSettings, saveUiTypographySettings,
@@ -58,6 +60,7 @@ import {
   requestIndexPause, requestIndexResume, requestIndexStop,
   splitAuthorValues, getDuplicateGroups, softDeleteBook, autoCleanDuplicates,
   previewAutoClean, markLibraryDedupProjectionStale, invalidateDuplicatesCache,
+  getDuplicateScanMeta, runDuplicateScan,
   rebuildTitleTokenDictionary
 } from '../inpx.js';
 import {
@@ -703,7 +706,10 @@ export function registerAdminRoutes(app, deps) {
   app.get('/admin/smtp', requireAdminWeb, (req, res) => {
     res.send(renderAdminSmtp({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
-      smtp: getSmtpSettings(), flash: String(req.query.flash || ''),
+      smtp: getSmtpSettings(),
+      passwordResetEnabled: isPasswordResetEnabled(),
+      publicBaseUrl: getPublicBaseUrlSetting(),
+      flash: String(req.query.flash || ''),
       csrfToken: req.csrfToken || ''
     }));
   });
@@ -715,9 +721,9 @@ export function registerAdminRoutes(app, deps) {
       const publicBaseUrl = String(req.body.publicBaseUrl || '').trim().replace(/\/+$/, '');
       setPasswordResetSettings({ enabled, publicBaseUrl });
       logSystemEvent('info', 'admin', enabled ? 'password reset enabled' : 'password reset disabled', { admin: req.user.username });
-      res.redirect('/admin/users?flash=' + encodeURIComponent(t('admin.smtp.passwordResetSaved')));
+      res.redirect('/admin/smtp?flash=' + encodeURIComponent(t('admin.smtp.passwordResetSaved')));
     } catch (error) {
-      res.redirect('/admin/users?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
+      res.redirect('/admin/smtp?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
   });
 
@@ -782,8 +788,27 @@ export function registerAdminRoutes(app, deps) {
         overlayColorAutoLight: isFormFlagEnabled(req.body.overlayColorAutoLight),
         bgSize: lastFormFieldValue(req.body.bgSize),
         bgPosition: lastFormFieldValue(req.body.bgPosition),
+        headerHeight: lastFormFieldValue(req.body.headerHeight),
+        headerPosition: lastFormFieldValue(req.body.headerPosition),
+        headerSize: lastFormFieldValue(req.body.headerSize),
+        showHeader: isFormFlagEnabled(req.body.showHeader),
+        showLogo: isFormFlagEnabled(req.body.showLogo),
         showLogoOnLogin: isFormFlagEnabled(req.body.showLogoOnLogin),
         manuscriptWash: isFormFlagEnabled(req.body.manuscriptWash),
+      });
+      saveCoverFallbackSettings({
+        coverTitleFont: lastFormFieldValue(req.body.coverTitleFont),
+        coverTitleSize: lastFormFieldValue(req.body.coverTitleSize),
+        coverTitleX: lastFormFieldValue(req.body.coverTitleX),
+        coverTitleY: lastFormFieldValue(req.body.coverTitleY),
+        coverTitleColor: lastFormFieldValue(req.body.coverTitleColor),
+        coverTitleShadow: lastFormFieldValue(req.body.coverTitleShadow),
+      });
+      saveManuscriptSettings({
+        manuscriptFont: lastFormFieldValue(req.body.manuscriptFont),
+        manuscriptInk: lastFormFieldValue(req.body.manuscriptInk),
+        manuscriptSize: lastFormFieldValue(req.body.manuscriptSize),
+        manuscriptText: lastFormFieldValue(req.body.manuscriptText),
       });
       saveUiShapeSettings({
         radiusPreset: lastFormFieldValue(req.body.radiusPreset),
@@ -941,6 +966,8 @@ export function registerAdminRoutes(app, deps) {
     colors: { fn: resetUiThemeColors, log: 'ui theme colors reset', flash: 'admin.ui.flashResetColors' },
     shape: { fn: resetUiThemeShape, log: 'ui theme shape reset', flash: 'admin.ui.flashResetShape' },
     typography: { fn: resetUiThemeTypography, log: 'ui theme typography reset', flash: 'admin.ui.flashResetTypography' },
+    cover: { fn: resetCoverFallbackSettings, log: 'ui cover fallback reset', flash: 'admin.ui.flashResetCover' },
+    manuscript: { fn: resetManuscriptSettings, log: 'ui manuscript reset', flash: 'admin.ui.flashResetManuscript' },
   };
 
   app.post('/api/admin/ui/reset/:section', requireAdminApi, (req, res) => {
@@ -1090,6 +1117,8 @@ export function registerAdminRoutes(app, deps) {
   });
 
   app.post('/admin/settings/site-name', requireAdminWeb, (req, res) => {
+    const rawRedirectTo = String(req.body.redirectTo || '/admin');
+    const redirectTo = SAFE_ADMIN_REDIRECTS.has(rawRedirectTo) ? rawRedirectTo : '/admin';
     try {
       /* Язык интерфейса по умолчанию для гостей без Accept-Language / lang-cookie.
          Принимает 'ru' | 'en' | 'auto'. Применяется в i18n.resolveLocale —
@@ -1100,9 +1129,9 @@ export function registerAdminRoutes(app, deps) {
       setDefaultLocale(locale);
       clearPageDataCache();
       logSystemEvent('info', 'settings', 'default locale updated', { actor: req.user.username, defaultLocale: locale });
-      res.redirect('/admin?flash=' + encodeURIComponent(t('admin.flash.siteNameUpdated')));
+      res.redirect(`${redirectTo}?flash=` + encodeURIComponent(t('admin.flash.siteNameUpdated')));
     } catch (error) {
-      res.redirect('/admin?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
+      res.redirect(`${redirectTo}?flash=` + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
   });
 
@@ -1932,7 +1961,32 @@ export function registerAdminRoutes(app, deps) {
     }
     const result = getDuplicateGroups({ page, pageSize, filter });
     const preview = previewAutoClean();
-    res.json({ ok: true, groups: result.groups, total: result.total, page, pageSize, filter, preview, cleanProgress });
+    res.json({
+      ok: true, groups: result.groups, total: result.total, page, pageSize, filter, preview, cleanProgress,
+      scan: getDuplicateScanMeta()
+    });
+  });
+
+  /* Поиск дубликатов запускается только вручную; результат сохраняется до следующего запуска. */
+  app.post('/api/admin/duplicates/scan', requireAdminApi, (req, res) => {
+    if (getIndexStatus().active) {
+      return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
+    }
+    if (dupCleanConflict(res)) return;
+    try {
+      const scan = runDuplicateScan();
+      invalidateDuplicatesCache();
+      logSystemEvent('info', 'operations', 'duplicates scan', {
+        actor: req.user.username, totalGroups: scan.totalGroups, willDelete: scan.willDelete, tookMs: scan.tookMs
+      });
+      res.json({
+        ok: true,
+        scan,
+        message: tp('admin.duplicates.scanDone', { groups: scan.totalGroups, delete: scan.willDelete })
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
   });
 
   app.get('/api/admin/duplicates/auto-clean/progress', requireAdminApi, (req, res) => {
@@ -2127,6 +2181,7 @@ export function registerAdminRoutes(app, deps) {
       downloadFilenameStyle: normalizeDownloadFilenameStyle(getSetting('download_filename_style')),
       fb2WebpMode: normalizeFb2WebpMode(getSetting('fb2_webp_images')),
       showDeletedBooks: getSetting('show_deleted_books') === '1',
+      defaultLocale: getSetting('default_locale') || 'auto',
       flash: String(req.query.flash || ''), csrfToken: req.csrfToken || ''
     }));
   });

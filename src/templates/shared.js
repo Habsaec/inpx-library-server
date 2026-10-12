@@ -25,7 +25,7 @@ import {
   serializeClientI18n
 } from '../i18n.js';
 import { resolveIndexStageLine } from '../index-stage-i18n.js';
-import { getUiCustomization, getThemeCssVars, hasUiThemeColorsConfigured, usesPanelGlass, hasUiThemeShapeConfigured, hasUiThemeTypographyConfigured, FONT_FAMILY_WEBFONT, DISPLAY_FONT_WEBFONT } from '../services/ui-customization.js';
+import { getUiCustomization, getThemeCssVars, coverFallbackToCssVars, manuscriptToCssVars, hasUiThemeColorsConfigured, usesPanelGlass, hasUiThemeShapeConfigured, hasUiThemeTypographyConfigured, FONT_FAMILY_WEBFONT, DISPLAY_FONT_WEBFONT, COVER_TITLE_FONTS, bundledCoverUrl } from '../services/ui-customization.js';
 import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarkup } from '../html-sanitize.js';
 import { APP_DOWNLOAD_URL, appDownloadQrSvg } from '../app-download-qr.js';
 
@@ -148,6 +148,21 @@ export const STATIC_ASSET_VERSION = computeStaticAssetVersion();
 
 export const READ_CHECK_SVG = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
 
+/** Dark leather and light parchment, or the one uploaded image for both themes. */
+export function coverFallbackPair() {
+  const custom = getUiCustomization().coverFallbackUrl;
+  if (custom) return { dark: custom, light: custom };
+  return { dark: bundledCoverUrl('dark'), light: bundledCoverUrl('light') };
+}
+
+export function renderCoverFallbackImage() {
+  const { dark, light } = coverFallbackPair();
+  if (dark === light) {
+    return `<img class="cover-fallback-image" draggable="false" src="${escapeHtml(dark)}" alt="">`;
+  }
+  return `<img class="cover-fallback-image cover-fallback-image--dark" draggable="false" src="${escapeHtml(dark)}" alt=""><img class="cover-fallback-image cover-fallback-image--light" draggable="false" src="${escapeHtml(light)}" alt="">`;
+}
+
 export function renderCover(book, { readBookIds = null } = {}) {
   const readBadge = readBookIds && readBookIds.has(book.id) ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : '';
   const deletedBadge = Number(book.deleted)
@@ -161,7 +176,7 @@ export function renderCover(book, { readBookIds = null } = {}) {
   return `
     <a class="cover" href="${bookPagePath(book.id)}" data-role="cover">
       <span class="cover-fallback">
-        <img class="cover-fallback-image" draggable="false" src="/book-fallback.png" alt="">
+        ${renderCoverFallbackImage()}
         <span class="cover-fallback-overlay"></span>
         <span class="cover-fallback-copy">
           <span class="cover-fallback-title">${escapeHtml(book.title)}</span>
@@ -172,8 +187,16 @@ export function renderCover(book, { readBookIds = null } = {}) {
       ${readBadge}
       ${deletedBadge}
       ${coverRating}
-      <div class="card-annotation-preview" hidden data-card-annotation></div>
     </a>`;
+}
+
+function renderCardCoverActions(book, downloadHtml = '') {
+  const more = `<a class="button card-cover-action" href="${bookPagePath(book.id)}">${escapeHtml(t('card.more'))}</a>`;
+  return `<div class="card-cover-actions">${downloadHtml || ''}${more}</div>`;
+}
+
+export function renderCardCover(book, { readBookIds = null, downloadHtml = '' } = {}) {
+  return `<div class="card-cover">${renderCover(book, { readBookIds })}${renderCardCoverActions(book, downloadHtml)}</div>`;
 }
 
 export function browseEntityPluralType(path) {
@@ -404,6 +427,14 @@ export function renderPagination(basePath, page, pageSize, total, query = '') {
   }
   const separator = basePath.includes('?') ? '&' : '?';
   const pageHref = (p) => `${basePath}${separator}page=${p}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+  const qMark = basePath.indexOf('?');
+  const jumpPath = qMark >= 0 ? basePath.slice(0, qMark) : basePath;
+  const jumpParams = new URLSearchParams(qMark >= 0 ? basePath.slice(qMark + 1) : '');
+  jumpParams.delete('page');
+  if (query && !jumpParams.has('q')) jumpParams.set('q', query);
+  const jumpHidden = [...jumpParams.entries()].map(([key, value]) =>
+    `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}">`
+  ).join('');
   const pageNumbers = [];
   const windowSize = 2;
   for (let i = Math.max(1, page - windowSize); i <= Math.min(totalPages, page + windowSize); i++) {
@@ -417,12 +448,15 @@ export function renderPagination(basePath, page, pageSize, total, query = '') {
     if (pageNumbers[pageNumbers.length - 1] < totalPages - 1) pageNumbers.push('...');
     pageNumbers.push(totalPages);
   }
+  const jumpField = `<form class="page-jump" method="get" action="${escapeHtml(jumpPath || '/')}" style="--page-digits:${String(page).length}">${jumpHidden}<input class="page-jump-input" type="number" name="page" min="1" max="${totalPages}" value="${page}" inputmode="numeric" enterkeyhint="go" aria-label="${escapeHtml(t('pagination.page'))}" aria-current="page" style="width:${Math.max(4, String(totalPages).length + 2)}ch"></form>`;
   return `
     <nav class="pagination" style="margin-top:20px;" aria-label="${escapeHtml(t('pagination.label'))}">
       ${page > 1 ? `<a class="page-link page-link-prev" href="${pageHref(page - 1)}" aria-label="${escapeHtml(t('pagination.prev'))}">${escapeHtml(t('pagination.prev'))}</a>` : ''}
       ${pageNumbers.map((p) => p === '...'
     ? '<span class="page-ellipsis muted">…</span>'
-    : `<a class="page-link ${p === page ? 'page-link-active' : ''}" href="${pageHref(p)}">${p}</a>`
+    : p === page
+      ? jumpField
+      : `<a class="page-link" href="${pageHref(p)}">${p}</a>`
   ).join('')}
       ${page < totalPages ? `<a class="page-link page-link-next" href="${pageHref(page + 1)}" aria-label="${escapeHtml(t('pagination.next'))}">${escapeHtml(t('pagination.next'))}</a>` : ''}
     </nav>`;
@@ -758,7 +792,6 @@ function renderSidebarNavigation(user, currentPath = '/', stats = null) {
   const showLanguages = (stats?.totalLanguages ?? 2) > 1;
 
   return `
-    <div class="sidenav-section">${escapeHtml(t('sidebar.section'))}</div>
     <div class="sidenav-links">
       ${link('/', t('nav.home'), true)}
       ${link('/catalog', t('nav.catalog'), true)}
@@ -809,8 +842,26 @@ export function renderAccountNav(active = '', counts = {}) {
 
 function renderTopbarSearch(query = '', field = 'all') {
   const placeholderDefault = t('search.placeholder');
+  const openClass = String(query || '').trim() ? ' is-open' : '';
   return `
-    <form class="topbar-search" data-smart-search data-catalog-loading action="/catalog" method="get" autocomplete="off">
+    <form class="topbar-search${openClass}" data-smart-search data-gooey-search data-catalog-loading action="/catalog" method="get" autocomplete="off">
+      <svg class="gooey-search-defs" width="0" height="0" aria-hidden="true" focusable="false">
+        <filter id="topbar-search-goo" x="-20%" y="-60%" width="140%" height="220%" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
+          <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 20 -9" result="goo"/>
+          <feMorphology in="goo" operator="dilate" radius="1" result="outer"/>
+          <feComposite in="outer" in2="goo" operator="out" result="ring"/>
+          <feFlood class="gooey-search-line" result="line"/>
+          <feComposite in="line" in2="ring" operator="in" result="edge"/>
+          <feFlood class="gooey-search-fill" result="fill"/>
+          <feComposite in="fill" in2="goo" operator="in" result="body"/>
+          <feMerge><feMergeNode in="edge"/><feMergeNode in="body"/></feMerge>
+        </filter>
+      </svg>
+      <span class="gooey-search-blobs" aria-hidden="true"><span class="gooey-search-blob-orb"></span><span class="gooey-search-blob-bar"></span></span>
+      <span class="gooey-search-sheen" aria-hidden="true"></span>
+      <button type="button" class="gooey-search-orb" data-gooey-search-orb tabindex="-1" aria-label="${escapeHtml(t('search.submit'))}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
+      <span class="gooey-search-label" aria-hidden="true">${escapeHtml(t('topbar.searchToggle'))}</span>
       <div class="search-suggest-wrap">
         <input id="global-search-input" name="q" value="${escapeHtml(query)}" placeholder="${escapeHtml(placeholderDefault)}" aria-label="${escapeHtml(placeholderDefault)}" data-suggest-input autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="global-search-suggest-list" role="combobox">
         <div class="search-suggest-dropdown" id="global-search-suggest-list" data-suggest-dropdown role="listbox" aria-label="${escapeHtml(t('search.recentTitle'))}" hidden></div>
@@ -876,7 +927,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
   const canDl = canDownloadInUi(user);
   // Flags string encodes rendering-affecting state for cache key
   /* a3: per-card download stays visible alongside batch checkboxes (series / outside-series). */
-  const flags = `${effectiveBatch ? '1' : '0'}${hideDownloads ? '1' : '0'}${canDl ? '1' : '0'}${seriesContext ? 's' : ''}a3`;
+  const flags = `${getLocale()}|${effectiveBatch ? '1' : '0'}${hideDownloads ? '1' : '0'}${canDl ? '1' : '0'}${seriesContext ? 's' : ''}a4`;
   const batchCb = (book) =>
     effectiveBatch
       ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} ${batchBookIdDataAttr(book.id)} aria-label="${escapeHtml(t('batch.selectAria'))}"></label>`
@@ -901,13 +952,12 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
     const html = `
         <article class="card" ${bookCardDataAttrs(book.id)}>
           ${batchCb(book)}
-          ${renderCover(book, { readBookIds })}
+          ${renderCardCover(book, { readBookIds, downloadHtml: cardDl })}
           <div class="meta">
             <h3><a href="${bookPagePath(book.id)}">${titlePrefix}${escapeHtml(book.title)}</a></h3>
             <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `card-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
             ${showSeries ? `<div class="card-series">${renderSeriesLinks(book.seriesList, { limit: 1, popoverId: `card-s-${book.id}`, firstAuthor: book.authorsList?.[0] || firstAuthorValue(book.authors) })}</div>` : ''}
             ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
-            ${cardDl ? `<div class="card-actions">${cardDl}</div>` : ''}
           </div>
         </article>`;
     setCachedCardHtml(cacheKey, html);
@@ -933,13 +983,12 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
     return `
         <article class="card" ${bookCardDataAttrs(book.id)}>
           ${batchCb(book)}
-          ${renderCover(book, { readBookIds })}
+          ${renderCardCover(book, { readBookIds, downloadHtml: renderDownloadMenu(book, { compact: true, user }) })}
           <div class="meta">
             <h3><a href="${bookPagePath(book.id)}">${titlePrefix}${escapeHtml(book.title)}</a></h3>
             <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `fav-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
             ${showSeries ? `<div class="card-series">${renderSeriesLinks(book.seriesList, { limit: 1, popoverId: `card-s-${book.id}`, firstAuthor: book.authorsList?.[0] || firstAuthorValue(book.authors) })}</div>` : ''}
             <div class="card-actions card-actions-favorites">
-              ${batchSelect ? '' : renderDownloadMenu(book, { compact: true, user })}
               <button class="button card-remove-favorite-action" type="button" ${bookIdDataAttr(book.id)} data-bookmark-button="1">${escapeHtml(t('book.remove'))}</button>
             </div>
           </div>
@@ -1282,6 +1331,7 @@ export function renderHomeShelf({ title, href, items, type = 'books', facetBaseP
 
 export function renderSiteLogoImg(className = 'brand-logo') {
   const ui = getUiCustomization();
+  if (ui.showLogo === false) return '';
   const src = ui.logoUrl || '/logo.png';
   return `<img src="${escapeHtml(src)}" alt="" class="${className}" onerror="if(this.dataset.fallback!=='1'){this.dataset.fallback='1';this.src='/logo.png'}else{this.style.display='none'}">`;
 }
@@ -1308,6 +1358,10 @@ function renderWebFontLinks() {
   if (DISPLAY_FONT_WEBFONT && !families.includes(DISPLAY_FONT_WEBFONT)) {
     families.push(DISPLAY_FONT_WEBFONT);
   }
+  const coverWebfont = COVER_TITLE_FONTS[ui.coverTitleFont]?.webfont;
+  if (coverWebfont && !families.includes(coverWebfont)) families.push(coverWebfont);
+  const manuscriptWebfont = COVER_TITLE_FONTS[ui.manuscriptFont]?.webfont;
+  if (manuscriptWebfont && !families.includes(manuscriptWebfont)) families.push(manuscriptWebfont);
   return families.map((f) => `<link href="/fonts/${f}.css" rel="stylesheet">`).join('\n  ');
 }
 
@@ -1319,7 +1373,8 @@ function renderUiFontFaceStyle() {
 }
 
 function renderUiCustomizationStyle() {
-  const vars = getThemeCssVars();
+  const ui = getUiCustomization();
+  const vars = [...getThemeCssVars(), ...coverFallbackToCssVars(ui), ...manuscriptToCssVars(ui)];
   if (!vars.length) return '';
   return `<style>:root{${vars.join(';')}}</style>`;
 }
@@ -1332,9 +1387,16 @@ function uiHtmlRootAttrs() {
     attrs += ' data-ui-sliders="1"';
   }
   if (ui.hasBackground) attrs += ' data-ui-bg="1"';
+  if (ui.hasHeader) {
+    attrs += ' data-ui-header="1"';
+    attrs += ` data-ui-header-fit="${ui.headerSize === 'cover' ? 'cover' : 'contain'}"`;
+  }
+  if (ui.showLogo === false) attrs += ' data-ui-logo="0"';
   if (ui.manuscriptWash === false) attrs += ' data-ui-manuscript="0"';
   if (hasUiThemeShapeConfigured()) attrs += ' data-ui-shape="1"';
   if (hasUiThemeTypographyConfigured()) attrs += ' data-ui-typography="1"';
+  const coverPair = coverFallbackPair();
+  attrs += ` data-cover-fallback="${escapeHtml(coverPair.dark)}" data-cover-fallback-light="${escapeHtml(coverPair.light)}"`;
   return attrs;
 }
 
@@ -1377,7 +1439,7 @@ function renderBottomNav({ user = null, currentPath = '', isAdmin = false } = {}
 
 function renderLoginLogoBlock() {
   const ui = getUiCustomization();
-  if (!ui.showLogoOnLogin) return '';
+  if (ui.showLogo === false || !ui.showLogoOnLogin) return '';
   const src = ui.logoUrl || '/logo.png';
   return `<div class="login-brand-logo"><img src="${escapeHtml(src)}" alt="" class="login-logo-img" onerror="if(this.dataset.fallback!=='1'){this.dataset.fallback='1';this.src='/logo.png'}else{this.parentElement.style.display='none'}"></div>`;
 }
@@ -1468,16 +1530,18 @@ function renderAdminSidebar(currentPath = '/admin', { user = null, csrfToken = '
           </a>
           <p class="admin-sidebar-badge">${escapeHtml(t('admin.badge'))}</p>
         </div>
-        <div class="sidenav-section">${escapeHtml(t('admin.section'))}</div>
         <div class="sidenav-links">
           ${link('/admin', t('admin.nav.dashboard'), true)}
           ${link('/admin/sources', t('admin.nav.sources'))}
           ${link('/admin/duplicates', t('admin.nav.duplicates'))}
           ${link('/admin/content', t('admin.nav.content'))}
+          <div class="sidenav-group-label">${escapeHtml(t('admin.nav.groupAccess'))}</div>
           ${link('/admin/users', t('admin.nav.users'))}
           ${link('/admin/smtp', t('admin.nav.smtp'))}
           ${link('/admin/telegram', t('admin.nav.telegram'))}
+          <div class="sidenav-group-label">${escapeHtml(t('admin.nav.groupSite'))}</div>
           ${link('/admin/appearance', t('admin.nav.appearance'))}
+          <div class="sidenav-group-label">${escapeHtml(t('admin.nav.groupSystem'))}</div>
           ${link('/admin/events', t('admin.nav.events'))}
           ${link('/admin/update', t('admin.nav.backup'))}
         </div>
@@ -1504,6 +1568,8 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
   const userLabel = user?.username || '';
   const htmlLang = getLocale() === 'en' ? 'en' : 'ru';
   const siteDisplay = siteTitleForDisplay();
+  const pageUi = getUiCustomization();
+  const topbarLogo = renderBrandLogoImg('topbar-brand-logo');
   return `<!doctype html>
 <html lang="${htmlLang}"${uiHtmlRootAttrs()}>
 <head>
@@ -1539,11 +1605,15 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
       ? renderAdminSidebar(currentPath, { user, csrfToken })
       : renderUserSidebar({ query, field, stats, user, currentPath, canAccessAdmin, csrfToken })}
     <div class="main-wrap">
+      ${!isAdmin && pageUi.hasHeader && pageUi.headerUrl
+        ? `<div class="site-header-banner" aria-hidden="true"><img src="${escapeHtml(pageUi.headerUrl)}" alt=""></div>`
+        : ''}
       <header class="topbar ${isAdmin ? 'topbar-admin' : ''}" data-topbar>
         <button class="sidebar-toggle" type="button" aria-label="${escapeHtml(t('sidebarOpen'))}" data-sidebar-toggle aria-expanded="false">☰</button>
-        <a href="${isAdmin ? '/admin' : '/'}" class="topbar-brand" title="${escapeHtml(isAdmin ? t('nav.library') : t('nav.home'))}">
-          ${renderBrandLogoImg('topbar-brand-logo')}
-        </a>
+        ${topbarLogo ? `<a href="${isAdmin ? '/admin' : '/'}" class="topbar-brand" title="${escapeHtml(isAdmin ? t('nav.library') : t('nav.home'))}">
+          ${topbarLogo}
+        </a>` : ''}
+        ${isAdmin && title ? `<h1 class="topbar-page-title">${escapeHtml(title)}</h1>` : ''}
         ${!isAdmin ? `<div class="topbar-main">${renderTopbarSearch(query, field)}</div>` : ''}
         <div class="topbar-right">
           ${!isAdmin ? `<button type="button" class="topbar-search-toggle" data-topbar-search-toggle aria-label="${escapeHtml(t('topbar.searchToggle'))}" aria-expanded="false" aria-controls="global-search-input" title="${escapeHtml(t('topbar.searchToggle'))}">⌕</button>` : ''}
@@ -1642,7 +1712,7 @@ export function renderLoginScreen({
         ${extraFieldsHtml}
         ${hiddenFieldsHtml}
         ${captchaHtml}
-        <button type="submit">${escapeHtml(submit)}</button>
+        <button type="submit" class="button-primary">${escapeHtml(submit)}</button>
       </div>`;
   return `<!doctype html>
 <html lang="${htmlLang}"${uiHtmlRootAttrs()}>
@@ -1691,7 +1761,8 @@ export function renderLoginScreen({
       var host = document.querySelector('.login-shell');
       if (!host || host.querySelector('.magic-manuscript')) return;
       var raw = getComputedStyle(root).getPropertyValue('--magic-manuscript').trim();
-      var text = raw.length >= 2 && raw.charAt(0) === '"' && raw.charAt(raw.length - 1) === '"' ? raw.slice(1, -1) : raw;
+      var text = raw.length >= 2 && (raw.charAt(0) === '"' || raw.charAt(0) === "'") && raw.charAt(raw.length - 1) === raw.charAt(0) ? raw.slice(1, -1) : raw;
+      text = text.replace(/\\\\([0-9a-fA-F]{1,6})\\s?/g, function (_, hex) { return String.fromCodePoint(parseInt(hex, 16)); });
       if (!text) return;
       var el = document.createElement('p');
       el.className = 'magic-manuscript';

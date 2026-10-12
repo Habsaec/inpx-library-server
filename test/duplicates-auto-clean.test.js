@@ -6,7 +6,9 @@ import {
   getDuplicateGroups,
   previewAutoClean,
   autoCleanDuplicates,
-  invalidateDuplicatesCache
+  invalidateDuplicatesCache,
+  getDuplicateScanMeta,
+  runDuplicateScan
 } from '../src/inpx.js';
 
 const SOURCE_OLD = 9201;
@@ -173,6 +175,22 @@ after(() => {
   invalidateDuplicatesCache();
 });
 
+test('duplicate search is manual: nothing is listed until runDuplicateScan', () => {
+  db.prepare("DELETE FROM meta WHERE key = 'duplicates_last_scan'").run();
+  db.prepare('DELETE FROM duplicate_scan_keys').run();
+  invalidateDuplicatesCache();
+  assert.equal(getDuplicateScanMeta(), null);
+  const before = getDuplicateGroups({ page: 1, pageSize: 50, filter: 'dup ac page' });
+  assert.equal(before.total, 0);
+  assert.equal(before.groups.length, 0);
+  assert.deepEqual(previewAutoClean(), { totalGroups: 0, totalBooks: 0, willDelete: 0 });
+
+  const meta = runDuplicateScan();
+  assert.ok(meta.scannedAt);
+  assert.equal(getDuplicateScanMeta().scannedAt, meta.scannedAt);
+  assert.ok(previewAutoClean().willDelete >= 6);
+});
+
 test('getDuplicateGroups paginates by author without loading every row', () => {
   const page1 = getDuplicateGroups({ page: 1, pageSize: 1, filter: 'dup ac page' });
   assert.equal(page1.total, 2);
@@ -200,10 +218,12 @@ test('previewAutoClean does not count same lib_id on different archive stems', (
     archiveName: 'fb2-200000-299999.7z'
   });
   invalidateDuplicatesCache();
+  runDuplicateScan();
   const withPair = previewAutoClean();
 
   db.exec(`DELETE FROM books WHERE id IN ('dup-ac-stem-x', 'dup-ac-stem-y')`);
   invalidateDuplicatesCache();
+  runDuplicateScan();
   const withoutPair = previewAutoClean();
 
   assert.equal(withPair.willDelete, withoutPair.willDelete);

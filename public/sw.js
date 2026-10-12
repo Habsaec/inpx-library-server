@@ -3,7 +3,7 @@
  */
 // IMPORTANT: Bump this version when deploying new assets to invalidate browser caches
 const CACHE_VERSION = 4;
-const CACHE_NAME = `inpx-v1-09d34ccf`;
+const CACHE_NAME = `inpx-v1-2fa3d472`;
 const COVER_CACHE_NAME = 'inpx-covers-v1';
 const MAX_COVER_CACHE_ENTRIES = 500;
 
@@ -22,7 +22,8 @@ const STATIC_ASSETS = [
   '/favicon.png',
   '/favicon-192.png',
   '/favicon-512.png',
-  '/book-fallback.png'
+  '/book-fallback.png',
+  '/book-fallback-light.png'
 ];
 
 // `cache: 'reload'` — мимо HTTP-кэша браузера. Старые версии сервера отдавали
@@ -87,8 +88,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cover images: cache-first with size limit (separate cache)
-  if (url.pathname.includes('/cover')) {
+  // Book covers only. /custom/ui/cover is the admin placeholder and must stay
+  // network-fresh: this cache is cache-first and ignores ?v=, so the first
+  // upload would stick forever after a reset.
+  if (url.pathname.includes('/cover') && !url.pathname.startsWith('/custom/ui/')) {
     event.respondWith(
       caches.match(event.request, { cacheName: COVER_CACHE_NAME, ignoreSearch: true }).then((cached) => cached || fetch(event.request).then((resp) => {
         if (resp.ok && resp.headers.get('content-type')?.startsWith('image/')) {

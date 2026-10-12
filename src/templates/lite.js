@@ -88,8 +88,9 @@ export function litePageShell({
   const searchBtn = headerSearch
     ? `<a class="lite-icon-btn" href="${litePath('catalog')}" title="${escapeHtml(t('catalog.title'))}" aria-label="${escapeHtml(t('catalog.title'))}">⌕</a>`
     : '';
-  const headerCenter = headerBrand === 'logo'
-    ? `<a class="lite-header-brand" href="${litePath('/')}" title="${escapeHtml(siteDisplay)}" aria-label="${escapeHtml(siteDisplay)}">${renderSiteLogoImg('lite-header-logo')}</a>`
+  const liteLogo = headerBrand === 'logo' ? renderSiteLogoImg('lite-header-logo') : '';
+  const headerCenter = liteLogo
+    ? `<a class="lite-header-brand" href="${litePath('/')}" title="${escapeHtml(siteDisplay)}" aria-label="${escapeHtml(siteDisplay)}">${liteLogo}</a>`
     : `<h1 class="lite-header-title">${escapeHtml(title)}</h1>`;
   return `<!doctype html>
 <html lang="${htmlLang}" data-theme="light" data-lite="1">

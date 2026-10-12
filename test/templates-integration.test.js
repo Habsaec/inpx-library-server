@@ -186,7 +186,7 @@ test('renderAdminSmtp returns SMTP config page', async () => {
     smtp: {}
   });
   assert.ok(html.includes('action="/admin/smtp"'));
-  assert.equal(html.includes('action="/admin/settings/password-reset"'), false);
+  assert.ok(html.includes('action="/admin/settings/password-reset"'));
 });
 
 test('renderAdminContent includes download filename template select', async () => {
@@ -208,13 +208,13 @@ test('renderAdminContent includes download filename template select', async () =
   assert.ok(html.includes('value="translit-full"'));
 });
 
-test('renderAdminUsers includes password recovery settings', async () => {
-  const { renderAdminUsers } = await import('../src/templates/admin.js');
-  const html = renderAdminUsers({
+test('renderAdminSmtp includes password recovery settings', async () => {
+  const { renderAdminSmtp } = await import('../src/templates/admin.js');
+  const html = renderAdminSmtp({
     user: { username: 'admin', role: 'admin' },
     stats: { totalBooks: 0, totalAuthors: 0, totalSeries: 0, totalGenres: 0, totalLanguages: 1 },
     indexStatus: {},
-    users: [],
+    smtp: {},
     passwordResetEnabled: true,
     publicBaseUrl: 'https://books.example.com',
     csrfToken: 'tok'

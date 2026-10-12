@@ -108,25 +108,26 @@ export function registerBrowseApiRoutes(app) {
     const order = String(req.query.order || '');
     const genres = parseGenreList(req.query.genre);
     const genre = genres.join(',');
+    const genreMode = parseGenreMode(req.query.genreMode);
     const lang = String(req.query.lang || '').trim();
     const format = String(req.query.format || '').trim();
     const year = Number(req.query.year) || 0;
     const minRate = Math.min(5, Math.max(0, Math.floor(Number(req.query.minRate) || 0)));
     const hasSeries = parseHasSeries(req.query.hasSeries);
-    const filterKey = `${genre}:${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
+    const filterKey = `${genre}:${genreMode}:${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
     const user = req.user || null;
     const canUseSharedCache = view === 'recent';
     const username = user?.username || '';
-    const libraryOpts = { page, pageSize, sort, order, genre, lang, format, year, minRate, hasSeries };
+    const libraryOpts = { page, pageSize, sort, order, genre, genreMode, lang, format, year, minRate, hasSeries };
     const result = canUseSharedCache
       ? getStaleOrSchedule(
-        `library:${view}:v5:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
+        `library:${view}:v6:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
         () => getLibraryView(view, libraryOpts),
         PAGE_CACHE_TTL_MS,
         { total: 0, items: [] }
       )
       : view === 'recommended'
-        ? getRecommendedLibraryView({ page, pageSize, username, genre, format, year, minRate, hasSeries, sort })
+        ? getRecommendedLibraryView({ page, pageSize, username, genre, genreMode, lang, format, year, minRate, hasSeries, sort })
         : view === 'continue' || view === 'read'
           ? getStaleOrSchedule(
             `library:${view}:${username}:sort:${sort}:${order}:p${page}:s${pageSize}`,
