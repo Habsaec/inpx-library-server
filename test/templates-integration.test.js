@@ -272,6 +272,21 @@ test('renderHome returns home page HTML', async () => {
   assert.ok(withContinue.lastIndexOf('href="/library/recent"') < withContinue.indexOf('data-home-recommendations-grid'));
 });
 
+test('reading page cards and rows get a remove button only with removeReading', async () => {
+  const { renderBookGrid, renderBookFlibustaList } = await import('../src/templates/shared.js');
+  const book = { id: 'rr-1', title: 'T', authors: 'A', ext: 'fb2', lastOpenedAt: '2026-10-01 10:00:00', openCount: 3 };
+  const plain = renderBookGrid([book]);
+  assert.ok(!plain.includes('data-reading-remove'));
+  const grid = renderBookGrid([book], { removeReading: true });
+  assert.ok(grid.includes('data-reading-remove'));
+  assert.ok(grid.includes('data-reading-last-opened="2026-10-01 10:00:00"'));
+  assert.ok(grid.includes('data-reading-open-count="3"'));
+  // the per-user card must not leak into the shared card cache
+  assert.ok(!renderBookGrid([book]).includes('data-reading-remove'));
+  assert.ok(renderBookFlibustaList([book], { removeReading: true }).includes('data-reading-remove'));
+  assert.ok(!renderBookFlibustaList([book]).includes('data-reading-remove'));
+});
+
 test('renderBook returns book detail page', async () => {
   const { renderBook } = await import('../src/templates/library.js');
   const html = renderBook({

@@ -340,36 +340,30 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
     </div>`;
 }
 
-function renderPremiumHeroCardHtml(book) {
-  return `<section class="premium-hero-card">
-    ${renderHeroCoverWashHtml(book)}
-    ${renderHeroSlideInnerHtml(book, { eager: true, heading: 'h1', showKicker: true })}
-  </section>`;
-}
-
 function renderPremiumHeroCarouselHtml(books, total) {
   if (!books.length) return '';
-  if (books.length === 1) return renderPremiumHeroCardHtml(books[0]);
+  const multi = books.length > 1;
   const slides = `
     <article class="hero-carousel-slide" data-hero-slide>
       ${renderHeroSlideInnerHtml(books[0], { eager: true, heading: 'h2' })}
     </article>`;
-  const dots = books.map((_, index) => `
-    <button type="button" class="hero-carousel-dot${index === 0 ? ' is-active' : ''}" data-hero-dot="${index}" aria-label="${escapeHtml(uiTp('home.heroGoTo', { n: index + 1 }))}" ${index === 0 ? 'aria-current="true"' : ''}></button>`).join('');
+  const dots = multi ? books.map((_, index) => `
+    <button type="button" class="hero-carousel-dot${index === 0 ? ' is-active' : ''}" data-hero-dot="${index}" aria-label="${escapeHtml(uiTp('home.heroGoTo', { n: index + 1 }))}" ${index === 0 ? 'aria-current="true"' : ''}></button>`).join('') : '';
   const more = total > books.length
     ? `<a class="hero-carousel-all" href="/library/continue">${escapeHtml(uiT('home.showAll'))}</a>`
     : '';
-  return `<section class="premium-hero-card hero-carousel" data-hero-carousel aria-roledescription="carousel" aria-label="${escapeHtml(uiT('home.shelfContinue'))}">
+  // One book uses the same markup as the carousel (cover, hover, layout), just without dots and counter.
+  return `<section class="premium-hero-card hero-carousel" data-hero-carousel${multi ? ' aria-roledescription="carousel"' : ''} aria-label="${escapeHtml(uiT('home.shelfContinue'))}">
     ${renderHeroCoverWashHtml(books[0])}
     <div class="hero-carousel-head">
       <div class="hero-card-kicker">${escapeHtml(uiT('home.heroKicker'))}</div>
-      <p class="hero-carousel-status" data-hero-status aria-live="polite">${escapeHtml(uiTp('home.heroSlide', { current: 1, total: books.length }))}</p>
+      ${multi ? `<p class="hero-carousel-status" data-hero-status aria-live="polite">${escapeHtml(uiTp('home.heroSlide', { current: 1, total: books.length }))}</p>` : ''}
       ${more}
     </div>
     <div class="hero-carousel-viewport" data-hero-viewport tabindex="0">
       <div class="hero-carousel-track" data-hero-track>${slides}</div>
     </div>
-    <div class="hero-carousel-dots" data-hero-dots>${dots}</div>
+    ${multi ? `<div class="hero-carousel-dots" data-hero-dots>${dots}</div>` : ''}
   </section>`;
 }
 
@@ -6224,6 +6218,83 @@ function resolveBookIdFromRow(row) {
   return row.dataset.bookId || row.dataset.removeReading || '';
 }
 
+/** «Убрать» на странице «Читаю» (/library/continue): те же запросы и «Отменить», что в профиле. */
+function attachReadingRemoveActions() {
+  if (!document.querySelector('[data-reading-remove]')) return;
+  const bumpHintTotal = (delta) => {
+    const strong = document.querySelector('.list-context-hint strong');
+    if (!strong) return;
+    const n = parseInt(String(strong.textContent).replace(/\D/g, ''), 10);
+    if (Number.isFinite(n)) strong.textContent = formatClientInt(Math.max(0, n + delta));
+  };
+  document.addEventListener('click', async (event) => {
+    const btn = event.target.closest('[data-reading-remove]');
+    if (!btn) return;
+    event.preventDefault();
+    const card = btn.closest('.card, .author-flibusta-book');
+    const bookId = resolveBookIdFromElement(btn);
+    if (!card || !bookId) {
+      showToast(uiT('app.removeReadingFail'), 'error');
+      return;
+    }
+    const title = (card.querySelector('.meta h3 a, .author-flibusta-title')?.textContent || '').trim();
+    const msg = title ? uiTp('app.removeReadingConfirm', { title }) : uiT('app.removeReadingConfirmShort');
+    if (!await confirmAction(msg, { danger: true })) return;
+
+    const lastOpenedAt = btn.dataset.readingLastOpened || '';
+    const openCount = Math.max(1, Number(btn.dataset.readingOpenCount) || 1);
+    btn.disabled = true;
+    try {
+      const r = await fetch(apiReadingHistoryPath(bookId), { method: 'DELETE', credentials: 'same-origin' });
+      if (await handleAuthRequired(r)) return;
+      if (!r.ok) {
+        btn.disabled = false;
+        showToast(uiT('app.removeReadingFail'), 'error');
+        return;
+      }
+    } catch {
+      btn.disabled = false;
+      showToast(uiT('app.networkError'), 'error');
+      return;
+    }
+    card.style.display = 'none';
+    bumpHintTotal(-1);
+    const removeTimer = window.setTimeout(() => {
+      if (card.style.display !== 'none') return;
+      card.remove();
+      // Last card of the page gone: reload to show the empty state / the previous page.
+      if (!document.querySelector('[data-reading-remove]')) window.location.reload();
+    }, 5500);
+    showToast(uiT('app.removedFromReading'), 'success', {
+      actionLabel: uiT('app.undo'),
+      duration: 5000,
+      onAction: () => {
+        window.clearTimeout(removeTimer);
+        void (async () => {
+          try {
+            const restore = await fetch(apiReadingHistoryPath(bookId), {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lastOpenedAt, openCount })
+            });
+            if (await handleAuthRequired(restore)) return;
+            if (!restore.ok) {
+              showToast(uiT('app.restoreReadingFail'), 'error');
+              return;
+            }
+            card.style.display = '';
+            btn.disabled = false;
+            bumpHintTotal(1);
+          } catch {
+            showToast(uiT('app.networkError'), 'error');
+          }
+        })();
+      }
+    });
+  });
+}
+
 function attachProfileRemoveActions() {
   for (const btn of document.querySelectorAll('[data-remove-reading]')) {
     btn.addEventListener('click', async () => {
@@ -7439,6 +7510,7 @@ attachUsersImport();
 attachAdminCollapsePersistence();
 attachUiAppearanceUpload();
 attachProfileRemoveActions();
+attachReadingRemoveActions();
 attachNotesPage();
 attachAccountNavSelect();
 attachAdminRecaptchaDisclosure();

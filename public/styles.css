@@ -2980,7 +2980,6 @@ html[data-theme="light"] .actions-primary .button-primary:hover {
   background: var(--ui-glass-active-bg, var(--button-bg-hover));
   border-color: var(--button-border-hover);
 }
-
 .library-shelf .section-title h2,
 .library-shelf-secondary .section-title h2 {
   letter-spacing: 0.01em;
@@ -4075,7 +4074,8 @@ html[data-theme="light"] .card-series {
   gap: 6px;
 }
 
-.card-remove-favorite-action {
+.card-remove-favorite-action,
+.card-remove-reading-action {
   font-size: 0.6875rem;
   padding: 4px 10px;
 }
@@ -6958,7 +6958,8 @@ html[data-theme="light"] .page-jump::after {
 .author-flibusta-dl .button,
 .author-flibusta-dl .download-menu-trigger,
 .author-flibusta-read,
-.author-flibusta-email {
+.author-flibusta-email,
+.author-flibusta-remove-reading {
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -8324,7 +8325,6 @@ html[data-theme="light"] .sidebar-overlay {
     width: 100%;
     justify-content: center;
   }
-
   .hero-cover-link {
     max-width: 180px;
     margin-inline: auto;
@@ -8820,7 +8820,8 @@ html[data-theme="light"] .sidebar-overlay {
   .author-flibusta-dl .button,
   .author-flibusta-dl .download-menu-trigger,
   .author-flibusta-read,
-  .author-flibusta-email {
+  .author-flibusta-email,
+  .author-flibusta-remove-reading {
     min-height: 32px;
     height: 32px;
     padding: 0 10px;

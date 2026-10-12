@@ -651,11 +651,12 @@ export function renderLibraryView({
       extraHidden: filterHidden
     });
   const listBatch = Boolean(isListView && canDownloadInUi(user) && items.length);
+  const removeReading = Boolean(view === 'continue' && user);
   const booksMarkup = isListView
     ? (listBatch
-      ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderBookFlibustaList(items, { user, batchSelect: true })}</div>`
-      : renderBookFlibustaList(items, { user, batchSelect: false }))
-    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: false, user, readBookIds });
+      ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderBookFlibustaList(items, { user, batchSelect: true, removeReading })}</div>`
+      : renderBookFlibustaList(items, { user, batchSelect: false, removeReading }))
+    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: false, user, readBookIds, removeReading });
   const currentPathQs = viewParams.toString();
   const currentPath = currentPathQs ? `${filterAction}?${currentPathQs}` : filterAction;
   const pageIntro = `

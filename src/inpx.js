@@ -7225,6 +7225,7 @@ export function getLibraryView(view = 'recent', {
       : applyOrder('rh.last_opened_at DESC, rh.open_count DESC, b.id DESC', order);
     const items = db.prepare(`
       SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted,
+             rh.last_opened_at AS lastOpenedAt, rh.open_count AS openCount,
              COALESCE(rp.progress, 0) AS readProgress
       FROM (
         SELECT rh.book_id, MAX(rh.last_opened_at) AS last_opened_at, SUM(COALESCE(rh.open_count, 0)) AS open_count

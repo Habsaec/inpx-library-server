@@ -88,6 +88,12 @@ test('continue view excludes books marked as read', () => {
   assert.equal(items[0].id, '201');
 });
 
+test('continue view items carry lastOpenedAt/openCount so the home hero can undo a removal', () => {
+  const { items } = getLibraryView('continue', { username: USER, pageSize: 24 });
+  assert.ok(items[0].lastOpenedAt);
+  assert.ok(items[0].openCount >= 1);
+});
+
 test('hasContinueBooks ignores finished-only history', () => {
   assert.equal(hasContinueBooks(USER), true);
   db.prepare('DELETE FROM reading_history WHERE username = ? AND book_id = ?').run(USER, '201');

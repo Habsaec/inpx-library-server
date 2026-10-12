@@ -938,7 +938,14 @@ function setCachedCardHtml(key, html) {
 /** Clear all cached card HTML fragments. Call when book metadata is edited. */
 export function clearCardHtmlCache() { _cardHtmlCache.clear(); }
 
-export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false, readBookIds = null, seriesContext = null } = {}) {
+/** «Убрать» из «Читаю» (/library/continue): дата и счётчик открытий нужны для «Отменить». */
+function renderReadingRemoveButton(book, className) {
+  const label = escapeHtml(t('library.removeFromReading'));
+  const openCount = Math.max(1, Number(book.openCount) || 1);
+  return `<button class="button ${className}" type="button" ${bookIdDataAttr(book.id)} data-reading-remove="1" data-reading-last-opened="${escapeHtml(book.lastOpenedAt || '')}" data-reading-open-count="${openCount}" title="${label}" aria-label="${label}">${escapeHtml(t('book.remove'))}</button>`;
+}
+
+export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false, readBookIds = null, seriesContext = null, removeReading = false } = {}) {
   const uniqueItems = uniqueBooksById(items);
   const effectiveBatch = batchSelect && !hideDownloads;
   const canDl = canDownloadInUi(user);
@@ -958,7 +965,8 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
        где прогресс реально присутствует — и полоска не появляется. */
     const progressKey = Math.round(Number(book.readProgress) || 0);
     const cacheKey = _cardCacheKey(book, `${flags}${isRead ? '1' : '0'}${book.libRate || 0}|p${progressKey}|d${Number(book.deleted) ? 1 : 0}`);
-    const cached = getCachedCardHtml(cacheKey);
+    // The reading page card embeds per-user open history, so it is never shared through the cache.
+    const cached = removeReading ? null : getCachedCardHtml(cacheKey);
     if (cached) return cached;
     const cardDl = hideDownloads ? '' : renderDownloadMenu(book, { compact: true, user });
     const seriesInfo = seriesContext
@@ -975,9 +983,10 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
             <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `card-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
             ${showSeries ? `<div class="card-series">${renderSeriesLinks(book.seriesList, { limit: 1, popoverId: `card-s-${book.id}`, firstAuthor: book.authorsList?.[0] || firstAuthorValue(book.authors) })}</div>` : ''}
             ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
+            ${removeReading ? `<div class="card-actions card-actions-favorites">${renderReadingRemoveButton(book, 'card-remove-reading-action')}</div>` : ''}
           </div>
         </article>`;
-    setCachedCardHtml(cacheKey, html);
+    if (!removeReading) setCachedCardHtml(cacheKey, html);
     return html;
   }).join('')}
     </div>`;
@@ -1141,7 +1150,7 @@ function renderAuthorListRating(book) {
 }
 
 function renderAuthorFlibustaBookRow(book, {
-  user = null, showSeriesNo = true, batchSelect = false, showAuthor = false
+  user = null, showSeriesNo = true, batchSelect = false, showAuthor = false, removeReading = false
 } = {}) {
   const no = showSeriesNo ? formatAuthorListSeriesNo(book) : '';
   const noHtml = no ? `<span class="author-flibusta-no">${escapeHtml(no)}</span>` : '';
@@ -1163,7 +1172,8 @@ function renderAuthorFlibustaBookRow(book, {
   const emailBtn = canSendToEmailInUi(user)
     ? `<button class="button author-flibusta-email" type="button" ${bookIdDataAttr(book.id)} data-send-to-ereader="1">${escapeHtml(t('book.toEmail'))}</button>`
     : '';
-  const actions = `<span class="author-flibusta-actions">${readBtn}${dl}${emailBtn}</span>`;
+  const removeBtn = removeReading ? renderReadingRemoveButton(book, 'author-flibusta-remove-reading') : '';
+  const actions = `<span class="author-flibusta-actions">${readBtn}${dl}${emailBtn}${removeBtn}</span>`;
   const deletedHtml = Number(book.deleted)
     ? `<span class="deleted-badge deleted-badge--inline" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>`
     : '';
@@ -1229,7 +1239,7 @@ export function renderAuthorFlibustaList({
 /**
  * Flat Flibusta-style book list for catalog / search / novinki (title + author rows).
  */
-export function renderBookFlibustaList(books = [], { user = null, batchSelect = false } = {}) {
+export function renderBookFlibustaList(books = [], { user = null, batchSelect = false, removeReading = false } = {}) {
   const uniqueItems = uniqueBooksById(books);
   if (!uniqueItems.length) return '';
   const rows = uniqueItems
@@ -1237,6 +1247,7 @@ export function renderBookFlibustaList(books = [], { user = null, batchSelect = 
       user,
       showSeriesNo: false,
       batchSelect,
+      removeReading,
       showAuthor: true
     }))
     .join('');
