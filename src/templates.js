@@ -25,7 +25,10 @@ export {
   renderShelfDetail,
   renderReader,
   renderProfile,
-  renderProfileSettings
+  renderProfileSettings,
+  renderMyLibrary,
+  renderReaderBookmarksPage,
+  renderReaderNotesPage
 } from './templates/library.js';
 
 // Admin templates

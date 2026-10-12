@@ -3807,6 +3807,141 @@ export function getAllReaderAnnotationsPage(username, { page = 1, pageSize = 100
   return { items, total, page: safePageNum, pageSize: size };
 }
 
+export const READER_ANNOTATION_COLORS = ['yellow', 'green', 'blue', 'pink', 'underline'];
+const ANNOTATION_COLOR_RANK_SQL = `CASE ra.color WHEN 'yellow' THEN 0 WHEN 'green' THEN 1 WHEN 'blue' THEN 2 WHEN 'pink' THEN 3 WHEN 'underline' THEN 4 ELSE 5 END`;
+const ANNOTATION_QUERY_MAX_IDS = 5000;
+
+function normalizeAnnotationIds(ids) {
+  if (!Array.isArray(ids)) return null;
+  const out = [];
+  for (const raw of ids) {
+    const id = Number(raw);
+    if (Number.isInteger(id) && id > 0) out.push(id);
+    if (out.length >= ANNOTATION_QUERY_MAX_IDS) break;
+  }
+  return out;
+}
+
+function annotationFilterSql(username, { color = '', bookId = '', q = '', ids = null } = {}, { skipColor = false } = {}) {
+  const where = ['ra.username = ?'];
+  const params = [username];
+  if (!skipColor && READER_ANNOTATION_COLORS.includes(color)) {
+    where.push('ra.color = ?');
+    params.push(color);
+  }
+  if (bookId) {
+    where.push('ra.book_id = ?');
+    params.push(String(bookId));
+  }
+  const needle = String(q || '').trim().toLowerCase().slice(0, 200);
+  if (needle) {
+    const like = `%${needle.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    where.push(`(lower_unicode(ra.text) LIKE ? ESCAPE '\\' OR lower_unicode(ra.note) LIKE ? ESCAPE '\\' OR lower_unicode(b.title) LIKE ? ESCAPE '\\')`);
+    params.push(like, like, like);
+  }
+  const idList = normalizeAnnotationIds(ids);
+  if (idList) {
+    if (idList.length) {
+      where.push(`ra.id IN (${idList.map(() => '?').join(',')})`);
+      params.push(...idList);
+    } else {
+      where.push('0');
+    }
+  }
+  return { where: where.join(' AND '), params };
+}
+
+/**
+ * Заметки пользователя с фильтрами (цвет, книга, текст, id) и сортировкой; книги/цвета идут подряд для группировки.
+ * `limit` > 0 — без пагинации (экспорт).
+ */
+export function queryReaderAnnotations(username, {
+  color = '', bookId = '', q = '', ids = null, sort = 'new', group = 'book', page = 1, pageSize = 50, limit = 0
+} = {}) {
+  const { where, params } = annotationFilterSql(username, { color, bookId, q, ids });
+  const bookEdge = (fn) => `(SELECT ${fn}(x.created_at) FROM reader_annotations x WHERE x.username = ra.username AND x.book_id = ra.book_id)`;
+  const oldestFirst = sort === 'old';
+  const inBook = oldestFirst || sort === 'title' ? 'ra.created_at ASC, ra.id ASC' : 'ra.created_at DESC, ra.id DESC';
+  let orderBy;
+  if (group === 'color') {
+    orderBy = `${ANNOTATION_COLOR_RANK_SQL}, ${sort === 'title' ? 'b.title COLLATE NOCASE, ra.created_at ASC, ra.id ASC' : inBook}`;
+  } else if (sort === 'title') {
+    orderBy = `b.title COLLATE NOCASE, ra.book_id, ${inBook}`;
+  } else {
+    orderBy = `${bookEdge(oldestFirst ? 'MIN' : 'MAX')} ${oldestFirst ? 'ASC' : 'DESC'}, ra.book_id, ${inBook}`;
+  }
+  const safePageNum = Math.max(1, Math.floor(Number(page) || 1));
+  const size = limit > 0
+    ? Math.min(ANNOTATION_QUERY_MAX_IDS, Math.floor(limit))
+    : Math.min(200, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const offset = limit > 0 ? 0 : (safePageNum - 1) * size;
+  const from = `FROM reader_annotations ra JOIN active_books b ON b.id = ra.book_id WHERE ${where}`;
+  const items = db.prepare(`
+    SELECT ra.id, ra.book_id AS bookId, ra.cfi, ra.text, ra.note, ra.color, ra.created_at AS createdAt,
+           b.title AS bookTitle, b.authors, b.ext
+    ${from}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `).all(...params, size, offset);
+  const total = db.prepare(`SELECT COUNT(*) AS n ${from}`).get(...params)?.n || 0;
+  return { items, total, page: safePageNum, pageSize: size };
+}
+
+/** Счётчики по цветам (с учётом книги и поиска, без фильтра цвета) и список книг с заметками — для панели фильтров. */
+export function getReaderAnnotationFacets(username, { bookId = '', q = '' } = {}) {
+  const { where, params } = annotationFilterSql(username, { bookId, q }, { skipColor: true });
+  const rows = db.prepare(`
+    SELECT ra.color AS color, COUNT(*) AS n
+    FROM reader_annotations ra JOIN active_books b ON b.id = ra.book_id
+    WHERE ${where}
+    GROUP BY ra.color
+  `).all(...params);
+  const colorCounts = { all: 0 };
+  for (const color of READER_ANNOTATION_COLORS) colorCounts[color] = 0;
+  for (const row of rows) {
+    colorCounts.all += row.n;
+    if (row.color in colorCounts) colorCounts[row.color] = row.n;
+  }
+  const books = db.prepare(`
+    SELECT ra.book_id AS bookId, b.title AS title, COUNT(*) AS n
+    FROM reader_annotations ra JOIN active_books b ON b.id = ra.book_id
+    WHERE ra.username = ?
+    GROUP BY ra.book_id
+    ORDER BY b.title COLLATE NOCASE
+    LIMIT 300
+  `).all(username);
+  return { colorCounts, books };
+}
+
+function touchAnnotationBooks(username, bookIds) {
+  for (const bookId of new Set(bookIds)) touchReaderBookRevision(username, bookId, 'annotations_rev');
+}
+
+/** Удаляет заметки пользователя по id (чужие id игнорируются); возвращает число удалённых. */
+export const deleteReaderAnnotationsBulk = db.transaction((username, ids) => {
+  const list = normalizeAnnotationIds(ids) || [];
+  if (!list.length) return 0;
+  const marks = list.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT id, book_id FROM reader_annotations WHERE username = ? AND id IN (${marks})`).all(username, ...list);
+  if (!rows.length) return 0;
+  db.prepare(`DELETE FROM reader_annotations WHERE username = ? AND id IN (${marks})`).run(username, ...list);
+  touchAnnotationBooks(username, rows.map((r) => r.book_id));
+  return rows.length;
+});
+
+/** Меняет цвет заметок пользователя по id; возвращает число изменённых. */
+export const setReaderAnnotationsColorBulk = db.transaction((username, ids, color) => {
+  if (!READER_ANNOTATION_COLORS.includes(color)) return 0;
+  const list = normalizeAnnotationIds(ids) || [];
+  if (!list.length) return 0;
+  const marks = list.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT id, book_id FROM reader_annotations WHERE username = ? AND id IN (${marks})`).all(username, ...list);
+  if (!rows.length) return 0;
+  db.prepare(`UPDATE reader_annotations SET color = ? WHERE username = ? AND id IN (${marks})`).run(color, username, ...list);
+  touchAnnotationBooks(username, rows.map((r) => r.book_id));
+  return rows.length;
+});
+
 let _stmtAddReaderAnnotation = null;
 export function addReaderAnnotation(username, bookId, cfi, text, note, color) {
   _stmtAddReaderAnnotation ??= db.prepare('INSERT INTO reader_annotations (username, book_id, cfi, text, note, color) VALUES (?, ?, ?, ?, ?, ?)');
@@ -3830,6 +3965,10 @@ export function updateReaderAnnotation(id, username, { note, color } = {}) {
   } else if (hasColor) {
     _stmtUpdReaderAnnotationColor ??= db.prepare('UPDATE reader_annotations SET color = ? WHERE id = ? AND username = ?');
     _stmtUpdReaderAnnotationColor.run(String(color), id, username);
+  }
+  if (hasNote || hasColor) {
+    const row = db.prepare('SELECT book_id FROM reader_annotations WHERE id = ? AND username = ?').get(id, username);
+    if (row?.book_id) touchReaderBookRevision(username, row.book_id, 'annotations_rev');
   }
 }
 
@@ -4039,6 +4178,49 @@ export function getUserStats(username) {
     readerBookmarksCount: row?.readerBookmarksCount || 0,
     readerAnnotationsCount: row?.readerAnnotationsCount || 0,
     createdAt: row?.createdAt || null
+  };
+}
+
+let _stmtReadByYear = null;
+let _stmtReadTopAuthors = null;
+let _stmtReadTopGenres = null;
+/** Статистика профиля по «Прочитанному»: по годам, топ авторов и жанров (read_books одного пользователя — небольшая выборка). */
+export function getUserReadingStats(username) {
+  _stmtReadByYear ??= db.prepare(`
+    SELECT substr(rb.created_at, 1, 4) AS year, COUNT(*) AS count
+    FROM read_books rb
+    JOIN active_books b ON b.id = rb.book_id
+    WHERE rb.username = ? AND substr(rb.created_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'
+    GROUP BY year
+    ORDER BY year DESC
+    LIMIT 8
+  `);
+  _stmtReadTopAuthors ??= db.prepare(`
+    SELECT a.name AS name, a.display_name AS displayName, COUNT(*) AS count
+    FROM read_books rb
+    JOIN active_books b ON b.id = rb.book_id
+    JOIN book_authors ba ON ba.book_id = rb.book_id
+    JOIN authors a ON a.id = ba.author_id
+    WHERE rb.username = ?
+    GROUP BY a.id
+    ORDER BY count DESC, a.name
+    LIMIT 5
+  `);
+  _stmtReadTopGenres ??= db.prepare(`
+    SELECT g.name AS name, COUNT(*) AS count
+    FROM read_books rb
+    JOIN active_books b ON b.id = rb.book_id
+    JOIN book_genres bg ON bg.book_id = rb.book_id
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    WHERE rb.username = ?
+    GROUP BY g.id
+    ORDER BY count DESC, g.name
+    LIMIT 5
+  `);
+  return {
+    readByYear: _stmtReadByYear.all(username),
+    topAuthors: _stmtReadTopAuthors.all(username),
+    topGenres: _stmtReadTopGenres.all(username)
   };
 }
 

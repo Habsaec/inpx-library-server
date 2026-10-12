@@ -8,12 +8,12 @@ import { verifyPassword, timingSafeStringEqual } from '../auth.js';
 import { createSessionValue } from '../services/session.js';
 import { isRateLimited, registerFailedLogin, clearLoginAttempts, getClientKey, isPasswordResetRateLimited, registerPasswordResetAttempt } from '../services/rate-limiter.js';
 import { DUMMY_PASSWORD_HASH } from '../constants.js';
-import { getIndexStatus, getReadingHistory } from '../inpx.js';
+import { getIndexStatus } from '../inpx.js';
 import {
   getUserByUsername, getSetting, createUser, changePassword,
   setEreaderEmail, getEreaderEmail, getUserStats,
   getUserBrowseViewPrefs, setUserBrowseViewPrefs,
-  getAllReaderBookmarks, getAllReaderAnnotations, decryptValue,
+  getUserReadingStats, decryptValue,
   createTelegramLinkToken, unlinkTelegram, getTelegramBotUsername, resolveTelegramRuntimeConfig, setMeta,
   isTelegramBotAllowedForUser,
   isEreaderEmailAllowedForUser,
@@ -94,9 +94,7 @@ export function registerAuthRoutes(app, deps) {
       stats: getCachedStats(),
       indexStatus: getIndexStatus(),
       userStats: getUserStats(user.username),
-      recentBooks: getReadingHistory(user.username, 5),
-      readerBookmarks: getAllReaderBookmarks(user.username, 10),
-      readerAnnotations: getAllReaderAnnotations(user.username, 10),
+      readingStats: getUserReadingStats(user.username),
       flash,
       csrfToken
     };

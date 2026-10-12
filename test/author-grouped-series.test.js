@@ -135,3 +135,36 @@ test('author series list sorts by name, book count, and newest book', () => {
   const beta = getAuthorBooksGrouped('sort,author', 'count').series.find((s) => s.name === 'beta');
   assert.deepEqual(beta.books.map((b) => b.id), ['b1', 'b2', 'b3']);
 });
+
+test('author series flagged authorSeries only when every book of the series is by the author', () => {
+  initDb();
+  db.exec('DELETE FROM book_series');
+  db.exec('DELETE FROM book_authors');
+  db.exec('DELETE FROM books');
+  db.exec('DELETE FROM authors');
+  db.exec('DELETE FROM series_catalog');
+  db.exec('DELETE FROM sources WHERE id = 1');
+
+  db.prepare(`INSERT INTO sources (id, name, type, path, enabled) VALUES (1, 'test-src', 'folder', '/', 1)`).run();
+  db.prepare(`
+    INSERT INTO authors (name, display_name, sort_name, search_name, book_count)
+    VALUES ('own,author', 'Own Author', 'own author', 'own author', 2)
+  `).run();
+  db.prepare(`
+    INSERT INTO series_catalog (name, display_name, sort_name, search_name, book_count)
+    VALUES ('own series', 'Own Series', 'own series', 'own series', 1),
+           ('mixed series', 'Mixed Series', 'mixed series', 'mixed series', 3)
+  `).run();
+  const authorId = db.prepare('SELECT id FROM authors WHERE name = ?').get('own,author').id;
+  const seriesId = (name) => db.prepare('SELECT id FROM series_catalog WHERE name = ?').get(name).id;
+  insertBook('o1', 'Own One', 'Own Series', 'own series');
+  insertBook('o2', 'Mixed One', 'Mixed Series', 'mixed series');
+  db.prepare('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)').run('o1', authorId);
+  db.prepare('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)').run('o2', authorId);
+  db.prepare('INSERT INTO book_series (book_id, series_id, series_no) VALUES (?, ?, ?)').run('o1', seriesId('own series'), '1');
+  db.prepare('INSERT INTO book_series (book_id, series_id, series_no) VALUES (?, ?, ?)').run('o2', seriesId('mixed series'), '1');
+
+  const { series } = getAuthorBooksGrouped('own,author', 'title', '');
+  assert.equal(series.find((s) => s.name === 'own series').authorSeries, true);
+  assert.equal(series.find((s) => s.name === 'mixed series').authorSeries, false);
+});

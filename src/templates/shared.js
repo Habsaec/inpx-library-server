@@ -782,14 +782,16 @@ export function renderScopeDownloadMenu(batchContext, { user = null } = {}) {
 /* Алфавитный указатель убран — есть фильтрация */
 
 function renderSidebarNavigation(user, currentPath = '/', stats = null) {
+  const pathOnly = String(currentPath || '').split('?')[0];
   const link = (href, label, exact = false) => {
     if (!currentPath) {
       return `<a href="${href}">${label}</a>`;
     }
-    const active = exact ? currentPath === href : currentPath === href || currentPath.startsWith(`${href}/`);
+    const active = exact ? pathOnly === href : pathOnly === href || pathOnly.startsWith(`${href}/`);
     return `<a class="${active ? 'active' : ''}" href="${href}">${label}</a>`;
   };
   const showLanguages = (stats?.totalLanguages ?? 2) > 1;
+  const groupLabel = (key) => `<div class="sidenav-group-label">${escapeHtml(t(key))}</div>`;
 
   return `
     <div class="sidenav-links">
@@ -797,27 +799,27 @@ function renderSidebarNavigation(user, currentPath = '/', stats = null) {
       ${link('/catalog', t('nav.catalog'), true)}
       ${link('/library/recent', t('nav.recent'), true)}
       ${user ? link('/library/recommended', t('nav.recommended'), true) : ''}
+      ${groupLabel('nav.groupBrowse')}
       ${link('/authors', t('nav.authors'), true)}
       ${link('/series', t('nav.series'), true)}
       ${link('/genres', t('nav.genres'), true)}
       ${showLanguages ? link('/languages', t('nav.languages'), true) : ''}
-      ${user ? link('/profile', t('nav.profile'), true) : ''}
+      ${user ? `
+      ${groupLabel('nav.groupMy')}
+      ${link('/library/continue', t('nav.reading'), true)}
+      ${link('/favorites', t('nav.favorites'))}
+      ${link('/shelves', t('nav.shelves'))}
+      ${link('/library/read', t('library.title.read'), true)}
+      ${link('/library/bookmarks', t('nav.bookmarks'), true)}
+      ${link('/library/notes', t('nav.notes'), true)}` : ''}
     </div>`;
 }
 
-// Единая перекрёстная навигация по личным разделам. Каждый пункт — отдельная
-// страница (дёшево по рендеру), но визуально это выглядит как один раздел с
-// вкладками. Переиспользуем стиль .view-switcher для единообразия.
-export function renderAccountNav(active = '', counts = {}) {
-  const items = [
-    { key: 'activity', label: t('profile.tabActivity'), href: '/profile' },
-    { key: 'books', label: t('favorites.books'), href: '/favorites?view=books' },
-    { key: 'series', label: t('favorites.series'), href: '/favorites?view=series' },
-    { key: 'authors', label: t('favorites.authors'), href: '/favorites?view=authors' },
-    { key: 'shelves', label: t('nav.shelves'), href: '/shelves' },
-    { key: 'read', label: t('profile.readBooks'), href: '/library/read' },
-    { key: 'settings', label: t('profile.tabSettings'), href: '/profile/settings' }
-  ];
+// Вкладки внутри раздела (избранное, профиль). Каждый пункт — отдельная
+// страница (дёшево по рендеру), но визуально это один раздел с вкладками.
+// Переиспользуем стиль .view-switcher для единообразия.
+function renderSectionTabs(items, active = '', counts = {}, ariaKey = 'profile.tablistAria') {
+  counts = counts || {};
   const navLinks = items.map((it) => {
     const count = counts[it.key];
     const badge = count != null ? ` <span class="view-switcher-count">${formatLocaleInt(count)}</span>` : '';
@@ -831,13 +833,28 @@ export function renderAccountNav(active = '', counts = {}) {
   }).join('');
   return `
     <div class="account-nav-shell">
-      <select class="account-nav-select" data-account-nav-select aria-label="${escapeHtml(t('profile.tablistAria'))}">
+      <select class="account-nav-select" data-account-nav-select aria-label="${escapeHtml(t(ariaKey))}">
         ${selectOptions}
       </select>
-      <nav class="view-switcher account-nav account-nav-tabs" aria-label="${escapeHtml(t('profile.tablistAria'))}">
+      <nav class="view-switcher account-nav account-nav-tabs" aria-label="${escapeHtml(t(ariaKey))}">
         ${navLinks}
       </nav>
     </div>`;
+}
+
+export function renderFavoritesNav(active = 'books', counts = {}) {
+  return renderSectionTabs([
+    { key: 'books', label: t('favorites.books'), href: '/favorites?view=books' },
+    { key: 'series', label: t('favorites.series'), href: '/favorites?view=series' },
+    { key: 'authors', label: t('favorites.authors'), href: '/favorites?view=authors' }
+  ], active, counts, 'favorites.tablistAria');
+}
+
+export function renderProfileNav(active = 'stats') {
+  return renderSectionTabs([
+    { key: 'stats', label: t('profile.tabStats'), href: '/profile' },
+    { key: 'settings', label: t('profile.tabSettings'), href: '/profile/settings' }
+  ], active, {}, 'profile.tablistAria');
 }
 
 function renderTopbarSearch(query = '', field = 'all') {
@@ -1044,20 +1061,39 @@ export function renderAuthorFacetSeriesList(series = [], outsideSeries = null, r
           </div>
         </a>`
     : '';
-  return `
-    <div class="table-list entity-list author-facet-series-entity-list">
-      ${series.map(
-    (s) => `
+  const seriesRow = (s) => `
         <a class="table-row table-row-link" href="/facet/series/${encodeURIComponent(s.name)}${authorParam}">
           <div style="display:flex;align-items:center">
             <span><strong>${escapeHtml(s.displayName || s.name)}</strong><br>
             <span class="muted">${countLabel('book', s.bookCount)}</span></span>
             ${seriesBadge(s.name)}
           </div>
-        </a>`
-  ).join('')}
+        </a>`;
+  const { own, shared } = splitAuthorSeries(series);
+  const ownRows = own.map(seriesRow).join('');
+  const sharedBlock = shared.length
+    ? `
+    <h3 class="author-facet-shared-heading">${escapeHtml(t('authorPage.sharedSeries'))}</h3>
+    <div class="table-list entity-list author-facet-series-entity-list">
+      ${shared.map(seriesRow).join('')}
+    </div>`
+    : '';
+  const ownBlock = ownRows || outsideRow
+    ? `
+    <div class="table-list entity-list author-facet-series-entity-list">
+      ${ownRows}
       ${outsideRow}
-    </div>`;
+    </div>`
+    : '';
+  return `${ownBlock}${sharedBlock}`;
+}
+
+/** Авторские серии (все книги серии — этого автора) отдельно от межавторских/издательских. */
+function splitAuthorSeries(series = []) {
+  const own = [];
+  const shared = [];
+  for (const s of series || []) (s.authorSeries === false ? shared : own).push(s);
+  return { own, shared };
 }
 
 export function renderAuthorFacetStandaloneBookRows(books = [], batchSelect = false) {
@@ -1158,7 +1194,7 @@ export function renderAuthorFlibustaList({
   const groupSelect = (ariaLabel) => (batchSelect
     ? `<label class="author-flibusta-series-batch" title="${escapeHtml(ariaLabel)}"><input type="checkbox" class="author-flibusta-series-cb" aria-label="${escapeHtml(ariaLabel)}"></label>`
     : '');
-  const seriesBlocks = (series || [])
+  const renderSeriesBlocks = (list) => list
     .filter((s) => Array.isArray(s.books) && s.books.length)
     .map((s) => {
       const href = `/facet/series/${encodeURIComponent(s.name)}${authorParam}`;
@@ -1174,14 +1210,20 @@ export function renderAuthorFlibustaList({
       </section>`;
     })
     .join('');
+  const { own, shared } = splitAuthorSeries(series);
+  const seriesBlocks = renderSeriesBlocks(own);
+  const sharedBlocks = renderSeriesBlocks(shared);
+  const sharedSection = sharedBlocks
+    ? `<h3 class="author-facet-shared-heading">${escapeHtml(t('authorPage.sharedSeries'))}</h3>${sharedBlocks}`
+    : '';
   const standaloneBlock = standaloneBooks.length
     ? `<section class="author-flibusta-group">
         <h3 class="author-flibusta-series-title">${groupSelect(t('authorPage.selectOutsideSeries'))}<span>${escapeHtml(t('authorPage.outsideSeries'))}</span></h3>
         <ul class="author-flibusta-books">${standaloneBooks.map((book) => renderAuthorFlibustaBookRow(book, { ...rowOpts, showSeriesNo: false })).join('')}</ul>
       </section>`
     : '';
-  if (!seriesBlocks && !standaloneBlock) return '';
-  return `<div class="author-flibusta-list">${seriesBlocks}${standaloneBlock}</div>`;
+  if (!seriesBlocks && !standaloneBlock && !sharedBlocks) return '';
+  return `<div class="author-flibusta-list">${seriesBlocks}${standaloneBlock}${sharedSection}</div>`;
 }
 
 /**
@@ -1416,6 +1458,12 @@ function renderThemeBootScript() {
   </script>`;
 }
 
+/** Личные разделы («Моя библиотека»): пункты сайдбара и активность хаба в нижней навигации. */
+const MY_LIBRARY_PATHS = [
+  '/library/my', '/library/continue', '/favorites', '/shelves',
+  '/library/read', '/library/bookmarks', '/library/notes'
+];
+
 function renderBottomNav({ user = null, currentPath = '', isAdmin = false } = {}) {
   if (isAdmin) return '';
   const path = String(currentPath || '');
@@ -1424,7 +1472,7 @@ function renderBottomNav({ user = null, currentPath = '', isAdmin = false } = {}
     `<a class="bottom-nav-item${active ? ' is-active' : ''}" href="${escapeHtml(href)}"><span>${escapeHtml(label)}</span></a>`;
   const homeActive = path === '/' || path === '';
   const catalogActive = path.startsWith('/catalog');
-  const favActive = path.startsWith('/favorites');
+  const myActive = MY_LIBRARY_PATHS.some((p) => path === p || path.startsWith(`${p}/`) || path.startsWith(`${p}?`));
   const profileActive = path.startsWith('/profile');
   const loginActive = path.startsWith('/login');
   return `
@@ -1432,7 +1480,7 @@ function renderBottomNav({ user = null, currentPath = '', isAdmin = false } = {}
       ${item('/', t('nav.bottomHome'), homeActive)}
       ${item('/catalog', t('nav.bottomCatalog'), catalogActive)}
       ${isAuthed
-      ? `${item('/favorites', t('nav.bottomFavorites'), favActive)}${item('/profile', t('nav.bottomProfile'), profileActive)}`
+      ? `${item('/library/my', t('nav.bottomMyLibrary'), myActive)}${item('/profile', t('nav.bottomProfile'), profileActive)}`
       : item('/login', t('nav.bottomLogin'), loginActive)}
     </nav>`;
 }

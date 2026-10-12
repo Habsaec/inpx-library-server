@@ -22,6 +22,7 @@ import { registerOidcRoutes } from './routes/oidc.js';
 import { registerDownloadRoutes } from './routes/download.js';
 import { registerReaderRoutes } from './routes/reader.js';
 import { registerUserApiRoutes } from './routes/user-api.js';
+import { registerNotesRoutes } from './routes/notes.js';
 import { setDisabledDownloadFormats } from './download-formats.js';
 import { setDownloadFilenameStyle } from './download-filename.js';
 import { setFb2WebpMode } from './fb2-webp-images.js';
@@ -86,6 +87,9 @@ import {
   renderOperations,
   renderShelves,
   renderShelfDetail,
+  renderMyLibrary,
+  renderReaderBookmarksPage,
+  renderReaderNotesPage,
   renderAdminSmtp,
   renderAdminTelegram,
   renderAdminUpdate,
@@ -1061,7 +1065,8 @@ registerLibraryRoutes(app, {
   templates: {
     renderHome, renderCatalog, renderSearchOverview, renderLibraryView, renderBrowsePage,
     renderFacetBooks, renderAuthorFacetPage, renderAuthorOutsideSeriesPage,
-    renderBook, renderFavorites, renderShelves, renderShelfDetail, renderReader
+    renderBook, renderFavorites, renderShelves, renderShelfDetail, renderReader,
+    renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage
   }
 });
 
@@ -1070,6 +1075,7 @@ registerLiteRoutes(app, { getCachedStats });
 const batchEmailLocks = new Set();
 registerReaderRoutes(app);
 registerUserApiRoutes(app, { batchEmailLocks });
+registerNotesRoutes(app, { batchEmailLocks });
 registerAdminRoutes(app, {
   operationsState,
   getOperationsSnapshot,

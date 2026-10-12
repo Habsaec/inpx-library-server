@@ -10,7 +10,7 @@ import {
   renderStatsRibbon, renderBookMetaList, renderSkeletonGrid,
   renderAuthorFacetSeriesList, renderAuthorFlibustaList, renderBookFlibustaList,
   renderFacetSummaryBlock,
-  renderSectionIntro, renderFacetHero, renderAlert, renderAccountNav, renderAppPairWidget,
+  renderSectionIntro, renderFacetHero, renderAlert, renderFavoritesNav, renderProfileNav, renderAppPairWidget,
   renderListRemoveBtn, bookIdDataAttr, bookCardDataAttrs, batchBookIdDataAttr,
   firstAuthorValue, uniqueBooksById, batchSelectInputAttrs, safeDomIdPart,
   browseTotalLine, canDownloadInUi, canSendToEmailInUi, renderAuthorLinks, renderSeriesLinks, renderWelcomeQuoteAuthor, isWelcomeQuoteAuthorLinkable,
@@ -23,6 +23,7 @@ import {
   formatGenreLabel, parseGenreCodes
 } from './shared.js';
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
+import { encodeBookRef } from '../utils/book-ref.js';
 
 export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false }) {
   const isAuthenticated = Boolean(user);
@@ -552,17 +553,10 @@ export function renderCatalog({
 export function renderLibraryView({
   view, title, subtitle = '', items, total, page, pageSize, type = '', itemType = '',
   sort = 'title', order = '', listView = false, user, stats, indexStatus, csrfToken = '',
-  readBookIds = null, readSeriesNames = null, computing = false, userStats = null,
+  readBookIds = null, readSeriesNames = null, computing = false,
   genres = [], lang = '', format = '', year = 0, minRate = 0, hasSeries = null, genreMode = 'or',
   langs = [], formats = [], genreOptions = []
 }) {
-  const navCounts = userStats ? {
-    books: userStats.bookmarkCount,
-    authors: userStats.favoriteAuthorsCount,
-    series: userStats.favoriteSeriesCount,
-    shelves: userStats.shelvesCount,
-    read: userStats.readBooksCount
-  } : null;
   const emptyStates = {
     recent: {
       title: t('library.empty.recent.title'),
@@ -684,7 +678,6 @@ export function renderLibraryView({
   }
   const content = `
     ${pageIntro}
-    ${view === 'read' ? renderAccountNav('read', navCounts) : ''}
     ${items.length
       ? `<div class="list-context-hint list-context-hint-spacious">${escapeHtml(countHintLabel)}: <strong>${totalNum}</strong> ${totalBookWord}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
       <section class="library-shelf library-shelf-primary">
@@ -1010,7 +1003,7 @@ export function renderFavorites({
         <p>${escapeHtml(t('favorites.subtitle'))}</p>
       </div>
     </section>
-    ${renderAccountNav(currentView, navCounts)}
+    ${renderFavoritesNav(currentView, navCounts)}
     ${sectionContent}
     </div>`;
   return pageShell({ title: t('favorites.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('favorites.title') }], currentPath: '/favorites', csrfToken, readBookIds });
@@ -1375,14 +1368,7 @@ export function renderAuthorOutsideSeriesPage({
   });
 }
 
-export function renderShelves({ shelves = [], user, stats, indexStatus, csrfToken = '', userStats = null }) {
-  const navCounts = userStats ? {
-    books: userStats.bookmarkCount,
-    authors: userStats.favoriteAuthorsCount,
-    series: userStats.favoriteSeriesCount,
-    shelves: userStats.shelvesCount,
-    read: userStats.readBooksCount
-  } : null;
+export function renderShelves({ shelves = [], user, stats, indexStatus, csrfToken = '' }) {
   const content = `
     <section class="page-intro page-intro-slim">
       <div class="page-intro-copy">
@@ -1390,7 +1376,6 @@ export function renderShelves({ shelves = [], user, stats, indexStatus, csrfToke
         <p>${escapeHtml(t('shelves.subtitle'))}</p>
       </div>
     </section>
-    ${renderAccountNav('shelves', navCounts)}
     <section class="library-shelf">
       <div class="section-title">
         <h2>${escapeHtml(t('shelves.listTitle'))}</h2>
@@ -1425,14 +1410,7 @@ export function renderShelves({ shelves = [], user, stats, indexStatus, csrfToke
   return pageShell({ title: t('shelves.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('shelves.title') }], currentPath: '/shelves', csrfToken });
 }
 
-export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus, csrfToken = '', readBookIds = null, userStats = null }) {
-  const navCounts = userStats ? {
-    books: userStats.bookmarkCount,
-    authors: userStats.favoriteAuthorsCount,
-    series: userStats.favoriteSeriesCount,
-    shelves: userStats.shelvesCount,
-    read: userStats.readBooksCount
-  } : null;
+export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus, csrfToken = '', readBookIds = null }) {
   const uniqueBooks = uniqueBooksById(books);
   const shelfBatch = Boolean(uniqueBooks.length && canDownloadInUi(user));
   const content = `
@@ -1443,7 +1421,6 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
         ${shelf.description ? `<p>${escapeHtml(shelf.description)}</p>` : `<p class="muted">${countLabel('book', uniqueBooks.length)} ${escapeHtml(t('shelves.onShelf'))}</p>`}
       </div>
     </section>
-    ${renderAccountNav('shelves', navCounts)}
     ${shelfBatch ? renderBatchDownloadToolbar({ shelf: shelf.id }, { user }) : ''}
     ${uniqueBooks.length ? `
       <div class="grid">
@@ -1833,39 +1810,16 @@ ${liteBoot}
 </html>`;
 }
 
-export function renderProfile({ user, stats, indexStatus, userStats, recentBooks = [], readerBookmarks = [], readerAnnotations = [], csrfToken = '' }) {
-  const fmtDate = (d) => formatLocaleDateLong(d);
+function profileCoverThumb(bookId) {
+  return `<span class="profile-cover"><img class="profile-cover-img" src="${apiBookPath(bookId, 'cover')}" alt="" loading="lazy" onerror="this.remove()"></span>`;
+}
 
-  const readingTotal = Math.max(0, Math.floor(Number(userStats.readingCount) || 0));
-  const readerBmTotal = Math.max(0, Math.floor(Number(userStats.readerBookmarksCount) || 0));
-  const readerNotesTotal = Math.max(0, Math.floor(Number(userStats.readerAnnotationsCount) || 0));
-  const readingAllLine = tp('profile.readingAll', { n: formatLocaleInt(readingTotal), books: plural('book', readingTotal) });
-
-  const initials = String(user.username || '?').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
-  const roleLabel = user.role === 'admin' ? t('profile.admin') : t('profile.user');
-  const memberSince = tp('profile.memberSince', { date: fmtDate(userStats.createdAt) });
-
-  const coverThumb = (bookId) => `<span class="profile-cover"><img class="profile-cover-img" src="${apiBookPath(bookId, 'cover')}" alt="" loading="lazy" onerror="this.remove()"></span>`;
-
-  const recentList = recentBooks.length
-    ? recentBooks.map((b) => `
-        <div class="profile-list-item profile-litem" ${bookIdDataAttr(b.id)} data-reading-last-opened="${escapeHtml(String(b.lastOpenedAt || ''))}" data-reading-open-count="${Number(b.openCount) > 0 ? Number(b.openCount) : 1}">
-          <a class="profile-litem-link" href="${bookPagePath(b.id)}">
-            ${coverThumb(b.id)}
-            <span class="profile-litem-text">
-              <span class="profile-litem-title">${escapeHtml(b.title)}</span>
-              <span class="profile-litem-sub">${escapeHtml(formatAuthorLabel(b.authors) || '')}</span>
-            </span>
-          </a>
-          ${renderListRemoveBtn({ extraAttrs: 'data-remove-reading' })}
-        </div>`).join('')
-    : `<div class="profile-empty">${escapeHtml(t('profile.nothingYet'))}</div>`;
-
-  const bookmarksList = readerBookmarks.length
+function renderReaderBookmarkRows(readerBookmarks = []) {
+  return readerBookmarks.length
     ? readerBookmarks.map((bm) => `
         <div class="profile-list-item profile-litem" data-profile-bookmark="${escapeHtml(String(bm.id))}" data-reader-bm-book-id="${escapeHtml(String(bm.bookId))}" data-reader-bm-position="${escapeHtml(String(bm.position ?? ''))}" data-reader-bm-title="${escapeHtml(String(bm.label || ''))}">
           <a class="profile-litem-link" href="${readPagePath(bm.bookId)}?pos=${encodeURIComponent(bm.position)}" title="${escapeHtml(bm.bookTitle)}" target="_blank" rel="noopener noreferrer">
-            ${coverThumb(bm.bookId)}
+            ${profileCoverThumb(bm.bookId)}
             <span class="profile-litem-text">
               <span class="profile-litem-title">${escapeHtml(bm.label || bm.bookTitle)}</span>
               <span class="profile-litem-sub">${escapeHtml(bm.bookTitle !== bm.label && bm.label ? bm.bookTitle : '')}</span>
@@ -1874,82 +1828,323 @@ export function renderProfile({ user, stats, indexStatus, userStats, recentBooks
           ${renderListRemoveBtn({ extraAttrs: `data-remove-bookmark="${escapeHtml(String(bm.id))}"` })}
         </div>`).join('')
     : `<div class="profile-empty">${escapeHtml(t('profile.noBookmarks'))}</div>`;
+}
 
-  const notesList = readerAnnotations.length
-    ? readerAnnotations.map((an) => {
-        const primary = String(an.note || an.text || an.bookTitle || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-        return `
-        <div class="profile-list-item profile-litem" data-profile-annotation="${escapeHtml(String(an.id))}" data-annotation-book-id="${encodeURIComponent(String(an.bookId))}">
-          <a class="profile-litem-link" href="${readPagePath(an.bookId)}?pos=${encodeURIComponent(an.cfi)}" title="${escapeHtml(primary)}" target="_blank" rel="noopener noreferrer">
-            ${coverThumb(an.bookId)}
-            <span class="profile-litem-text">
-              <span class="profile-litem-title">${escapeHtml(primary)}</span>
-              <span class="profile-litem-sub">${escapeHtml(an.bookTitle || '')}</span>
-            </span>
-          </a>
-          ${renderListRemoveBtn({ extraAttrs: `data-remove-annotation="${escapeHtml(String(an.id))}"` })}
-        </div>`;
-      }).join('')
-    : `<div class="profile-empty">${escapeHtml(t('profile.noNotes'))}</div>`;
+const NOTE_COLORS = ['yellow', 'green', 'blue', 'pink', 'underline'];
 
-  const navCounts = {
-    books: userStats.bookmarkCount,
-    authors: userStats.favoriteAuthorsCount,
-    series: userStats.favoriteSeriesCount,
-    shelves: userStats.shelvesCount,
-    read: userStats.readBooksCount
+const NOTE_ICONS = {
+  copy: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>'
+};
+
+function noteColorLabel(color) {
+  return NOTE_COLORS.includes(color) ? t(`notes.color.${color}`) : String(color || '');
+}
+
+function noteSwatch(color) {
+  return `<span class="notes-swatch notes-swatch-${escapeHtml(color)}" aria-hidden="true"></span>`;
+}
+
+function renderNoteActionBtn(attr, icon, labelKey, extraClass = '') {
+  const label = escapeHtml(t(labelKey));
+  return `<button type="button" class="note-action ${extraClass}" ${attr} title="${label}" aria-label="${label}">${icon}</button>`;
+}
+
+function renderNoteCard(an, group) {
+  const color = NOTE_COLORS.includes(an.color) ? an.color : 'yellow';
+  const quote = String(an.text || '').trim();
+  const note = String(an.note || '').trim();
+  const bookLink = group === 'color'
+    ? `<a class="note-meta-book" href="${bookPagePath(an.bookId)}">${escapeHtml(an.bookTitle || '')}</a>`
+    : '';
+  const colorPicks = NOTE_COLORS.map((c) => `
+        <label class="note-color-pick" title="${escapeHtml(noteColorLabel(c))}">
+          <input type="radio" name="note-color-${escapeHtml(String(an.id))}" value="${c}"${c === color ? ' checked' : ''}>
+          ${noteSwatch(c)}
+        </label>`).join('');
+  return `
+    <article class="note-card note-card-${color}" data-note-id="${escapeHtml(String(an.id))}" data-note-color="${color}" data-note-url="${escapeHtml(apiBookPath(an.bookId, `annotations/${an.id}`))}" data-note-book="${escapeHtml(an.bookTitle || '')}">
+      <label class="note-check"><input type="checkbox" data-note-select aria-label="${escapeHtml(t('notes.select.one'))}"></label>
+      <div class="note-main">
+        ${quote ? `<a class="note-quote" href="${readPagePath(an.bookId)}?pos=${encodeURIComponent(an.cfi)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(t('notes.openInReader'))}">${escapeHtml(quote)}</a>` : ''}
+        <p class="note-comment"${note ? '' : ' hidden'}>${escapeHtml(note)}</p>
+        <div class="note-meta">
+          ${bookLink}
+          <span class="note-meta-color">${noteSwatch(color)}<span data-note-color-label>${escapeHtml(noteColorLabel(color))}</span></span>
+          <time>${escapeHtml(String(an.createdAt || '').slice(0, 10))}</time>
+        </div>
+      </div>
+      <div class="note-actions">
+        ${renderNoteActionBtn('data-note-copy', NOTE_ICONS.copy, 'notes.action.copy')}
+        ${renderNoteActionBtn('data-note-edit', NOTE_ICONS.edit, 'notes.action.edit')}
+        ${renderNoteActionBtn('data-note-delete', NOTE_ICONS.trash, 'notes.action.delete', 'note-action-danger')}
+      </div>
+      <form class="note-edit" hidden>
+        <textarea name="note" rows="3" maxlength="8000" placeholder="${escapeHtml(t('notes.edit.placeholder'))}">${escapeHtml(note)}</textarea>
+        <div class="note-edit-colors" role="radiogroup" aria-label="${escapeHtml(t('notes.action.color'))}">${colorPicks}
+        </div>
+        <div class="note-edit-buttons">
+          <button type="submit" class="button">${escapeHtml(t('notes.action.save'))}</button>
+          <button type="button" class="button" data-note-edit-cancel>${escapeHtml(t('notes.action.cancel'))}</button>
+        </div>
+      </form>
+    </article>`;
+}
+
+/** Группы идут подряд: запрос уже отсортирован по книге или по цвету. */
+function renderNoteGroups(items, group) {
+  const parts = [];
+  let currentKey = null;
+  for (const an of items) {
+    const key = group === 'color' ? `c:${an.color}` : `b:${an.bookId}`;
+    if (key !== currentKey) {
+      if (currentKey !== null) parts.push('</div></section>');
+      currentKey = key;
+      const head = group === 'color'
+        ? `<div class="notes-group-head">${noteSwatch(an.color)}<strong>${escapeHtml(noteColorLabel(an.color))}</strong></div>`
+        : `<a class="notes-group-head notes-group-book" href="${bookPagePath(an.bookId)}">
+            ${profileCoverThumb(an.bookId)}
+            <span class="notes-group-text"><strong>${escapeHtml(an.bookTitle || '')}</strong><span class="muted">${escapeHtml(formatAuthorLabel(an.authors))}</span></span>
+          </a>`;
+      parts.push(`<section class="notes-group">${head}<div class="notes-group-list">`);
+    }
+    parts.push(renderNoteCard(an, group));
+  }
+  if (currentKey !== null) parts.push('</div></section>');
+  return parts.join('');
+}
+
+function renderReaderListPage({ title, subtitle, total, rows, basePath, page, pageSize, user, stats, indexStatus, csrfToken }) {
+  const content = `
+    <section class="page-intro page-intro-slim">
+      <div class="page-intro-copy">
+        <h1>${escapeHtml(title)} <span class="profile-section-count">(${formatLocaleInt(total)})</span></h1>
+        <p>${escapeHtml(subtitle)}</p>
+      </div>
+    </section>
+    <section class="profile-section">
+      <div class="profile-list">${rows}</div>
+    </section>
+    ${renderPagination(basePath, page, pageSize, total)}`;
+  return pageShell({ title, content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], currentPath: basePath, csrfToken });
+}
+
+export function renderReaderBookmarksPage({ items = [], total = 0, page = 1, pageSize = 30, user, stats, indexStatus, csrfToken = '' }) {
+  return renderReaderListPage({
+    title: t('profile.readerBookmarks'),
+    subtitle: t('bookmarks.subtitle'),
+    total,
+    rows: renderReaderBookmarkRows(items),
+    basePath: '/library/bookmarks',
+    page, pageSize, user, stats, indexStatus, csrfToken
+  });
+}
+
+export function renderReaderNotesPage({
+  items = [], total = 0, page = 1, pageSize = 50, filter = {}, facets = null, user, stats, indexStatus, csrfToken = ''
+}) {
+  const f = { color: '', bookId: '', q: '', sort: 'new', group: 'book', ...filter };
+  const colorCounts = facets?.colorCounts || { all: total };
+  const books = facets?.books || [];
+  const hasFilter = Boolean(f.color || f.bookId || f.q);
+  const queryString = (over = {}) => {
+    const v = { ...f, ...over };
+    const p = new URLSearchParams();
+    if (v.q) p.set('q', v.q);
+    if (v.bookId) p.set('book', encodeBookRef(v.bookId));
+    if (v.color) p.set('color', v.color);
+    if (v.sort !== 'new') p.set('sort', v.sort);
+    if (v.group !== 'book') p.set('group', v.group);
+    return p.toString();
   };
+  const pathWith = (over) => {
+    const qs = queryString(over);
+    return qs ? `/library/notes?${qs}` : '/library/notes';
+  };
+  const option = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+
+  const chips = [
+    { color: '', label: t('notes.filter.all'), count: colorCounts.all || 0 },
+    ...NOTE_COLORS.map((c) => ({ color: c, label: noteColorLabel(c), count: colorCounts[c] || 0 }))
+  ].filter((c) => !c.color || c.count > 0 || c.color === f.color).map((c) => `
+        <a class="notes-chip${c.color === f.color ? ' is-active' : ''}" href="${escapeHtml(pathWith({ color: c.color }))}"${c.color === f.color ? ' aria-current="true"' : ''}>
+          ${c.color ? noteSwatch(c.color) : ''}${escapeHtml(c.label)} <span class="notes-chip-count">${formatLocaleInt(c.count)}</span>
+        </a>`).join('');
+
+  const formatButtons = (attr) => ['md', 'html'].map((fmt) =>
+    `<button type="button" class="download-format-link" ${attr}="${fmt}">${escapeHtml(t(`notes.format.${fmt}`))}</button>`
+  ).join('');
+
+  const toolbar = `
+    <div class="notes-toolbar" data-notes-toolbar data-notes-filter-qs="${escapeHtml(queryString())}" data-notes-group="${escapeHtml(f.group)}">
+      <label class="notes-select-all"><input type="checkbox" data-notes-select-all> ${escapeHtml(t('notes.select.all'))}</label>
+      <span class="notes-selected" data-notes-selected hidden></span>
+      <div class="notes-toolbar-actions">
+        <details class="download-menu download-menu-compact notes-bulk" data-notes-bulk hidden>
+          <summary class="button download-menu-trigger">${escapeHtml(t('notes.action.color'))}</summary>
+          <div class="download-menu-popover">${NOTE_COLORS.map((c) => `<button type="button" class="download-format-link notes-color-option" data-notes-bulk-color="${c}">${noteSwatch(c)}${escapeHtml(noteColorLabel(c))}</button>`).join('')}</div>
+        </details>
+        <button type="button" class="button notes-bulk-delete" data-notes-bulk-delete hidden>${escapeHtml(t('notes.action.delete'))}</button>
+        <details class="download-menu download-menu-compact">
+          <summary class="button download-menu-trigger" title="${escapeHtml(t('notes.scopeHint'))}">${escapeHtml(t('notes.action.export'))}</summary>
+          <div class="download-menu-popover">${formatButtons('data-notes-export')}</div>
+        </details>
+        ${canSendToEmailInUi(user) ? `
+        <details class="download-menu download-menu-compact">
+          <summary class="button download-menu-trigger" title="${escapeHtml(t('notes.scopeHint'))}">${escapeHtml(t('notes.action.send'))}</summary>
+          <div class="download-menu-popover">${formatButtons('data-notes-send')}</div>
+        </details>` : ''}
+      </div>
+    </div>`;
+
+  const filterForm = `
+    <form class="notes-filter" method="get" action="/library/notes" role="search">
+      ${f.color ? `<input type="hidden" name="color" value="${escapeHtml(f.color)}">` : ''}
+      <input type="search" name="q" value="${escapeHtml(f.q)}" placeholder="${escapeHtml(t('notes.filter.search'))}" aria-label="${escapeHtml(t('notes.filter.search'))}" maxlength="200">
+      <select name="book" aria-label="${escapeHtml(t('notes.filter.book'))}" data-notes-autosubmit>
+        ${option('', t('notes.filter.allBooks'), !f.bookId)}
+        ${books.map((b) => option(encodeBookRef(b.bookId), `${b.title} (${b.n})`, b.bookId === f.bookId)).join('')}
+      </select>
+      <select name="sort" aria-label="${escapeHtml(t('notes.sort.label'))}" data-notes-autosubmit>
+        ${['new', 'old', 'title'].map((s) => option(s, t(`notes.sort.${s}`), f.sort === s)).join('')}
+      </select>
+      <select name="group" aria-label="${escapeHtml(t('notes.group.label'))}" data-notes-autosubmit>
+        ${['book', 'color'].map((g) => option(g, t(`notes.group.${g}`), f.group === g)).join('')}
+      </select>
+      <button type="submit" class="button">${escapeHtml(t('notes.filter.apply'))}</button>
+      ${hasFilter ? `<a class="button" href="${escapeHtml(pathWith({ color: '', bookId: '', q: '' }))}">${escapeHtml(t('notes.filter.reset'))}</a>` : ''}
+    </form>`;
+
+  const body = items.length
+    ? `${toolbar}<div class="notes-list" data-notes-list>${renderNoteGroups(items, f.group)}</div>`
+    : renderEmptyState({
+      title: hasFilter ? t('notes.emptyFiltered') : t('notes.empty'),
+      text: hasFilter ? '' : t('notes.emptyText')
+    });
+
+  const title = t('profile.readerNotes');
+  const content = `
+    <section class="page-intro page-intro-slim">
+      <div class="page-intro-copy">
+        <h1>${escapeHtml(title)} <span class="profile-section-count">(${formatLocaleInt(total)})</span></h1>
+        <p>${escapeHtml(t('notes.subtitle'))}</p>
+      </div>
+    </section>
+    <section class="profile-section notes-page" data-notes-page>
+      ${filterForm}
+      <nav class="notes-chips" aria-label="${escapeHtml(t('notes.filter.colorAria'))}">${chips}</nav>
+      ${body}
+    </section>
+    ${renderPagination(pathWith({}), page, pageSize, total)}`;
+  return pageShell({ title, content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], currentPath: '/library/notes', csrfToken });
+}
+
+/** Хаб «Моя библиотека» — главная вкладка личных разделов на телефоне (нижняя навигация). */
+export function renderMyLibrary({ user, stats, indexStatus, userStats, csrfToken = '' }) {
+  const favoritesTotal = (Number(userStats.bookmarkCount) || 0)
+    + (Number(userStats.favoriteAuthorsCount) || 0)
+    + (Number(userStats.favoriteSeriesCount) || 0);
+  const sections = [
+    { href: '/library/continue', title: t('nav.reading'), count: userStats.readingCount },
+    { href: '/favorites', title: t('nav.favorites'), count: favoritesTotal },
+    { href: '/shelves', title: t('nav.shelves'), count: userStats.shelvesCount },
+    { href: '/library/read', title: t('library.title.read'), count: userStats.readBooksCount },
+    { href: '/library/bookmarks', title: t('nav.bookmarks'), count: userStats.readerBookmarksCount },
+    { href: '/library/notes', title: t('nav.notes'), count: userStats.readerAnnotationsCount }
+  ];
+  const content = `
+    <section class="page-intro page-intro-slim">
+      <div class="page-intro-copy">
+        <h1>${escapeHtml(t('nav.myLibrary'))}</h1>
+        <p>${escapeHtml(t('my.subtitle'))}</p>
+      </div>
+    </section>
+    <div class="table-list entity-list my-library-list">
+      ${sections.map((s) => `
+        <a class="table-row table-row-link" href="${s.href}">
+          <div class="my-library-row">
+            <strong>${escapeHtml(s.title)}</strong>
+            <span class="view-switcher-count">${formatLocaleInt(Math.max(0, Math.floor(Number(s.count) || 0)))}</span>
+          </div>
+        </a>`).join('')}
+    </div>`;
+  return pageShell({ title: t('nav.myLibrary'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('nav.myLibrary') }], currentPath: '/library/my', csrfToken });
+}
+
+export function renderProfile({ user, stats, indexStatus, userStats, readingStats = null, csrfToken = '' }) {
+  const rs = readingStats || {};
+  const readByYear = Array.isArray(rs.readByYear) ? rs.readByYear : [];
+  const topAuthors = Array.isArray(rs.topAuthors) ? rs.topAuthors : [];
+  const topGenres = Array.isArray(rs.topGenres) ? rs.topGenres : [];
+  const count = (v) => formatLocaleInt(Math.max(0, Math.floor(Number(v) || 0)));
+  const tiles = [
+    { href: '/library/continue', label: t('nav.reading'), value: userStats.readingCount },
+    { href: '/library/read', label: t('library.title.read'), value: userStats.readBooksCount },
+    { href: '/favorites?view=books', label: t('favorites.books'), value: userStats.bookmarkCount },
+    { href: '/favorites?view=authors', label: t('favorites.authors'), value: userStats.favoriteAuthorsCount },
+    { href: '/favorites?view=series', label: t('favorites.series'), value: userStats.favoriteSeriesCount },
+    { href: '/shelves', label: t('nav.shelves'), value: userStats.shelvesCount },
+    { href: '/library/bookmarks', label: t('profile.readerBookmarks'), value: userStats.readerBookmarksCount },
+    { href: '/library/notes', label: t('profile.readerNotes'), value: userStats.readerAnnotationsCount }
+  ];
+  const tilesHtml = tiles.map((tile) => `
+        <a class="profile-stat-tile" href="${tile.href}">
+          <span class="profile-stat-value">${count(tile.value)}</span>
+          <span class="profile-stat-label">${escapeHtml(tile.label)}</span>
+        </a>`).join('');
+
+  const maxYear = Math.max(1, ...readByYear.map((y) => Number(y.count) || 0));
+  const yearRows = readByYear.map((y) => `
+          <div class="profile-bar-row">
+            <span class="profile-bar-label">${escapeHtml(String(y.year))}</span>
+            <span class="profile-bar" aria-hidden="true"><span class="profile-bar-fill" style="width:${Math.max(4, Math.round(((Number(y.count) || 0) / maxYear) * 100))}%"></span></span>
+            <span class="profile-bar-value">${count(y.count)}</span>
+          </div>`).join('');
+  const topRow = (href, label, n) => `
+          <a class="profile-top-row" href="${href}">
+            <span class="profile-top-name">${escapeHtml(label)}</span>
+            <span class="muted">${count(n)}</span>
+          </a>`;
+  const authorRows = topAuthors.map((a) => topRow(
+    `/facet/authors/${encodeURIComponent(a.name)}`,
+    formatAuthorLabel(a.displayName || a.name) || a.displayName || a.name,
+    a.count
+  )).join('');
+  const genreRows = topGenres.map((g) => topRow(
+    `/facet/genres/${encodeURIComponent(g.name)}`,
+    formatGenreLabel(g.name),
+    g.count
+  )).join('');
+  const section = (titleKey, body) => `
+        <section class="profile-section">
+          <div class="profile-section-head"><h3>${escapeHtml(t(titleKey))}</h3></div>
+          <div class="profile-list">${body}</div>
+        </section>`;
+  const statsBlock = yearRows || authorRows || genreRows
+    ? `
+      <div class="profile-activity-grid">
+        ${yearRows ? section('profile.stats.byYear', yearRows) : ''}
+        ${authorRows ? section('profile.stats.topAuthors', authorRows) : ''}
+        ${genreRows ? section('profile.stats.topGenres', genreRows) : ''}
+      </div>`
+    : `<div class="profile-empty">${escapeHtml(t('profile.stats.empty'))}</div>`;
 
   const content = `
     <div class="profile-shell">
-    <div hidden data-profile-page-stats data-reading-total="${readingTotal}" data-reader-bm-total="${readerBmTotal}" data-reader-notes-total="${readerNotesTotal}"></div>
-    <header class="profile-identity">
-      <span class="profile-avatar" aria-hidden="true">${escapeHtml(initials)}</span>
-      <div class="profile-identity-info">
-        <h2 class="profile-identity-name">${escapeHtml(user.username)}</h2>
-        <div class="profile-identity-meta">
-          <span class="profile-role-badge${user.role === 'admin' ? ' is-admin' : ''}">${escapeHtml(roleLabel)}</span>
-          <span class="muted">${escapeHtml(memberSince)}</span>
-        </div>
-      </div>
-    </header>
-    ${renderAccountNav('activity', navCounts)}
+    ${renderProfileIdentityHeader(user, userStats)}
+    ${renderProfileNav('stats')}
     <div class="profile-activity">
-      <div class="profile-activity-grid">
-        <section class="profile-section profile-section-wide">
-          <div class="profile-section-head">
-            <h3>${escapeHtml(t('profile.reading'))} <span class="profile-section-count">(<span data-profile-reading-count>${formatLocaleInt(readingTotal)}</span>)</span></h3>
-            <a href="/library/continue" class="profile-section-link" data-profile-reading-all-link ${readingTotal === 0 ? 'hidden' : ''}>${escapeHtml(readingAllLine)}</a>
-          </div>
-          <div class="profile-list">${recentList}</div>
-        </section>
-        <section class="profile-section" id="profile-sec-bookmarks">
-          <div class="profile-section-head">
-            <h3>${escapeHtml(t('profile.readerBookmarks'))} <span class="profile-section-count">(<span data-profile-reader-bm-count>${formatLocaleInt(readerBmTotal)}</span>)</span></h3>
-          </div>
-          <div class="profile-list">${bookmarksList}</div>
-        </section>
-        <section class="profile-section" id="profile-sec-notes">
-          <div class="profile-section-head">
-            <h3>${escapeHtml(t('profile.readerNotes'))} <span class="profile-section-count">(<span data-profile-reader-notes-count>${formatLocaleInt(readerNotesTotal)}</span>)</span></h3>
-          </div>
-          <div class="profile-list">${notesList}</div>
-        </section>
-      </div>
+      <section class="profile-section profile-section-wide">
+        <div class="profile-section-head"><h3>${escapeHtml(t('profile.stats.collection'))}</h3></div>
+        <div class="profile-stat-grid">${tilesHtml}
+        </div>
+      </section>
+      ${statsBlock}
     </div>
     </div>
   `;
   return pageShell({ title: t('profile.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('profile.title') }], currentPath: '/profile', csrfToken });
-}
-
-function profileNavCounts(userStats) {
-  return {
-    books: userStats.bookmarkCount,
-    authors: userStats.favoriteAuthorsCount,
-    series: userStats.favoriteSeriesCount,
-    shelves: userStats.shelvesCount,
-    read: userStats.readBooksCount
-  };
 }
 
 function renderProfileIdentityHeader(user, userStats) {
@@ -1993,7 +2188,6 @@ export function renderProfileSettings({
   section = 'account'
 } = {}) {
   const fmtDate = (d) => formatLocaleDateLong(d);
-  const navCounts = profileNavCounts(userStats);
   const activeSection = section === 'view' ? 'view' : 'account';
   const currentPath = activeSection === 'view' ? '/profile/settings?section=view' : '/profile/settings';
 
@@ -2086,7 +2280,7 @@ export function renderProfileSettings({
     ${flash ? renderAlert('success', flash) : ''}
     <div class="profile-shell">
     ${renderProfileIdentityHeader(user, userStats)}
-    ${renderAccountNav('settings', navCounts)}
+    ${renderProfileNav('settings')}
     ${renderProfileSettingsSubnav(activeSection)}
     ${activeSection === 'view' ? viewPanel : accountPanel}
     </div>

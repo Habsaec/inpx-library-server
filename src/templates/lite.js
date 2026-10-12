@@ -387,17 +387,20 @@ export function renderLiteAuthorFacetPage({
   title, displayName, series = [], standaloneBooks = [], facetValue = '', user, csrfToken = '', total = 0
 }) {
   const authorParam = facetValue ? `?author=${encodeURIComponent(facetValue)}` : '';
-  const seriesRows = series.map((s) => {
+  const liteSeriesRows = (list) => list.map((s) => {
     const count = s.bookCount ?? s.count ?? 0;
     return renderLiteEntityCountRow(`${LITE_BASE}/facet/series/${encodeURIComponent(s.name)}${authorParam}`, s.displayName || s.name, count);
   }).join('');
+  const seriesRows = liteSeriesRows(series.filter((s) => s.authorSeries !== false));
+  const sharedRows = liteSeriesRows(series.filter((s) => s.authorSeries === false));
   const bookRows = standaloneBooks.map((b) => renderLiteBookRow(b, user)).join('');
   const bookTotal = Number(total) || series.reduce((n, s) => n + (Number(s.bookCount) || 0), 0) + standaloneBooks.length;
   const content = `
     ${renderLiteScopeDownload(user, facetValue ? { facet: 'authors', value: facetValue, total: bookTotal } : null)}
     ${seriesRows ? `<div class="lite-entity-list">${seriesRows}</div>` : ''}
     ${bookRows ? `<div class="lite-book-list">${bookRows}</div>` : ''}
-    ${!seriesRows && !bookRows ? `<p class="lite-empty">${escapeHtml(t('browse.empty'))}</p>` : ''}`;
+    ${sharedRows ? `<p class="lite-hint">${escapeHtml(t('authorPage.sharedSeries'))}</p><div class="lite-entity-list">${sharedRows}</div>` : ''}
+    ${!seriesRows && !bookRows && !sharedRows ? `<p class="lite-empty">${escapeHtml(t('browse.empty'))}</p>` : ''}`;
   return litePageShell({ title: displayName || title, content, user, csrfToken });
 }
 

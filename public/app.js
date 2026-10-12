@@ -722,14 +722,6 @@ function bumpProfileReaderBmTotal(delta) {
   syncProfilePageCounters();
 }
 
-function bumpProfileReaderNotesTotal(delta) {
-  const root = document.querySelector('[data-profile-page-stats]');
-  if (!root) return;
-  const next = Math.max(0, (parseInt(root.dataset.readerNotesTotal, 10) || 0) + delta);
-  root.dataset.readerNotesTotal = String(next);
-  syncProfilePageCounters();
-}
-
 async function loadBookPageReview() {
   const mount = document.querySelector('[data-book-review-mount]');
   if (!mount) return;
@@ -6367,34 +6359,263 @@ function attachProfileRemoveActions() {
       }
     });
   }
-  for (const btn of document.querySelectorAll('[data-remove-annotation]')) {
-    btn.addEventListener('click', async () => {
-      const aid = btn.dataset.removeAnnotation;
-      const row = btn.closest('.profile-list-item');
-      const rawBookId = row?.dataset.annotationBookId || '';
-      const bookId = rawBookId ? decodeURIComponent(rawBookId).replace(/\uFFFD/g, '\0') : '';
-      const labelText = (row?.querySelector('a')?.textContent || '').trim();
-      const msg = labelText ? uiTp('app.deleteAnnotationConfirm', { label: labelText }) : uiT('app.deleteAnnotationConfirmShort');
-      if (!await confirmAction(msg, { danger: true })) return;
-      if (!bookId) {
-        showToast(uiT('app.annotationDeleteFail'), 'error');
+}
+
+function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+    document.body.appendChild(area);
+    area.select();
+    try {
+      if (document.execCommand('copy')) resolve();
+      else reject(new Error('copy failed'));
+    } catch (error) {
+      reject(error);
+    } finally {
+      area.remove();
+    }
+  });
+}
+
+function attachNotesPage() {
+  const page = document.querySelector('[data-notes-page]');
+  if (!page) return;
+  const toolbar = page.querySelector('[data-notes-toolbar]');
+  const selectAll = page.querySelector('[data-notes-select-all]');
+  const selectedLabel = page.querySelector('[data-notes-selected]');
+  const bulkMenu = page.querySelector('[data-notes-bulk]');
+  const bulkDelete = page.querySelector('[data-notes-bulk-delete]');
+  const cards = () => [...page.querySelectorAll('.note-card')];
+  const selectedCards = () => cards().filter((card) => card.querySelector('[data-note-select]')?.checked);
+  const selectedIds = () => selectedCards().map((card) => Number(card.dataset.noteId));
+
+  function jsonHeaders() {
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    if (csrfMeta) headers['x-csrf-token'] = csrfMeta.content;
+    return headers;
+  }
+
+  async function request(url, method, body) {
+    const response = await fetch(url, {
+      method, credentials: 'same-origin', headers: jsonHeaders(), body: body ? JSON.stringify(body) : undefined
+    });
+    if (await handleAuthRequired(response)) return null;
+    const data = await response.json().catch(() => null);
+    return { ok: response.ok && data?.ok !== false, data };
+  }
+
+  function syncSelection() {
+    const all = cards();
+    const count = selectedIds().length;
+    for (const card of all) card.classList.toggle('is-selected', Boolean(card.querySelector('[data-note-select]')?.checked));
+    if (selectAll) {
+      selectAll.checked = all.length > 0 && count === all.length;
+      selectAll.indeterminate = count > 0 && count < all.length;
+    }
+    if (selectedLabel) {
+      selectedLabel.hidden = !count;
+      selectedLabel.textContent = count ? uiTp('notes.select.count', { count }) : '';
+    }
+    if (bulkMenu) bulkMenu.hidden = !count;
+    if (bulkDelete) bulkDelete.hidden = !count;
+  }
+
+  function removeCards(list) {
+    for (const card of list) {
+      const group = card.closest('.notes-group');
+      card.remove();
+      if (group && !group.querySelector('.note-card')) group.remove();
+    }
+    if (!cards().length) {
+      window.location.reload();
+      return;
+    }
+    syncSelection();
+  }
+
+  function applyCardColor(card, color) {
+    card.className = card.className.replace(/\bnote-card-\w+/, `note-card-${color}`);
+    card.dataset.noteColor = color;
+    const swatch = card.querySelector('.note-meta-color .notes-swatch');
+    if (swatch) swatch.className = `notes-swatch notes-swatch-${color}`;
+    const label = card.querySelector('[data-note-color-label]');
+    if (label) label.textContent = uiT(`notes.color.${color}`);
+    const radio = card.querySelector(`.note-edit input[value="${color}"]`);
+    if (radio) radio.checked = true;
+  }
+
+  function noteCopyText(card) {
+    const quote = card.querySelector('.note-quote')?.textContent.trim() || '';
+    const note = card.querySelector('.note-comment')?.textContent.trim() || '';
+    const book = card.dataset.noteBook || '';
+    return [quote && `\u00ab${quote}\u00bb`, note, book && `\u2014 ${book}`].filter(Boolean).join('\n\n');
+  }
+
+  function closeMenu(el) {
+    el.closest('details')?.removeAttribute('open');
+  }
+
+  for (const select of page.querySelectorAll('[data-notes-autosubmit]')) {
+    select.addEventListener('change', () => select.form?.submit());
+  }
+
+  selectAll?.addEventListener('change', () => {
+    for (const box of page.querySelectorAll('[data-note-select]')) box.checked = selectAll.checked;
+    syncSelection();
+  });
+  page.addEventListener('change', (event) => {
+    if (event.target instanceof Element && event.target.matches('[data-note-select]')) syncSelection();
+  });
+
+  page.addEventListener('submit', async (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !form.classList.contains('note-edit')) return;
+    event.preventDefault();
+    const card = form.closest('.note-card');
+    const note = form.elements.note.value;
+    const color = form.querySelector('input[type="radio"]:checked')?.value || card.dataset.noteColor;
+    try {
+      const result = await request(card.dataset.noteUrl, 'PATCH', { note, color });
+      if (!result) return;
+      if (!result.ok) {
+        showToast(result.data?.error || uiT('notes.saveFail'), 'error');
         return;
       }
+      const comment = card.querySelector('.note-comment');
+      comment.textContent = note.trim();
+      comment.hidden = !note.trim();
+      applyCardColor(card, color);
+      form.hidden = true;
+      showToast(uiT('notes.saved'), 'success');
+    } catch {
+      showToast(uiT('app.networkError'), 'error');
+    }
+  });
+
+  page.addEventListener('click', async (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    const card = target.closest('.note-card');
+
+    if (card && target.closest('[data-note-copy]')) {
       try {
-        const r = await fetch(`${apiBookPath(bookId, `annotations/${encodeURIComponent(aid)}`)}`, { method: 'DELETE', credentials: 'same-origin' });
-        if (await handleAuthRequired(r)) return;
-        if (!r.ok) {
+        await copyTextToClipboard(noteCopyText(card));
+        showToast(uiT('notes.copied'), 'success');
+      } catch {
+        showToast(uiT('notes.copyFail'), 'error');
+      }
+      return;
+    }
+    if (card && target.closest('[data-note-edit]')) {
+      const form = card.querySelector('.note-edit');
+      form.hidden = !form.hidden;
+      if (!form.hidden) form.elements.note.focus();
+      return;
+    }
+    if (card && target.closest('[data-note-edit-cancel]')) {
+      const form = card.querySelector('.note-edit');
+      form.elements.note.value = card.querySelector('.note-comment')?.textContent || '';
+      const radio = form.querySelector(`input[value="${card.dataset.noteColor}"]`);
+      if (radio) radio.checked = true;
+      form.hidden = true;
+      return;
+    }
+    if (card && target.closest('[data-note-delete]')) {
+      if (!await confirmAction(uiT('notes.deleteConfirm'), { danger: true })) return;
+      try {
+        const result = await request(card.dataset.noteUrl, 'DELETE');
+        if (!result) return;
+        if (!result.ok) {
           showToast(uiT('app.annotationDeleteFail'), 'error');
           return;
         }
-        if (row) row.remove();
-        bumpProfileReaderNotesTotal(-1);
-        showToast(uiT('app.annotationDeleted'), 'success');
+        showToast(uiT('notes.deleted'), 'success');
+        removeCards([card]);
       } catch {
         showToast(uiT('app.networkError'), 'error');
       }
-    });
-  }
+      return;
+    }
+
+    const exportBtn = target.closest('[data-notes-export]');
+    if (exportBtn && toolbar) {
+      closeMenu(exportBtn);
+      const params = new URLSearchParams(toolbar.dataset.notesFilterQs || '');
+      params.set('format', exportBtn.dataset.notesExport);
+      const ids = selectedIds();
+      if (ids.length) params.set('ids', ids.join(','));
+      window.location.href = `/api/reader-notes/export?${params}`;
+      return;
+    }
+
+    const sendBtn = target.closest('[data-notes-send]');
+    if (sendBtn && toolbar) {
+      closeMenu(sendBtn);
+      const body = Object.fromEntries(new URLSearchParams(toolbar.dataset.notesFilterQs || ''));
+      body.format = sendBtn.dataset.notesSend;
+      const ids = selectedIds();
+      if (ids.length) body.ids = ids;
+      sendBtn.disabled = true;
+      showToast(uiT('notes.send.sending'), 'info');
+      try {
+        const result = await request('/api/reader-notes/send', 'POST', body);
+        if (!result) return;
+        if (result.ok) showToast(result.data?.message || uiT('notes.send.sent'), 'success');
+        else showToast(result.data?.error || uiT('notes.send.fail'), 'error');
+      } catch {
+        showToast(uiT('app.networkError'), 'error');
+      } finally {
+        sendBtn.disabled = false;
+      }
+      return;
+    }
+
+    const colorBtn = target.closest('[data-notes-bulk-color]');
+    if (colorBtn) {
+      closeMenu(colorBtn);
+      const list = selectedCards();
+      const color = colorBtn.dataset.notesBulkColor;
+      if (!list.length) return;
+      try {
+        const result = await request('/api/reader-notes/bulk', 'POST', { action: 'color', color, ids: list.map((c) => Number(c.dataset.noteId)) });
+        if (!result) return;
+        if (!result.ok) {
+          showToast(result.data?.error || uiT('notes.bulk.fail'), 'error');
+          return;
+        }
+        for (const c of list) applyCardColor(c, color);
+        showToast(uiTp('notes.bulk.recolored', { count: result.data?.updated ?? list.length }), 'success');
+      } catch {
+        showToast(uiT('app.networkError'), 'error');
+      }
+      return;
+    }
+
+    if (target.closest('[data-notes-bulk-delete]')) {
+      const list = selectedCards();
+      if (!list.length) return;
+      if (!await confirmAction(uiTp('notes.bulk.confirmDelete', { count: list.length }), { danger: true })) return;
+      try {
+        const result = await request('/api/reader-notes/bulk', 'POST', { action: 'delete', ids: list.map((c) => Number(c.dataset.noteId)) });
+        if (!result) return;
+        if (!result.ok) {
+          showToast(result.data?.error || uiT('notes.bulk.fail'), 'error');
+          return;
+        }
+        showToast(uiTp('notes.bulk.deleted', { count: result.data?.deleted ?? list.length }), 'success');
+        removeCards(list);
+      } catch {
+        showToast(uiT('app.networkError'), 'error');
+      }
+    }
+  });
 }
 
 function registrationInviteShareUrl(token, serverUrl) {
@@ -7226,6 +7447,7 @@ attachUsersImport();
 attachAdminCollapsePersistence();
 attachUiAppearanceUpload();
 attachProfileRemoveActions();
+attachNotesPage();
 attachAccountNavSelect();
 attachAdminRecaptchaDisclosure();
 attachRegistrationInviteForm();

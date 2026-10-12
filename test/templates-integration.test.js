@@ -455,3 +455,19 @@ test('all route modules can be imported', async () => {
     assert.ok(m, `Module ${mod} should be importable`);
   }
 });
+
+test('renderAuthorFacetSeriesList: shared series go below own series and outside-series row', async () => {
+  const { renderAuthorFacetSeriesList } = await import('../src/templates/shared.js');
+  const html = renderAuthorFacetSeriesList(
+    [
+      { name: 'shared s', displayName: 'Shared S', bookCount: 1, authorSeries: false },
+      { name: 'own s', displayName: 'Own S', bookCount: 2, authorSeries: true }
+    ],
+    { href: '/outside', label: 'OUTSIDE', bookCount: 3 }
+  );
+  const own = html.indexOf('Own S');
+  const outside = html.indexOf('OUTSIDE');
+  const heading = html.indexOf('author-facet-shared-heading');
+  const shared = html.indexOf('Shared S');
+  assert.ok(own > -1 && own < outside && outside < heading && heading < shared);
+});

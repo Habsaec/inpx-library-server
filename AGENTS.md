@@ -26,7 +26,8 @@ Key endpoints for reader:
 - `GET /api/reader-bookmarks` — all reader bookmarks for the user (`items`, `total`, `page`, `pageSize`)
 - `PATCH /api/books/:id/bookmarks/:bmId` — rename a reader bookmark (`title`, max 500)
 - `GET /api/reader-annotations` — all reader annotations for the user (`items`, `total`, `page`, `pageSize`)
-- `PATCH /api/books/:id/annotations/:aid` — update a highlight note and/or color (`note`, `color`)
+- `PATCH /api/books/:id/annotations/:aid` — update a highlight note and/or color (`note`, `color`); bumps `annotations_rev` like add/delete
+- `GET /api/reader-notes/export` — Markdown/HTML export (`format=md|html`, filters `color`, `book` (base64url ref) or `bookId`, `q`, `sort=new|old|title`, `group=book|color`, optional `ids=1,2`; max 5000); `POST /api/reader-notes/send` (same filters/`ids` in JSON, `format`) mails the file to the profile e-reader email (`EREADER_EMAIL_MISSING` / `SMTP_NOT_CONFIGURED`); `POST /api/reader-notes/bulk` — `{ action: 'delete'|'color', ids[], color? }` (own notes only). Web page: `/library/notes` (filters, color counts, inline edit, bulk select)
 - `GET /api/favorites` — favorite authors (`name`, `displayName`, `bookCount`, `coverBookId`) and series (`name`, `displayName`, `bookCount`, `previewBookIds`)
 - `GET /api/reader-activity-sync-meta` — read-state and reading-history revs
 - `DELETE /api/read/:id` — idempotent unmark (`{ read: false }` even when the book was not marked); `POST /api/read/batch` marks, `POST /api/read/:id` still toggles
@@ -42,7 +43,7 @@ Key endpoints for reader:
 - `GET /api/library/recommended` — personalized pool + same additive filters (`genre`, `genreMode`, `lang`, `format`, `year`, `minRate`, `hasSeries`)
 - `GET /api/facet-books` — books by facet (`authors`/`series`/`genres`/`languages`); additive filters: `genre` (CSV/repeated, OR), `format`, `year`, `minRate`, `hasSeries` (1/0), `lang`
 - Web catalog / search / novinki / recommendations support `?view=list` (Flibusta-style rows) alongside the default cover grid
-- `GET /api/browse/authors/:value/grouped` — author series + `standaloneBooks` + `books[]` per series (Flibusta-style list); `lean=1` omits `books[]` (name/displayName/bookCount only); `resolveAuthorName` picks the `authors` alias with the same `search_name` and higher `book_count` (INPX Latin vs Cyrillic duplicate)
+- `GET /api/browse/authors/:value/grouped` — author series + `standaloneBooks` + `books[]` per series (Flibusta-style list); `lean=1` omits `books[]` (name/displayName/bookCount only); additive `authorSeries` per series (`true` = every book of the series has this author; `false` = multi-author/publisher series — web shows those last under «Межавторские и издательские серии», after «Книги вне серий»); `resolveAuthorName` picks the `authors` alias with the same `search_name` and higher `book_count` (INPX Latin vs Cyrillic duplicate)
 - Book search: SQLite FTS5, stem expand, title boost (exact/ordered/prefix), author+title split, phrase OR, stopword-aware AND, catalog-layer typo retry on miss, page-level edition dedupe (same title, author, series, year, and format only), LIKE fallback when dirty/desynced. Dirty/desync auto-rebuild; post-index FTS warmup. Admin/ops: additive `ftsStatus`, `POST /api/operations/fts-rebuild`
 - Details: `docs/architecture/search.md`
 - `POST /api/auth/pairing` — authenticated; creates a one-time 10-minute QR pairing code (`payload` JSON + `svg`) for Android app sign-in; does not include the password

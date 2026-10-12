@@ -30,7 +30,11 @@ import {
   HOME_SECTIONS_CACHE_TTL_MS,
   PAGE_CACHE_TTL_MS
 } from '../constants.js';
-import { getUserShelves, getShelfById, getShelfBooks, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats } from '../db.js';
+import {
+  getUserShelves, getShelfById, getShelfBooks, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats,
+  getAllReaderBookmarksPage, queryReaderAnnotations, getReaderAnnotationFacets
+} from '../db.js';
+import { parseNotesFilter } from '../services/reader-notes.js';
 import { isListBrowseView } from '../browse-view-prefs.js';
 import {
   getBookById,
@@ -265,7 +269,8 @@ export function registerLibraryRoutes(app, deps) {
     templates: {
       renderHome, renderCatalog, renderLibraryView, renderBrowsePage,
       renderFacetBooks, renderAuthorFacetPage, renderAuthorOutsideSeriesPage,
-      renderBook, renderFavorites, renderShelves, renderShelfDetail, renderReader
+      renderBook, renderFavorites, renderShelves, renderShelfDetail, renderReader,
+      renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage
     }
   } = deps;
 
@@ -494,7 +499,6 @@ export function registerLibraryRoutes(app, deps) {
     const isReadSeriesList = view === 'read' && result.itemType === 'series';
     const readBookIds = user && !isReadSeriesList ? getReadBookIdSet(user.username) : null;
     const readSeriesNames = user && isReadSeriesList ? getFullyReadSeriesNames(user.username) : null;
-    const userStats = user ? getUserStats(user.username) : null;
     const showFilters = view === 'recent' || view === 'recommended';
     const langs = showFilters ? getDistinctLanguages() : [];
     const formats = showFilters ? getDistinctFormats() : [];
@@ -529,7 +533,6 @@ export function registerLibraryRoutes(app, deps) {
       readBookIds,
       readSeriesNames,
       computing: Boolean(result.computing),
-      userStats,
       genres,
       lang,
       format,
@@ -931,8 +934,37 @@ export function registerLibraryRoutes(app, deps) {
   app.get('/shelves', requireWebAuth, (req, res) => {
     const stats = getCachedStats();
     const shelves = getUserShelves(req.user.username);
-    const userStats = getUserStats(req.user.username);
-    res.send(renderShelves({ shelves, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', userStats }));
+    res.send(renderShelves({ shelves, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+  });
+
+  // --- «Моя библиотека»: хаб (нижняя навигация), закладки и заметки читалки ---
+  app.get('/library/my', requireWebAuth, (req, res) => {
+    res.send(renderMyLibrary({
+      user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
+      userStats: getUserStats(req.user.username), csrfToken: req.csrfToken || ''
+    }));
+  });
+
+  app.get('/library/bookmarks', requireWebAuth, (req, res) => {
+    const page = safePage(req.query.page);
+    const pageSize = 30;
+    const result = getAllReaderBookmarksPage(req.user.username, { page, pageSize });
+    res.send(renderReaderBookmarksPage({
+      items: result.items, total: result.total, page, pageSize,
+      user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
+    }));
+  });
+
+  app.get('/library/notes', requireWebAuth, (req, res) => {
+    const page = safePage(req.query.page);
+    const pageSize = 50;
+    const filter = parseNotesFilter(req.query);
+    const result = queryReaderAnnotations(req.user.username, { ...filter, page, pageSize });
+    res.send(renderReaderNotesPage({
+      items: result.items, total: result.total, page, pageSize, filter,
+      facets: getReaderAnnotationFacets(req.user.username, { bookId: filter.bookId, q: filter.q }),
+      user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
+    }));
   });
 
   app.get('/shelves/:id', requireWebAuth, (req, res) => {
@@ -940,8 +972,7 @@ export function registerLibraryRoutes(app, deps) {
     if (!shelf) return res.status(404).send(t('shelf.notFound'));
     const stats = getCachedStats();
     const books = getShelfBooks(shelf.id, req.user.username);
-    const userStats = getUserStats(req.user.username);
-    res.send(renderShelfDetail({ shelf, books, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds: getReadBookIdSet(req.user.username), userStats }));
+    res.send(renderShelfDetail({ shelf, books, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds: getReadBookIdSet(req.user.username) }));
   });
 
   // --- Book details API ---

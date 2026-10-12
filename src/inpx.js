@@ -6581,7 +6581,8 @@ export function getAuthorBooksGrouped(authorName, sort = 'title', order = '', { 
   `).all(authorName, fetchLimit);
 
   const seriesOrder = db.prepare(`
-    SELECT s.name AS name, COALESCE(s.display_name, s.name) AS displayName, MIN(b.series_sort) AS seriesSortMin
+    SELECT s.name AS name, COALESCE(s.display_name, s.name) AS displayName, MIN(b.series_sort) AS seriesSortMin,
+      s.book_count AS seriesTotal
     FROM book_authors ba
     JOIN authors a ON a.id = ba.author_id
     JOIN active_books b ON b.id = ba.book_id
@@ -6618,22 +6619,31 @@ export function getAuthorBooksGrouped(authorName, sort = 'title', order = '', { 
   }
 
   let series = seriesOrder
-    .map(({ name, displayName }) => buildAuthorSeriesGroupEntry(name, displayName, bySeries.get(name), sort, order))
+    .map(({ name, displayName, seriesTotal }) => {
+      const entry = buildAuthorSeriesGroupEntry(name, displayName, bySeries.get(name), sort, order);
+      // Авторская серия: автор есть у всех книг серии. Иначе — межавторская/издательская.
+      if (entry) entry.authorSeries = !(Number(seriesTotal) > entry.books.length);
+      return entry;
+    })
     .filter(Boolean);
 
   const orderedNames = new Set(series.map((s) => s.name));
   const extraNames = [...bySeries.keys()].filter((n) => !orderedNames.has(n)).sort();
   for (const name of extraNames) {
     const entry = buildAuthorSeriesGroupEntry(name, null, bySeries.get(name), sort, order);
-    if (entry) series.push(entry);
+    if (entry) {
+      entry.authorSeries = true;
+      series.push(entry);
+    }
   }
 
   series = orderAuthorSeriesGroups(series, sort, order);
   /* Additive `books` on each series — used by Flibusta-style list view; series cards use bookCount. */
-  const seriesOut = series.map(({ name, displayName, books, _latestMs: _m }) => ({
+  const seriesOut = series.map(({ name, displayName, books, authorSeries, _latestMs: _m }) => ({
     name,
     displayName,
     bookCount: books.length,
+    authorSeries,
     books
   }));
 

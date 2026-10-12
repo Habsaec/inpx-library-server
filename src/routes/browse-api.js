@@ -258,6 +258,7 @@ export function registerBrowseApiRoutes(app) {
           name: s.name,
           displayName: s.displayName || s.name,
           bookCount: s.bookCount,
+          authorSeries: s.authorSeries !== false,
           ...(lean ? {} : { books: Array.isArray(s.books) ? s.books : [] })
         })),
         standaloneBooks: grouped.standaloneBooks,
