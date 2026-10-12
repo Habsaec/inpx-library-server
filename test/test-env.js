@@ -13,6 +13,19 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 if (!process.env.DATA_DIR) {
   // Fresh dir per process: a pid-named dir gets reused after pid recycling, and tests that
   // insert unique rows (genres_catalog.name, ...) then fail on leftover data from an old run.
+  // Dirs of finished runs can't be removed on exit (DB open on Windows): sweep old ones here.
+  // The 1 h age keeps dirs of sibling test processes of the current run untouched.
+  try {
+    const staleBefore = Date.now() - 60 * 60 * 1000;
+    for (const entry of fs.readdirSync(os.tmpdir(), { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith('inpx-test-')) continue;
+      const dir = path.join(os.tmpdir(), entry.name);
+      try {
+        if (fs.statSync(dir).mtimeMs < staleBefore) fs.rmSync(dir, { recursive: true, force: true });
+      } catch { /* in use or already gone */ }
+    }
+  } catch { /* tmpdir not listable */ }
+
   const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inpx-test-'));
   process.env.DATA_DIR = autoDir;
   process.on('exit', () => {
