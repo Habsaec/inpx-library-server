@@ -6,7 +6,7 @@ import { ApiErrorCode, apiFail } from '../api-errors.js';
 import {
   db, getUserShelves, getShelfById, createShelf, updateShelf, deleteShelf,
   addBookToShelf, removeBookFromShelf, getShelfBooks, getBookShelves,
-  getEreaderEmail, setEreaderEmail, getSmtpSettings, getUserByUsername, isEreaderEmailAllowedForUser,
+  getEreaderEmail, setEreaderEmail, setUserAccountEmail, getSmtpSettings, getUserByUsername, isEreaderEmailAllowedForUser,
   getMeta, setMeta, createAppPairingToken, consumeAppPairingToken,
 } from '../db.js';
 import { resolvePublicBaseUrl } from '../services/password-reset.js';
@@ -310,6 +310,27 @@ export function registerUserApiRoutes(app, deps) {
     }
     setEreaderEmail(req.user.username, rawEmail);
     res.json({ ok: true, email: getEreaderEmail(req.user.username) });
+  });
+
+  /* ── Account email (users.email; separate from the e-reader email) ─ */
+
+  app.get('/api/account-email', requireApiAuth, (req, res) => {
+    res.json({ email: getUserByUsername(req.user.username)?.email || '' });
+  });
+
+  app.post('/api/account-email', requireApiAuth, (req, res) => {
+    try {
+      const email = setUserAccountEmail(req.user.username, req.body?.email);
+      res.json({ ok: true, email });
+    } catch (error) {
+      if (error.message === 'Invalid email') {
+        return apiFail(res, 400, ApiErrorCode.PROFILE_INVALID_EMAIL, t('profile.invalidEmail'));
+      }
+      if (error.message === 'Email already in use') {
+        return apiFail(res, 409, ApiErrorCode.PROFILE_EMAIL_TAKEN, t('profile.accountEmail.taken'));
+      }
+      throw error;
+    }
   });
 
   /* ── Send to E-reader ──────────────────────────────────────────── */

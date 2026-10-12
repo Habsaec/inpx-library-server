@@ -14,6 +14,7 @@ import {
   getUserByUsername,
   getEreaderEmail,
   setEreaderEmail,
+  setUserAccountEmail,
   isEreaderEmailAllowedForUser,
   getUserStats,
   changePassword,
@@ -385,6 +386,7 @@ export function registerLiteRoutes(app, { getCachedStats }) {
     res.send(renderLiteProfileSettings({
       user,
       ereaderEmail: getEreaderEmail(user.username),
+      accountEmail: fullUser?.email || '',
       ereaderEmailAllowed: fullUser ? isEreaderEmailAllowedForUser(fullUser) : true,
       flash: String(req.query.flash || ''),
       csrfToken: csrf(req)
@@ -398,6 +400,7 @@ export function registerLiteRoutes(app, { getCachedStats }) {
     return {
       user,
       ereaderEmail: getEreaderEmail(user.username),
+      accountEmail: fullUser?.email || '',
       ereaderEmailAllowed: fullUser ? isEreaderEmailAllowedForUser(fullUser) : true,
       flash,
       csrfToken: csrf(req)
@@ -419,6 +422,17 @@ export function registerLiteRoutes(app, { getCachedStats }) {
       res.send(renderLiteProfileSettings(buildLiteSettingsProps(req, t('profile.emailSaved'))));
     } catch (err) {
       res.status(500).send(renderLiteProfileSettings({ ...buildLiteSettingsProps(req, translateKnownErrorMessage(err.message)), ereaderEmail: rawEmail }));
+    }
+  });
+
+  app.post('/lite/profile/account-email', requireLiteUserAuth, (req, res) => {
+    const rawEmail = String(req.body.accountEmail || '').trim();
+    try {
+      setUserAccountEmail(req.user.username, rawEmail);
+      res.send(renderLiteProfileSettings(buildLiteSettingsProps(req, t('profile.emailSaved'))));
+    } catch (err) {
+      const status = /^(Invalid email|Email already in use)$/.test(err.message) ? 400 : 500;
+      res.status(status).send(renderLiteProfileSettings({ ...buildLiteSettingsProps(req, translateKnownErrorMessage(err.message)), accountEmail: rawEmail }));
     }
   });
 

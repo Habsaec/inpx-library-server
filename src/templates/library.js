@@ -2181,7 +2181,7 @@ function renderProfileSettingsSubnav(active = 'account') {
 
 export function renderProfileSettings({
   user, stats, indexStatus, userStats,
-  ereaderEmail = '', telegramId = '', telegramLinkedAt = '',
+  ereaderEmail = '', accountEmail = '', telegramId = '', telegramLinkedAt = '',
   telegramBotAvailable = false, telegramBotAllowed = true, ereaderEmailAllowed = true,
   flash = '', csrfToken = '', hasLocalPassword = true,
   homeView = 'grid', catalogView = 'grid',
@@ -2215,6 +2215,17 @@ export function renderProfileSettings({
               : telegramBotAvailable
                 ? `<a class="button" href="/profile/telegram/link">${escapeHtml(t('profile.telegram.link'))}</a>`
                 : `<p class="muted" style="margin:0;">${escapeHtml(t('profile.telegram.botUnavailable'))}</p>`}
+        </div>
+      </div>
+      <div class="table-row table-row-stack profile-form-row">
+        <div>
+          <strong>${escapeHtml(t('profile.accountEmail'))}</strong>
+          <p class="muted" style="margin:4px 0 8px;font-size:12px;">${escapeHtml(t('profile.accountEmail.hint'))}</p>
+          <form method="post" action="/profile/account-email" class="vertical-form">
+            ${csrfHiddenField(csrfToken)}
+            <div><input type="email" name="accountEmail" value="${escapeHtml(accountEmail)}" placeholder="name@example.com" autocomplete="email"></div>
+            <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button></div>
+          </form>
         </div>
       </div>
       <div class="table-row table-row-stack profile-form-row">

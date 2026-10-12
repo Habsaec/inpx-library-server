@@ -11,7 +11,7 @@ import {
   deleteReaderAnnotationsBulk, setReaderAnnotationsColorBulk
 } from '../src/db.js';
 import { parseLine, enrichBookRow } from '../src/inpx.js';
-import { buildNotesExport, parseNotesFilter } from '../src/services/reader-notes.js';
+import { buildNotesExport, parseNotesFilter, getExportBranding } from '../src/services/reader-notes.js';
 import { encodeBookRef } from '../src/utils/book-ref.js';
 import { renderReaderNotesPage } from '../src/templates/library.js';
 
@@ -239,3 +239,27 @@ test('notes API: send requires an e-reader email', async () => {
   });
   assert.equal(bad.status, 400);
 });
+
+test('export header carries the library name, logo and a plain "Notes" title', async () => {
+  const branding = await getExportBranding();
+  assert.ok(branding.siteName);
+  assert.match(branding.logoDataUri, /^data:image\/png;base64,/);
+  assert.ok(branding.logoDataUri.length < 400 * 1024, 'logo is downscaled for the export');
+
+  const items = queryReaderAnnotations(USER, {}).items;
+  const demo = { siteName: 'My <Library>', logoDataUri: 'data:image/png;base64,AAAA' };
+  const md = buildNotesExport(items, { format: 'md', branding: demo }).content;
+  assert.ok(md.startsWith('![](data:image/png;base64,AAAA)\n\n**My <Library>**\n\n# Notes\n'));
+  const html = buildNotesExport(items, { format: 'html', branding: demo }).content;
+  assert.ok(html.includes('<header class="brand"><img src="data:image/png;base64,AAAA" alt=""><span>My &lt;Library&gt;</span></header>\n<h1>Notes</h1>'));
+  assert.ok(html.includes('<title>My &lt;Library&gt; — Notes</title>'));
+
+  const noBrand = buildNotesExport(items, { format: 'html', branding: {} }).content;
+  assert.ok(!noBrand.includes('class="brand"') && noBrand.includes('<h1>Notes</h1>'));
+
+  const res = await fetch(`${baseUrl}/api/reader-notes/export?format=html`, { headers: authHeaders() });
+  const served = await res.text();
+  assert.ok(served.includes(`<span>${branding.siteName.replace(/&/g, '&amp;')}</span>`));
+  assert.ok(served.includes('data:image/png;base64,'));
+});
+

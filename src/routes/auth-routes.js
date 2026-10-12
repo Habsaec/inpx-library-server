@@ -11,14 +11,14 @@ import { DUMMY_PASSWORD_HASH } from '../constants.js';
 import { getIndexStatus } from '../inpx.js';
 import {
   getUserByUsername, getSetting, createUser, changePassword,
-  setEreaderEmail, getEreaderEmail, getUserStats,
+  setEreaderEmail, getEreaderEmail, setUserAccountEmail, getUserStats,
   getUserBrowseViewPrefs, setUserBrowseViewPrefs,
   getUserReadingStats, decryptValue,
   createTelegramLinkToken, unlinkTelegram, getTelegramBotUsername, resolveTelegramRuntimeConfig, setMeta,
   isTelegramBotAllowedForUser,
   isEreaderEmailAllowedForUser,
   isPasswordResetConfigured,
-  getUserByEreaderEmail,
+  getUserByResetEmail,
   normalizePasswordResetEmail,
   createPasswordResetToken,
   validatePasswordResetToken,
@@ -110,6 +110,7 @@ export function registerAuthRoutes(app, deps) {
       indexStatus: getIndexStatus(),
       userStats: getUserStats(user.username),
       ereaderEmail: getEreaderEmail(user.username),
+      accountEmail: fullUser?.email || '',
       homeView: browseView.homeView,
       catalogView: browseView.catalogView,
       telegramId: fullUser?.telegramId || '',
@@ -246,13 +247,13 @@ export function registerAuthRoutes(app, deps) {
       return res.status(400).send(renderForgotPassword({ error: t('passwordReset.invalidEmail') }));
     }
 
-    const user = getUserByEreaderEmail(email);
+    const user = getUserByResetEmail(email);
     if (user) {
       try {
-        const { token, ereaderEmail } = createPasswordResetToken(user.username);
+        const { token, email: recipient } = createPasswordResetToken(user.username, email);
         const baseUrl = resolvePublicBaseUrl(req);
         const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
-        await sendPasswordResetEmail({ to: ereaderEmail, resetUrl, username: user.username });
+        await sendPasswordResetEmail({ to: recipient, resetUrl, username: user.username });
         logSystemEvent('info', 'auth', 'password reset email sent', { username: user.username, client: getClientKey(req) });
       } catch (error) {
         logSystemEvent('error', 'auth', 'password reset email failed', {
@@ -393,6 +394,16 @@ export function registerAuthRoutes(app, deps) {
       res.send(renderSettingsPage(req.user, t('profile.emailSaved'), req.csrfToken || '', 'account'));
     } catch (error) {
       res.status(500).send(renderSettingsPage(req.user, translateKnownErrorMessage(error.message), req.csrfToken || '', 'account'));
+    }
+  });
+
+  app.post('/profile/account-email', requireWebAuth, (req, res) => {
+    try {
+      setUserAccountEmail(req.user.username, req.body.accountEmail);
+      res.send(renderSettingsPage(req.user, t('profile.emailSaved'), req.csrfToken || '', 'account'));
+    } catch (error) {
+      const status = /^(Invalid email|Email already in use)$/.test(error.message) ? 400 : 500;
+      res.status(status).send(renderSettingsPage(req.user, translateKnownErrorMessage(error.message), req.csrfToken || '', 'account'));
     }
   });
 

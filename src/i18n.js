@@ -170,6 +170,7 @@ const KNOWN_ERROR_TO_KEY = {
   'Полка с таким названием уже существует': 'shelves.error.duplicateName',
   'Invalid Telegram ID': 'profile.telegram.errorInvalidId',
   'Invalid email': 'profile.invalidEmail',
+  'Email already in use': 'profile.accountEmail.taken',
   'Link token expired or invalid': 'profile.telegram.errorInvalidToken',
   'This Telegram account is already linked to another user': 'profile.telegram.errorAlreadyLinked',
   'User already has a different Telegram account linked': 'profile.telegram.errorDifferentLinked',

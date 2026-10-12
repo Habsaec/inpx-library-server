@@ -542,16 +542,6 @@ function initHeroCarousel(root, books) {
     pointerActive = false;
     startAuto();
   });
-  let wheelLock = false;
-  viewport?.addEventListener('wheel', (event) => {
-    if (Math.abs(event.deltaY) < 10 && Math.abs(event.deltaX) < 10) return;
-    event.preventDefault();
-    if (wheelLock) return;
-    wheelLock = true;
-    window.setTimeout(() => { wheelLock = false; }, 380);
-    if (event.deltaY > 0 || event.deltaX > 0) go(index + 1);
-    else go(index - 1);
-  }, { passive: false });
   root.addEventListener('mouseenter', stopAuto);
   root.addEventListener('mouseleave', startAuto);
   root.addEventListener('focusin', stopAuto);
@@ -7581,6 +7571,11 @@ function attachAdminUserFormAutofillGuard() {
       form.querySelectorAll('[data-initial-telegram-id]').forEach((input) => {
         if (input.dataset.hydrated === '1') return;
         input.value = input.getAttribute('data-initial-telegram-id') || '';
+        input.dataset.hydrated = '1';
+      });
+      form.querySelectorAll('[data-initial-account-email]').forEach((input) => {
+        if (input.dataset.hydrated === '1') return;
+        input.value = input.getAttribute('data-initial-account-email') || '';
         input.dataset.hydrated = '1';
       });
       form.querySelectorAll('[data-initial-ereader-email]').forEach((input) => {

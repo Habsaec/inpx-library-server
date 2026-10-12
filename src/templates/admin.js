@@ -433,6 +433,7 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
         <span class="role-badge role-badge-${escapeHtml(account.role)}">${escapeHtml(account.role)}</span>
         ${account.blocked ? `<span class="badge-blocked">${escapeHtml(t('admin.users.blocked'))}</span>` : ''}
         ${account.telegramId ? `<span class="muted">TG ${escapeHtml(account.telegramId)}</span>` : ''}
+        ${account.email ? `<span class="muted">${escapeHtml(account.email)}</span>` : ''}
         ${account.ereaderEmail ? `<span class="muted">${escapeHtml(account.ereaderEmail)}</span>` : ''}
         ${!accountFlagOn(account.telegramBotAllowed) ? `<span class="badge-blocked">${escapeHtml(t('admin.users.telegramDenied'))}</span>` : ''}
         ${!accountFlagOn(account.ereaderEmailAllowed) ? `<span class="badge-blocked">${escapeHtml(t('admin.users.emailDenied'))}</span>` : ''}
@@ -460,6 +461,11 @@ export function renderAdminUsers({ user, stats, indexStatus, users = [], flash =
               <label>${escapeHtml(t('admin.users.telegramId'))}</label>
               <input type="text" name="${escapeHtml(userField('accountTelegramId', account))}" value="" placeholder="123456789" inputmode="numeric" pattern="\\d*" autocomplete="${escapeHtml(accountAutocompleteSection(account))} off" data-lpignore="true" data-1p-ignore="true" data-admin-no-autofill data-initial-telegram-id="${escapeHtml(account.telegramId || '')}">
               <span class="admin-field-hint">${escapeHtml(t('admin.users.telegramIdHint'))}</span>
+            </div>
+            <div class="admin-field-group">
+              <label>${escapeHtml(t('admin.users.accountEmail'))}</label>
+              <input type="email" name="${escapeHtml(userField('accountEmail', account))}" value="" placeholder="name@example.com" autocomplete="${escapeHtml(accountAutocompleteSection(account))} off" data-lpignore="true" data-1p-ignore="true" data-admin-no-autofill data-initial-account-email="${escapeHtml(account.email || '')}">
+              <span class="admin-field-hint">${escapeHtml(t('admin.users.accountEmailHint'))}</span>
             </div>
             <div class="admin-field-group">
               <label>${escapeHtml(t('admin.users.ereaderEmail'))}</label>

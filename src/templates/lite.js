@@ -513,7 +513,18 @@ export function renderLiteProfileRead({ user, books = [], csrfToken = '' }) {
   return litePageShell({ title: t('profile.readBooks'), content, user, csrfToken, backHref: liteProfileHome() });
 }
 
-export function renderLiteProfileSettings({ user, ereaderEmail = '', ereaderEmailAllowed = true, flash = '', csrfToken = '' }) {
+export function renderLiteProfileSettings({ user, ereaderEmail = '', accountEmail = '', ereaderEmailAllowed = true, flash = '', csrfToken = '' }) {
+  const accountEmailSection = `
+    <section class="lite-profile-section">
+      <h2 class="lite-profile-heading">${escapeHtml(t('profile.accountEmail'))}</h2>
+      <p class="lite-hint">${escapeHtml(t('profile.accountEmail.hint'))}</p>
+      <form class="lite-login" method="post" action="${litePath('profile/account-email')}">
+        ${csrfHiddenField(csrfToken)}
+        <input class="lite-login-input" type="email" name="accountEmail" value="${escapeHtml(accountEmail)}" placeholder="name@example.com" autocomplete="email">
+        <button class="lite-login-submit" type="submit">${escapeHtml(t('profile.save'))}</button>
+      </form>
+    </section>`;
+
   const emailSection = `
     <section class="lite-profile-section">
       <h2 class="lite-profile-heading">${escapeHtml(t('profile.ereaderEmail'))}</h2>
@@ -542,7 +553,7 @@ export function renderLiteProfileSettings({ user, ereaderEmail = '', ereaderEmai
 
   const content = `
     ${flash ? `<p class="lite-profile-flash">${escapeHtml(flash)}</p>` : ''}
-    <div class="lite-profile-body">${emailSection}${passwordSection}</div>`;
+    <div class="lite-profile-body">${accountEmailSection}${emailSection}${passwordSection}</div>`;
   return litePageShell({ title: t('profile.tabSettings'), content, user, csrfToken, backHref: liteProfileHome() });
 }
 

@@ -1,10 +1,54 @@
 /**
  * Заметки читателя: разбор фильтров (страница и API) и экспорт в Markdown / HTML.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { config } from '../config.js';
 import { t, tp, getLocale } from '../i18n.js';
+import { getSharp } from './sharp-loader.js';
+import { getUiCustomization } from './ui-customization.js';
+import { siteTitleForDisplay } from '../templates/shared.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { READER_ANNOTATION_COLORS } from '../db.js';
 import { decodeBookRef } from '../utils/book-ref.js';
+
+const LOGO_EXPORT_PX = 128;
+const LOGO_MAX_RAW_BYTES = 200 * 1024;
+let _logoCache = { key: '', dataUri: '' };
+
+/** Логотип сайта как data URI (кастомный или встроенный), уменьшенный: файл должен открываться отдельно от сервера. */
+async function loadLogoDataUri() {
+  const candidates = [path.join(config.dataDir, 'ui', 'logo.png'), path.join(config.publicDir, 'logo.png')];
+  for (const file of candidates) {
+    let st;
+    try { st = fs.statSync(file); } catch { continue; }
+    const key = `${file}:${st.mtimeMs}:${st.size}`;
+    if (_logoCache.key === key) return _logoCache.dataUri;
+    let buf;
+    try { buf = fs.readFileSync(file); } catch { continue; }
+    let out = null;
+    const sharp = await getSharp();
+    if (sharp) {
+      try {
+        out = await sharp(buf).resize(LOGO_EXPORT_PX, LOGO_EXPORT_PX, { fit: 'inside' }).png().toBuffer();
+      } catch { out = null; }
+    }
+    if (!out && buf.length <= LOGO_MAX_RAW_BYTES) out = buf;
+    const dataUri = out ? `data:image/png;base64,${out.toString('base64')}` : '';
+    _logoCache = { key, dataUri };
+    return dataUri;
+  }
+  return '';
+}
+
+/** Шапка экспорта: название библиотеки и логотип (если логотип не скрыт в Admin → Appearance). */
+export async function getExportBranding() {
+  const ui = getUiCustomization();
+  return {
+    siteName: siteTitleForDisplay(),
+    logoDataUri: ui.showLogo === false ? '' : await loadLogoDataUri()
+  };
+}
 
 export const NOTES_SORTS = ['new', 'old', 'title'];
 export const NOTES_EXPORT_FORMATS = {
@@ -73,8 +117,11 @@ function noteMeta(item, group) {
   return parts.join(' · ');
 }
 
-function buildMarkdown(groups, group, total, date) {
-  const lines = [`# ${t('notes.export.title')}`, '', `_${tp('notes.export.generated', { date, count: total })}_`, ''];
+function buildMarkdown(groups, group, total, date, branding) {
+  const lines = [];
+  if (branding.logoDataUri) lines.push(`![](${branding.logoDataUri})`, '');
+  if (branding.siteName) lines.push(`**${branding.siteName}**`, '');
+  lines.push(`# ${t('notes.export.title')}`, '', `_${tp('notes.export.generated', { date, count: total })}_`, '');
   for (const g of groups) {
     lines.push(`## ${g.title}`, '');
     for (const item of g.notes) {
@@ -91,7 +138,7 @@ function buildMarkdown(groups, group, total, date) {
   return lines.join('\n');
 }
 
-function buildHtml(groups, group, total, date) {
+function buildHtml(groups, group, total, date, branding) {
   const sections = groups.map((g) => {
     const notes = g.notes.map((item) => {
       const quote = String(item.text || '').trim();
@@ -105,14 +152,20 @@ ${note ? `<p class="note-text">${escapeHtml(note).replace(/\r?\n/g, '<br>')}</p>
     return `<section><h2>${escapeHtml(g.title)}</h2>\n${notes}</section>`;
   }).join('\n');
   const title = escapeHtml(t('notes.export.title'));
+  const siteName = escapeHtml(branding.siteName || '');
+  const brand = (branding.logoDataUri || siteName)
+    ? `<header class="brand">${branding.logoDataUri ? `<img src="${escapeHtml(branding.logoDataUri)}" alt="">` : ''}${siteName ? `<span>${siteName}</span>` : ''}</header>`
+    : '';
   return `<!doctype html>
 <html lang="${getLocale() === 'ru' ? 'ru' : 'en'}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
+<title>${siteName ? `${siteName} — ${title}` : title}</title>
 <style>
 body{font-family:Georgia,serif;max-width:46rem;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#222}
+.brand{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;font-size:1.1rem;font-weight:bold}
+.brand img{height:48px;width:auto;max-width:96px;object-fit:contain}
 h1{font-size:1.6rem}h2{font-size:1.2rem;margin-top:2rem;border-bottom:1px solid #ccc;padding-bottom:.25rem}
 .sub,.meta{color:#777;font-size:.85rem}
 blockquote{margin:1rem 0 .5rem;padding:.25rem 1rem;border-left:4px solid #e0b400}
@@ -122,6 +175,7 @@ blockquote{margin:1rem 0 .5rem;padding:.25rem 1rem;border-left:4px solid #e0b400
 </style>
 </head>
 <body>
+${brand}
 <h1>${title}</h1>
 <p class="sub">${escapeHtml(tp('notes.export.generated', { date, count: total }))}</p>
 ${sections}
@@ -131,13 +185,13 @@ ${sections}
 }
 
 /** items — результат queryReaderAnnotations (уже отсортирован под group). */
-export function buildNotesExport(items, { format = 'md', group = 'book', now = new Date() } = {}) {
+export function buildNotesExport(items, { format = 'md', group = 'book', now = new Date(), branding = {} } = {}) {
   const spec = NOTES_EXPORT_FORMATS[format] || NOTES_EXPORT_FORMATS.md;
   const date = now.toISOString().slice(0, 10);
   const groups = groupNotes(items, group);
   const content = spec === NOTES_EXPORT_FORMATS.html
-    ? buildHtml(groups, group, items.length, date)
-    : buildMarkdown(groups, group, items.length, date);
+    ? buildHtml(groups, group, items.length, date, branding)
+    : buildMarkdown(groups, group, items.length, date, branding);
   return {
     fileName: `notes-${date}.${spec.ext}`,
     mimeType: spec.mimeType,

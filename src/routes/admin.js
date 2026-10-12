@@ -49,7 +49,7 @@ import {
   getSmtpSettings, setSmtpSettings, getTelegramSettings, setTelegramSettings, resolveTelegramTokenForAdmin, syncTelegramChatsFromLinkedUsers, hasAdminUser, listUsers, countAdminUsers,
   isPasswordResetEnabled, getPublicBaseUrlSetting, setPasswordResetSettings,
   getOidcSettings, setOidcSettings,
-  getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser, getUserByTelegramId, normalizeTelegramId, setUserTelegramId, setUserTelegramBotAllowed, setUserEreaderEmailAllowed, setUserEreaderEmail, getEreaderEmail,
+  getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser, getUserByTelegramId, normalizeTelegramId, setUserTelegramId, setUserTelegramBotAllowed, setUserEreaderEmailAllowed, setUserEreaderEmail, getEreaderEmail, setUserAccountEmail, assertAccountEmailAvailable,
   db, getDistinctLanguages, getDistinctGenres, rebuildActiveBooksView, refreshCatalogBookCounts,
   getSuppressedBooks, unsuppressBook, unsuppressAll, getScheduleLog, adjustCatalogCountsForBook, isBookInActiveView,
   setMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache
@@ -1413,6 +1413,8 @@ export function registerAdminRoutes(app, deps) {
       if (rawEreaderEmail && !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(rawEreaderEmail)) {
         throw new Error('Invalid email');
       }
+      const rawAccountEmail = readAdminUserField(req.body, username, 'accountEmail');
+      assertAccountEmailAvailable(username, rawAccountEmail);
       if (rawTelegramId !== prevTelegramId && rawTelegramId) {
         const normalizedTg = normalizeTelegramId(rawTelegramId);
         if (!normalizedTg) throw new Error('Invalid Telegram ID');
@@ -1430,6 +1432,9 @@ export function registerAdminRoutes(app, deps) {
         const prevEreaderEmail = String(getEreaderEmail(username) || '').trim();
         if (rawEreaderEmail !== prevEreaderEmail) {
           setUserEreaderEmail(username, rawEreaderEmail);
+        }
+        if (rawAccountEmail.toLowerCase() !== String(existing.email || '').trim().toLowerCase()) {
+          setUserAccountEmail(username, rawAccountEmail);
         }
       }
       setUserTelegramBotAllowed(username, isFormFlagEnabled(req.body.telegramBotAllowed));

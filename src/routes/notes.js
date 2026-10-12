@@ -8,7 +8,7 @@ import {
 } from '../db.js';
 import { createSmtpTransport } from '../services/email.js';
 import { logSystemEvent } from '../services/system-events.js';
-import { parseNotesFilter, buildNotesExport, NOTES_EXPORT_FORMATS } from '../services/reader-notes.js';
+import { parseNotesFilter, buildNotesExport, getExportBranding, NOTES_EXPORT_FORMATS } from '../services/reader-notes.js';
 
 const EXPORT_MAX_NOTES = 5000;
 
@@ -39,7 +39,8 @@ export function registerNotesRoutes(app, { batchEmailLocks }) {
     if (!items.length) {
       return apiFail(res, 404, ApiErrorCode.VALIDATION, t('notes.export.empty'));
     }
-    const file = buildNotesExport(items, { format, group: filter.group });
+    const branding = await getExportBranding();
+    const file = buildNotesExport(items, { format, group: filter.group, branding });
     res.setHeader('Content-Type', file.mimeType);
     res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
     res.setHeader('Cache-Control', 'no-store');
@@ -73,12 +74,13 @@ export function registerNotesRoutes(app, { batchEmailLocks }) {
       }
       batchEmailLocks.add(username);
       try {
-        const file = buildNotesExport(items, { format, group: filter.group });
+        const branding = await getExportBranding();
+        const file = buildNotesExport(items, { format, group: filter.group, branding });
         const { transporter, senderEmail } = createSmtpTransport();
         await transporter.sendMail({
           from: senderEmail,
           to: email,
-          subject: t('notes.export.title'),
+          subject: `${branding.siteName} — ${t('notes.export.title')}`,
           text: tp('notes.send.body', { count: items.length }),
           attachments: [{ filename: file.fileName, content: file.content, contentType: file.mimeType }]
         });

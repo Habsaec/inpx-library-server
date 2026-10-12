@@ -817,13 +817,23 @@ export function getUserByEreaderEmail(email) {
   return _stmtGetUserByEreaderEmail.get(normalized) || null;
 }
 
-export function createPasswordResetToken(username) {
+/** Пользователь для сброса пароля: сначала email аккаунта, затем (как раньше) e-reader email. */
+export function getUserByResetEmail(email) {
+  const byAccount = getUserByEmail(email);
+  if (byAccount && !byAccount.blocked) return byAccount;
+  return getUserByEreaderEmail(email);
+}
+
+/** `toEmail` — адрес, по которому найден пользователь; иначе email аккаунта, затем e-reader email. */
+export function createPasswordResetToken(username, toEmail = '') {
   const normalizedUsername = String(username || '').trim();
   const user = getUserByUsername(normalizedUsername);
   if (!user) throw new Error('User not found');
   if (user.blocked) throw new Error('Account is blocked');
-  const ereaderEmail = getEreaderEmail(normalizedUsername);
-  if (!normalizePasswordResetEmail(ereaderEmail)) throw new Error('E-reader email is not set');
+  const recipient = normalizePasswordResetEmail(toEmail)
+    || normalizePasswordResetEmail(user.email)
+    || normalizePasswordResetEmail(getEreaderEmail(normalizedUsername));
+  if (!recipient) throw new Error('E-reader email is not set');
 
   db.prepare('DELETE FROM password_reset_tokens WHERE username = ?').run(normalizedUsername);
   pruneExpiredPasswordResetTokens();
@@ -834,7 +844,7 @@ export function createPasswordResetToken(username) {
     INSERT INTO password_reset_tokens(token, username, expires_at)
     VALUES(?, ?, ?)
   `).run(token, normalizedUsername, expiresAt);
-  return { token, expiresAt, ereaderEmail: ereaderEmail.trim() };
+  return { token, expiresAt, email: recipient, ereaderEmail: recipient };
 }
 
 export function validatePasswordResetToken(token) {
@@ -989,6 +999,7 @@ export function listUsers() {
       COALESCE(u.telegram_bot_allowed, 1) AS telegramBotAllowed,
       COALESCE(u.ereader_email_allowed, 1) AS ereaderEmailAllowed,
       COALESCE(u.ereader_email, '') AS ereaderEmail,
+      COALESCE(u.email, '') AS email,
       (SELECT COUNT(*) FROM reading_history rh WHERE rh.username = u.username) AS readingCount,
       (SELECT MAX(rh.last_opened_at) FROM reading_history rh WHERE rh.username = u.username) AS lastReadAt
     FROM users u
@@ -4025,6 +4036,26 @@ export function setUserEreaderEmail(username, email) {
   if (!user) throw new Error('User not found');
   _stmtSetEreaderEmail ??= db.prepare('UPDATE users SET ereader_email = ? WHERE username = ?');
   _stmtSetEreaderEmail.run(String(email || '').trim(), username);
+}
+
+/** Валидирует адрес аккаунта (`users.email`): '' = очистить; возвращает нормализованный адрес. */
+export function assertAccountEmailAvailable(username, email) {
+  const raw = String(email || '').trim();
+  if (!raw) return '';
+  const normalized = normalizeLookupEmail(raw);
+  if (!normalized) throw new Error('Invalid email');
+  const owner = getUserByEmail(normalized);
+  if (owner && owner.username !== username) throw new Error('Email already in use');
+  return normalized;
+}
+
+let _stmtSetAccountEmail = null;
+export function setUserAccountEmail(username, email) {
+  if (!getUserByUsername(username)) throw new Error('User not found');
+  const normalized = assertAccountEmailAvailable(username, email);
+  _stmtSetAccountEmail ??= db.prepare('UPDATE users SET email = ? WHERE username = ?');
+  _stmtSetAccountEmail.run(normalized, username);
+  return normalized;
 }
 
 export function setEreaderEmail(username, email) {
