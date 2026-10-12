@@ -1,0 +1,61 @@
+name: 🐛 Сообщение об ошибке (Bug Report)
+description: Сообщить о баге или сбое в работе сервера
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что помогаете делать проект лучше! Перед отправкой убедитесь, что вы используете актуальную версию сервера.
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия inpx-library-server
+      description: Укажите версию (например, v2.9.0 или latest)
+      placeholder: v2.9.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Способ запуска и окружение
+      options:
+        - Docker / Docker Compose (Linux / Ubuntu / Debian)
+        - OpenMediaVault (OMV) / TrueNAS / Unraid
+        - Synology NAS (Container Manager)
+        - Windows (start-server.cmd)
+        - Linux без Docker (systemd / start.sh)
+        - Другое
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Описание проблемы
+      description: Что именно пошло не так?
+      placeholder: При индексации / чтении книги происходит...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги для воспроизведения
+      description: Как повторить проблему?
+      placeholder: |
+        1. Зайти в Панель управления -> Источники
+        2. Добавить путь к папке...
+        3. Нажать...
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи сервера / скриншоты
+      description: Логи из `docker logs inpx-library` или консоли сервера
+      render: shell
+    validations:
+      required: false

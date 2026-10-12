@@ -55,7 +55,7 @@ import {
   setMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache
 } from '../db.js';
 import {
-  getBookById, getIndexStatus, getConfiguredInpxFile, setConfiguredInpxFile,
+  getBookById, getIndexStatus, getConfiguredInpxFile, setConfiguredInpxFile, findInpxFiles,
   getSourceRoot, getAuthorFlibustaSourceId, startBackgroundIndexing, startSourceIndexing,
   requestIndexPause, requestIndexResume, requestIndexStop,
   splitAuthorValues, getDuplicateGroups, softDeleteBook, autoCleanDuplicates,
@@ -371,9 +371,8 @@ export function registerAdminRoutes(app, deps) {
       if (!stat.isDirectory()) {
         return res.json({ ok: false, code: ApiErrorCode.PROBE_PATH_INVALID, error: t('admin.probe.pathInvalid') });
       }
-      const entries = fs.readdirSync(resolvedPath);
-      const inpxNames = entries.filter((e) => e.toLowerCase().endsWith('.inpx'));
-      return res.json({ ok: true, exists: true, isFile: false, isInpx: false, inpxFiles: inpxNames.map((e) => path.join(resolvedPath, e)) });
+      fs.readdirSync(resolvedPath);
+      return res.json({ ok: true, exists: true, isFile: false, isInpx: false, inpxFiles: findInpxFiles(resolvedPath, { maxDepth: 2 }) });
     } catch {
       return res.json({ ok: false, code: ApiErrorCode.PROBE_PATH_UNREADABLE, error: t('admin.probe.pathUnreadable') });
     }
@@ -1176,10 +1175,11 @@ export function registerAdminRoutes(app, deps) {
         if (isJson) return apiFail(res, 400, ApiErrorCode.ADMIN_SOURCE_NAME_PATH, t('admin.sources.errorNamePath'));
         return res.redirect('/admin/sources?flash=' + encodeURIComponent(t('admin.sources.errorNamePath')));
       }
-      const source = addSource({ name, type, path: sourcePath });
+      const fastScan = ['1', 'true'].includes(String(req.body.fast_scan));
+      const source = addSource({ name, type, path: sourcePath, fastScan });
       clearPageDataCache();
       markLibraryDedupProjectionStale();
-      logSystemEvent('info', 'settings', 'source added', { actor: req.user.username, source: source.name, type, path: sourcePath });
+      logSystemEvent('info', 'settings', 'source added', { actor: req.user.username, source: source.name, type, path: sourcePath, fastScan: Boolean(source.fastScan) });
       if (isJson) return res.json({ ok: true, source });
       res.redirect('/admin/sources?flash=' + encodeURIComponent(tp('admin.sources.flashAdded', { name: source.name })));
     } catch (error) {

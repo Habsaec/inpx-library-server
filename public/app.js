@@ -4965,6 +4965,54 @@ function attachSendToEreader() {
   });
 }
 
+function attachSendToTelegram() {
+  if (attachSendToTelegram._bound) return;
+  attachSendToTelegram._bound = true;
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-send-to-telegram]') : null;
+    if (!btn || btn.disabled) return;
+    const bookId = typeof resolveBookIdFromElement === 'function'
+      ? resolveBookIdFromElement(btn)
+      : (btn.dataset.sendToTelegram ? decodeURIComponent(btn.dataset.sendToTelegram).replace(/\uFFFD/g, '\0') : null);
+    if (!bookId) return;
+
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = uiT('telegram.sending');
+    try {
+      const res = await fetch(apiSendToTelegramPath(bookId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        showToast(data.message || uiT('telegram.sentOk'), 'success');
+      } else if (data.code === 'TELEGRAM_NOT_LINKED') {
+        openModal(`
+          <div class="modal-header">
+            <span>${escapeHtml(uiT('telegram.sendToTelegram'))}</span>
+            <button type="button" class="modal-close">&times;</button>
+          </div>
+          <div class="modal-form">
+            <p>${escapeHtml(uiT('telegram.linkPrompt'))}</p>
+            <p style="margin-top:8px;"><a href="${escapeHtml(data.linkUrl || '/profile#settings')}" style="color:var(--accent);">${escapeHtml(uiT('telegram.linkBtn'))}</a></p>
+          </div>
+        `);
+      } else {
+        showToast(data.error || uiT('telegram.sendFailed'), 'error');
+      }
+    } catch {
+      showToast(uiT('app.networkError'), 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  });
+}
+
 function attachSendBatchToEreader() {
   if (attachSendBatchToEreader._bound) return;
   attachSendBatchToEreader._bound = true;
@@ -7319,14 +7367,15 @@ function attachAddSourceForm() {
 
   const nameInput = form.querySelector('#source-name');
   const pathInput = form.querySelector('#source-path');
+  const fastScanInput = form.querySelector('#source-fast-scan');
   const submitBtn = form.querySelector('#add-source-btn');
 
-  async function addSource(name, type, sourcePath) {
+  async function addSource(name, type, sourcePath, fastScan = false) {
     const res = await fetch('/admin/sources/add', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ name, type, path: sourcePath })
+      body: JSON.stringify({ name, type, path: sourcePath, fast_scan: fastScan ? 1 : 0 })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();
@@ -7376,7 +7425,7 @@ function attachAddSourceForm() {
         return;
       }
 
-      const result = await addSource(name, 'folder', sourcePath);
+      const result = await addSource(name, 'folder', sourcePath, fastScanInput ? fastScanInput.checked : false);
       if (result.ok) { window.location.reload(); return; }
       showToast(result.error || uiT('app.adminAddFail'), 'error');
     } catch (err) {
@@ -7388,10 +7437,11 @@ function attachAddSourceForm() {
   });
 
   function showInpxChoiceModal(name, folderPath, inpxFiles) {
-    const inpxList = inpxFiles.map((f) => {
-      const base = f.split(/[/\\]/).pop();
-      return `<li style="margin:4px 0"><code style="font-size:.9em">${escapeHtml(base)}</code></li>`;
-    }).join('');
+    const inpxList = inpxFiles.length > 1
+      ? `<select id="inpx-file-choice" style="width:100%;margin:0 0 16px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:inherit" aria-label="${escapeHtml(uiT('app.adminInpxSelectFile'))}">
+          ${inpxFiles.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('')}
+        </select>`
+      : `<ul style="margin:0 0 16px;padding-left:20px">${inpxFiles.map((f) => `<li style="margin:4px 0"><code style="font-size:.9em">${escapeHtml(f.split(/[/\\]/).pop())}</code></li>`).join('')}</ul>`;
 
     const html = `
       <button class="modal-close" aria-label="${escapeHtml(uiT('reader.close'))}">&times;</button>
@@ -7400,7 +7450,7 @@ function attachAddSourceForm() {
         <p style="margin:0 0 8px;color:var(--text-secondary)">
           ${escapeHtml(uiT('app.adminInpxFoundIntro'))}
         </p>
-        <ul style="margin:0 0 16px;padding-left:20px">${inpxList}</ul>
+        ${inpxList}
         <p style="margin:0 0 16px;color:var(--text-secondary);font-size:.95em">
           ${escapeHtml(uiT('app.adminInpxChooseMethod'))}
         </p>
@@ -7425,11 +7475,12 @@ function attachAddSourceForm() {
     const panel = modal.overlay.querySelector('.modal-panel');
 
     panel.querySelector('[data-choice="inpx"]').addEventListener('click', async () => {
+      const chosenInpx = panel.querySelector('#inpx-file-choice')?.value || inpxFiles[0];
       modal.forceClose();
       submitBtn.disabled = true;
       submitBtn.innerHTML = '<span class="btn-spinner"></span>' + escapeHtml(uiT('app.adminAddingSource'));
       try {
-        const result = await addSource(name, 'inpx', inpxFiles[0]);
+        const result = await addSource(name, 'inpx', chosenInpx);
         if (result.ok) { window.location.reload(); return; }
         showToast(result.error || uiT('app.adminAddFail'), 'error');
       } catch (err) { showToast(uiT('app.errorPrefix') + ' ' + err.message, 'error'); }
@@ -7437,11 +7488,13 @@ function attachAddSourceForm() {
     });
 
     panel.querySelector('[data-choice="folder"]').addEventListener('click', async () => {
+      const fastScan = fastScanInput ? fastScanInput.checked : false;
+      if (!fastScan && !(await confirmAction(uiT('app.adminFolderConfirmSlow'), { danger: true }))) return;
       modal.forceClose();
       submitBtn.disabled = true;
       submitBtn.innerHTML = '<span class="btn-spinner"></span>' + escapeHtml(uiT('app.adminAddingSource'));
       try {
-        const result = await addSource(name, 'folder', folderPath);
+        const result = await addSource(name, 'folder', folderPath, fastScan);
         if (result.ok) { window.location.reload(); return; }
         showToast(result.error || uiT('app.adminAddFail'), 'error');
       } catch (err) { showToast(uiT('app.errorPrefix') + ' ' + err.message, 'error'); }
@@ -7504,6 +7557,7 @@ attachFormSubmitSpinners();
 attachShelfActions();
 attachAddToShelfButtons();
 attachSendToEreader();
+attachSendToTelegram();
 attachSendBatchToEreader();
 attachUpdateUpload();
 attachUsersImport();

@@ -1,0 +1,34 @@
+name: 💡 Предложение / Идея (Feature Request)
+description: Предложить новую функцию или улучшение интерфейса
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Есть классная идея, как сделать сервер ещё удобнее? Опишите её здесь!
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: Суть предложения
+      description: Какую функцию вы хотели бы видеть?
+      placeholder: Было бы здорово добавить...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему это решает?
+      description: В каких сценариях это будет полезно?
+      placeholder: Сейчас приходится делать... а с этой функцией можно было бы...
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативные варианты
+      description: Рассматривали ли вы другие решения?
+    validations:
+      required: false

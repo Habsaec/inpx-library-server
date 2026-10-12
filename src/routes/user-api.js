@@ -8,6 +8,7 @@ import {
   addBookToShelf, removeBookFromShelf, getShelfBooks, getBookShelves,
   getEreaderEmail, setEreaderEmail, setUserAccountEmail, getSmtpSettings, getUserByUsername, isEreaderEmailAllowedForUser,
   getMeta, setMeta, createAppPairingToken, consumeAppPairingToken,
+  resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser,
 } from '../db.js';
 import { resolvePublicBaseUrl } from '../services/password-reset.js';
 import { isPairingRedeemRateLimited, registerPairingRedeemAttempt } from '../services/rate-limiter.js';
@@ -529,6 +530,41 @@ export function registerUserApiRoutes(app, deps) {
         msg = t('api.email.err.smtpRejected');
       }
       res.status(500).json({ ok: false, code: ApiErrorCode.SMTP_ERROR, error: msg });
+    }
+  });
+
+  /** Отправка книги в Telegram пользователя (привязанный аккаунт), «В Telegram» на странице книги. */
+  app.post('/api/send-to-telegram/:id', requireApiAuth, async (req, res) => {
+    try {
+      const book = getBookById(req.params.id);
+      if (!book) return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      const tgCfg = resolveTelegramRuntimeConfig();
+      if (!tgCfg.enabled || !tgCfg.token) {
+        return apiFail(res, 400, ApiErrorCode.TELEGRAM_DISABLED, t('telegram.botDisabled'));
+      }
+      const fullUser = getUserByUsername(req.user.username);
+      if (!isTelegramBotAllowedForUser(fullUser)) {
+        return apiFail(res, 403, ApiErrorCode.TELEGRAM_DENIED, t('profile.telegram.accessDenied'));
+      }
+      if (!fullUser.telegramId) {
+        return apiFail(res, 400, ApiErrorCode.TELEGRAM_NOT_LINKED, t('telegram.notLinked'), { linkUrl: '/profile#settings' });
+      }
+      const lockKey = `tg:${req.user.username}`;
+      if (batchEmailLocks.has(lockKey)) {
+        return apiFail(res, 429, ApiErrorCode.SEND_IN_PROGRESS, t('api.send.inProgress'));
+      }
+      batchEmailLocks.add(lockKey);
+      try {
+        const { sendBookCardToChat } = await import('../services/telegram-bot.js');
+        await sendBookCardToChat(fullUser.telegramId, book.id);
+        logSystemEvent('info', 'telegram-bot', 'book card sent from web', { user: req.user.username, book: book.title });
+        res.json({ ok: true, message: t('telegram.sentOk') });
+      } finally {
+        batchEmailLocks.delete(lockKey);
+      }
+    } catch (error) {
+      console.error('Send to telegram error:', error);
+      apiFail(res, 500, ApiErrorCode.TELEGRAM_SEND_FAILED, t('telegram.sendFailed'));
     }
   });
 

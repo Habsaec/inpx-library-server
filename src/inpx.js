@@ -2332,12 +2332,42 @@ export function getConfiguredInpxFile() {
   if (saved) return saved;
   if (config.inpxFile) return config.inpxFile;
   if (config.libraryRoot && fs.existsSync(config.libraryRoot)) {
-    try {
-      const found = fs.readdirSync(config.libraryRoot).find(f => f.endsWith('.inpx'));
-      if (found) return path.join(config.libraryRoot, found);
-    } catch {}
+    const [found] = findInpxFiles(config.libraryRoot, { maxDepth: 1 });
+    if (found) return found;
   }
   return '';
+}
+
+/**
+ * Ищет *.inpx (без учёта регистра) в папке и подпапках до maxDepth уровней.
+ * Порядок: `*_local.inpx` первыми, затем более мелкие каталоги, затем по имени.
+ * Нечитаемые каталоги пропускаются; результат ограничен `limit`.
+ */
+export function findInpxFiles(rootDir, { maxDepth = 2, limit = 50 } = {}) {
+  const found = [];
+  const walk = (dir, depth) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (found.length >= limit) return;
+      if (entry.isFile() && /\.inpx$/i.test(entry.name)) {
+        found.push({ file: path.join(dir, entry.name), depth });
+      }
+    }
+    if (depth >= maxDepth) return;
+    for (const entry of entries) {
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), depth + 1);
+    }
+  };
+  walk(rootDir, 0);
+  const isLocal = (file) => (/_local\.inpx$/i.test(file) ? 0 : 1);
+  return found
+    .sort((a, b) => isLocal(a.file) - isLocal(b.file) || a.depth - b.depth || a.file.localeCompare(b.file))
+    .map((item) => item.file);
 }
 
 export function getLibraryRoot() {

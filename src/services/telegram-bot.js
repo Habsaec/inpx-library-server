@@ -835,16 +835,19 @@ function fmtBook(book) {
 }
 
 /** Кнопки скачивания сразу под карточкой книги. */
-function bookMarkup(book) {
-  const formats = book.downloadFormats?.length
-    ? book.downloadFormats.slice(0, 4)
+function bookMarkup(book, { allFormats = false } = {}) {
+  const available = book.downloadFormats?.length
+    ? book.downloadFormats
     : [{ format: book.ext || 'fb2', label: (book.ext || 'fb2').toUpperCase() }];
-  return {
-    inline_keyboard: [formats.map((f) => ({
-      text: `📥 ${f.label}`,
-      callback_data: `dl:${regDlKey(book.id, f.format)}`,
-    }))],
-  };
+  const buttons = (allFormats ? available : available.slice(0, 4)).map((f) => ({
+    text: `📥 ${f.label}`,
+    callback_data: `dl:${regDlKey(book.id, f.format)}`,
+  }));
+  // Поиск в боте — одна строка до 4 кнопок; полная карточка — по 3 в ряд, чтобы поместились все форматы.
+  if (!allFormats) return { inline_keyboard: [buttons] };
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
+  return { inline_keyboard: rows };
 }
 
 function plainAnnotation(text, isHtml) {
@@ -938,10 +941,10 @@ async function loadBookPresentation(book) {
   };
 }
 
-async function sendBookCard(chatId, book) {
+async function sendBookCard(chatId, book, { allFormats = false } = {}) {
   const pres = await withPresentationLimit(() => loadBookPresentation(book));
   const caption = bookCaption(book, pres.annotation, pres.annotationIsHtml);
-  const markup = bookMarkup(book);
+  const markup = bookMarkup(book, { allFormats });
   if (pres.cover?.data?.length) {
     const res = await sendPhoto(chatId, pres.cover.data, pres.cover.contentType, caption, markup);
     if (res?.ok) return res.result?.message_id;
@@ -1535,6 +1538,24 @@ async function doDownload(chatId, dlKey, cbId) {
     logSystemEvent('warn', 'telegram-bot', 'ошибка скачивания', { bookId: entry.bookId, error: err.message });
     await sendText(chatId, `❌ Ошибка: ${esc(err.message)}`);
   }
+}
+
+/**
+ * «В Telegram» из веб-интерфейса: то же, что показывает бот в поиске — карточка с обложкой,
+ * аннотацией и кнопками всех форматов; файл приходит по нажатию кнопки (doDownload).
+ * Ошибки — Error с `code`: BOT_DISABLED | BOOK_NOT_FOUND | SEND_FAILED.
+ */
+export async function sendBookCardToChat(chatId, bookId) {
+  const failWith = (code, message) => Object.assign(new Error(message), { code });
+  const cfg = resolveTelegramRuntimeConfig();
+  if (!cfg.enabled || !cfg.token) throw failWith('BOT_DISABLED', 'Telegram bot is disabled');
+  const book = getBookById(bookId);
+  if (!book) throw failWith('BOOK_NOT_FOUND', 'Book not found');
+  // Бот может не опрашиваться в этом процессе (cluster, остановлен) — токен тогда ещё не загружен.
+  if (!_token) _token = cfg.token;
+  const messageId = await sendBookCard(chatId, book, { allFormats: true });
+  if (!messageId) throw failWith('SEND_FAILED', 'Telegram did not accept the message');
+  return { ok: true, messageId };
 }
 
 async function handleUpdate(upd) {

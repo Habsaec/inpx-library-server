@@ -733,7 +733,8 @@ export function renderBook({
   authorPortraitUrl = '',
   illustrationUrls = [],
   flash = '',
-  readBookIds = null
+  readBookIds = null,
+  telegramSendAvailable = false
 }) {
   const similar = similarBooks || { title: t('book.similar'), items: [] };
   const isAuthenticated = Boolean(user);
@@ -802,6 +803,7 @@ export function renderBook({
             <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${escapeHtml(t('home.heroReadBook'))}</a>
             ${renderDownloadMenu(book, { accent: true, user })}
             ${isAuthenticated && canSendToEmailInUi(user) ? `<button class="button" type="button" ${bookIdDataAttr(book.id)} data-send-to-ereader="1">${escapeHtml(t('book.toEmail'))}</button>` : ''}
+            ${isAuthenticated && telegramSendAvailable ? `<button class="button" type="button" ${bookIdDataAttr(book.id)} data-send-to-telegram="1">${escapeHtml(t('telegram.sendToTelegram'))}</button>` : ''}
           </div>
         </div>
         ${user?.role === 'admin' ? `<details class="book-edit-disclosure book-edit-disclosure--inline">

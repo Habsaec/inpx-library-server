@@ -504,7 +504,12 @@ function parseFb2FromBuffer(raw) {
   return parseFb2Metadata(content);
 }
 
-async function extractMetadata(filePath, relativePath, ext, { zipEntry = null } = {}) {
+async function extractMetadata(filePath, relativePath, ext, { zipEntry = null, fastScan = false } = {}) {
+  if (fastScan) {
+    // Быстрое сканирование: ничего не распаковываем, автор/название — из имени файла.
+    const fallback = parseFilenameMetadata(zipEntry || relativePath);
+    return { ...fallback, genres: '', seriesNo: '', lang: '', keywords: '', date: '' };
+  }
   if (ext === 'fb2') {
     try {
       const raw = zipEntry
@@ -582,11 +587,13 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
   if (!fs.existsSync(rootPath)) {
     throw new Error(`Папка не найдена: ${rootPath}`);
   }
-  console.log(`[folder-index] start source_id=${source.id} path=${rootPath} incremental=${incremental}`);
+  const fastScan = Boolean(source.fastScan);
+  console.log(`[folder-index] start source_id=${source.id} path=${rootPath} incremental=${incremental} fastScan=${fastScan}`);
   logSystemEvent('info', 'index', 'folder index started', {
     sourceId: source.id,
     name: source.name || '',
     incremental,
+    fastScan,
     path: rootPath
   });
 
@@ -861,7 +868,7 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
       await waitIfPaused();
       let meta;
       try {
-        meta = await extractMetadata(file.fullPath, file.relativePath, file.ext, { zipEntry: file.zipEntry });
+        meta = await extractMetadata(file.fullPath, file.relativePath, file.ext, { zipEntry: file.zipEntry, fastScan });
       } catch {
         return null;
       }
@@ -1054,8 +1061,9 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
   completedSuccessfully = true;
   repairBookJunctionLinks();
   
-  // Фоновое предизвлечение обложек/аннотаций для новых книг (не блокирует завершение индексации)
-  setImmediate(() => warmupBookDetailsCache(source.id));
+  // Фоновое предизвлечение обложек/аннотаций для новых книг (не блокирует завершение индексации;
+  // при быстром сканировании архивы не распаковываем)
+  if (!fastScan) setImmediate(() => warmupBookDetailsCache(source.id));
   
   return result;
   } finally {

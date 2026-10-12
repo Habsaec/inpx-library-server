@@ -84,3 +84,7 @@ export function apiReadingHistoryPath(id) {
 export function apiSendToEreaderPath(id) {
   return apiActionPath('/api/send-to-ereader', id);
 }
+
+export function apiSendToTelegramPath(id) {
+  return apiActionPath('/api/send-to-telegram', id);
+}

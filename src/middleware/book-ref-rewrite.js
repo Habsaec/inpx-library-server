@@ -37,7 +37,7 @@ function rewritePath(path) {
     return id ? `/api/books/${encodeURIComponent(id)}${m[2] || ''}` : null;
   }
 
-  for (const prefix of ['/api/read', '/api/bookmarks', '/api/reading-history', '/api/send-to-ereader']) {
+  for (const prefix of ['/api/read', '/api/bookmarks', '/api/reading-history', '/api/send-to-ereader', '/api/send-to-telegram']) {
     const re = new RegExp(`^${prefix.replace(/\//g, '\\/')}\\/b64\\/([A-Za-z0-9_-]+)$`);
     m = path.match(re);
     if (m) {

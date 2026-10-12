@@ -52,6 +52,9 @@ Key endpoints for reader:
 - `POST /api/auth/pairing` — authenticated; creates a one-time 10-minute QR pairing code (`payload` JSON + `svg`) for Android app sign-in; does not include the password
 - `POST /api/auth/pairing/redeem` — public + rate-limited; exchanges pairing `code` for a device Bearer token (`deviceToken`, `deviceTokenId`, `username`, `serverUrl`)
 
+- `POST /api/send-to-telegram/:id` (also `/api/send-to-telegram/b64/<ref>`) — web «В Telegram» button: sends the same book card the bot shows in search (cover + annotation + one `dl:` button per available format, 3 per row; the file arrives on button press) to the Telegram account linked in the profile. Errors (`code`): `TELEGRAM_DISABLED` 400, `TELEGRAM_DENIED` 403, `TELEGRAM_NOT_LINKED` 400 (+`linkUrl`), `TELEGRAM_SEND_FAILED` 500, `SEND_IN_PROGRESS` 429. `dl:` keys live in the bot process memory, so with `CLUSTER_WORKERS>1` the card must be sent from the worker that polls the bot. Not used by the Android reader
+- Folder sources: additive `sources.fastScan` (0/1, `POST /admin/sources/add` `fast_scan`, folder type only) — indexer takes author/title from the file name and never unpacks archives (no genres/series/lang, no cover warm-up). Applies to files indexed afterwards; re-run a full reindex to re-read old ones. `POST /api/sources/probe` lists `.inpx` up to 2 levels deep (`_local.inpx` first); `findInpxFiles()` in `src/inpx.js`
+
 ### OIDC / SSO (web login)
 
 Optional OpenID Connect login (Authentik-compatible): Authorization Code + PKCE, JIT user provisioning, optional admin claim. Configure in **Admin → Users → OIDC / SSO** (`oidc_enabled` off by default). Routes: `GET /auth/oidc/start`, `GET /auth/oidc/callback`. Session cookie contract unchanged. OIDC users get `has_local_password=0` until they set a password in profile (needed for OPDS/Basic). Existing local accounts with the same email are **not** auto-linked.

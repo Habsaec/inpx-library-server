@@ -32,7 +32,8 @@ import {
 } from '../constants.js';
 import {
   getUserShelves, getShelfById, getShelfBooks, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats,
-  getAllReaderBookmarksPage, queryReaderAnnotations, getReaderAnnotationFacets
+  getAllReaderBookmarksPage, queryReaderAnnotations, getReaderAnnotationFacets,
+  getUserByUsername, resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser
 } from '../db.js';
 import { parseNotesFilter } from '../services/reader-notes.js';
 import { isListBrowseView } from '../browse-view-prefs.js';
@@ -844,10 +845,14 @@ export function registerLibraryRoutes(app, deps) {
       const bookmarked = username ? isBookmarked(username, book.id) : false;
       const isRead = username ? isBookRead(username, book.id) : false;
       const similarBooks = buildSimilarBooks(book);
+      const tgRuntime = username ? resolveTelegramRuntimeConfig() : null;
+      const telegramSendAvailable = Boolean(
+        tgRuntime?.enabled && tgRuntime.token && isTelegramBotAllowedForUser(getUserByUsername(username))
+      );
 
       res.send(
         renderBook({
-          book, details, bookmarked, isRead, user,
+          book, details, bookmarked, isRead, user, telegramSendAvailable,
           stats: getCachedStats(),
           indexStatus: getIndexStatus(),
           similarBooks, csrfToken: req.csrfToken || '',
