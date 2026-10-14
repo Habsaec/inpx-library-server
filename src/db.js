@@ -2198,6 +2198,110 @@ async function cleanupOrphanedCatalogs() {
   await new Promise(r => setImmediate(r));  // Single yield after all cleanup
 }
 
+/**
+ * Пользовательские данные по книгам (ключ — books.id). При удалении источника они сохраняются
+ * как «осиротевшие» строки (UI их не показывает — запросы джойнятся с active_books), а id книг
+ * зависят от source.id, поэтому рядом пишем отпечаток книги и перепривязываем после индексации.
+ */
+const USER_BOOK_TABLES = [
+  'bookmarks', 'read_books', 'book_ratings', 'reading_history', 'shelf_books',
+  'reading_positions', 'reader_bookmarks', 'reader_book_revisions', 'reader_annotations'
+];
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS detached_book_refs (
+    old_book_id TEXT PRIMARY KEY,
+    lib_id TEXT NOT NULL DEFAULT '',
+    archive_name TEXT NOT NULL DEFAULT '',
+    file_name TEXT NOT NULL DEFAULT '',
+    ext TEXT NOT NULL DEFAULT '',
+    detached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_detached_book_refs_match
+    ON detached_book_refs(lib_id, archive_name, file_name, ext);
+`);
+
+const isAllSources = (sourceId) => sourceId == null || sourceId === '';
+
+/**
+ * Запоминает отпечаток книг источника (null/'' — всех книг), на которые есть пользовательские данные.
+ * Вызывать до удаления книг.
+ */
+export function stashUserDataRefsForSource(sourceId) {
+  const all = isAllSources(sourceId);
+  const sid = Number(sourceId);
+  if (!all && !Number.isFinite(sid)) return 0;
+  let added = 0;
+  db.transaction(() => {
+    for (const table of USER_BOOK_TABLES) {
+      const stmt = db.prepare(`
+        INSERT OR IGNORE INTO detached_book_refs(old_book_id, lib_id, archive_name, file_name, ext)
+        SELECT b.id, COALESCE(b.lib_id, ''), COALESCE(b.archive_name, ''), COALESCE(b.file_name, ''), COALESCE(b.ext, '')
+        FROM books b
+        WHERE ${all ? '1' : 'b.source_id = ?'} AND b.id IN (SELECT DISTINCT book_id FROM ${table})
+      `);
+      added += (all ? stmt.run() : stmt.run(sid)).changes;
+    }
+  })();
+  return added;
+}
+
+/**
+ * Удаляет книги без каскада ON DELETE CASCADE на пользовательские таблицы. PRAGMA foreign_keys
+ * не меняется внутри транзакции, поэтому fn (обычно db.transaction(...)()) должна быть синхронной
+ * и без yield — FK возвращается в ON сразу после неё.
+ */
+export function runWithForeignKeysOff(fn) {
+  db.pragma('foreign_keys = OFF');
+  try {
+    return fn();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
+
+/**
+ * Переносит пользовательские данные со старых id книг удалённого источника на заново
+ * проиндексированные книги источника sourceId (совпадение lib_id + archive + file + ext).
+ * Нет совпадений — запись остаётся до следующей индексации.
+ */
+export function reattachDetachedUserData(sourceId) {
+  const all = isAllSources(sourceId);
+  const sid = Number(sourceId);
+  if (!all && !Number.isFinite(sid)) return 0;
+  if (!db.prepare('SELECT 1 FROM detached_book_refs LIMIT 1').get()) return 0;
+
+  const matchStmt = db.prepare(`
+    SELECT d.old_book_id AS oldId, MIN(b.id) AS newId
+    FROM books b
+    CROSS JOIN detached_book_refs d
+      ON d.lib_id = COALESCE(b.lib_id, '')
+     AND d.archive_name = COALESCE(b.archive_name, '')
+     AND d.file_name = COALESCE(b.file_name, '')
+     AND d.ext = COALESCE(b.ext, '')
+    WHERE ${all ? '1' : 'b.source_id = ?'}
+    GROUP BY d.old_book_id
+  `);
+  const matches = all ? matchStmt.all() : matchStmt.all(sid);
+  if (!matches.length) return 0;
+
+  const dropRef = db.prepare('DELETE FROM detached_book_refs WHERE old_book_id = ?');
+  db.transaction(() => {
+    for (const { oldId, newId } of matches) {
+      if (oldId !== newId) {
+        for (const table of USER_BOOK_TABLES) {
+          // OR IGNORE: у пользователя уже может быть запись по новой книге — она приоритетнее.
+          db.prepare(`UPDATE OR IGNORE ${table} SET book_id = ? WHERE book_id = ?`).run(newId, oldId);
+          db.prepare(`DELETE FROM ${table} WHERE book_id = ?`).run(oldId);
+        }
+      }
+      dropRef.run(oldId);
+    }
+  })();
+  console.log(`[db] reattached user data for ${matches.length} book(s) of source ${all ? 'ALL' : sid}`);
+  return matches.length;
+}
+
 export async function deleteSourceProgressive(
   id,
   {
@@ -2228,8 +2332,9 @@ export async function deleteSourceProgressive(
     db.prepare('DELETE FROM flibusta_author_shard WHERE source_id = ?').run(sid);
     db.prepare('DELETE FROM book_reviews WHERE source_id = ?').run(sid);
     db.prepare('DELETE FROM book_details_cache WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
-    db.exec(`DELETE FROM reading_positions WHERE book_id IN (SELECT id FROM books WHERE source_id = ${sid})`);
-    db.exec(`DELETE FROM reader_bookmarks WHERE book_id IN (SELECT id FROM books WHERE source_id = ${sid})`);
+    // Пользовательские данные (позиции, закладки, «прочитано» и т.д.) не удаляем:
+    // запоминаем отпечаток книг и перепривязываем после повторной индексации.
+    stashUserDataRefsForSource(sid);
     await new Promise(r => setImmediate(r));
 
     // Drop books indexes and FTS triggers for fast bulk DELETE.
@@ -2237,12 +2342,19 @@ export async function deleteSourceProgressive(
     dropBooksTableIndexes();
     let deleted = 0;
     try {
-      db.transaction(() => {
-        db.prepare('DELETE FROM book_authors WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
-        db.prepare('DELETE FROM book_series  WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
-        db.prepare('DELETE FROM book_genres  WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
-        deleted = db.prepare('DELETE FROM books WHERE source_id = ?').run(sid).changes;
-      })();
+      // FK OFF только на время синхронной транзакции (без yield): иначе ON DELETE CASCADE
+      // по books сотрёт закладки/«прочитано»/оценки/полки пользователей.
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.transaction(() => {
+          db.prepare('DELETE FROM book_authors WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
+          db.prepare('DELETE FROM book_series  WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
+          db.prepare('DELETE FROM book_genres  WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
+          deleted = db.prepare('DELETE FROM books WHERE source_id = ?').run(sid).changes;
+        })();
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
       onProgress?.({ deleted, total, stage: 'books' });
     } finally {
       await ensureBooksTableIndexes();
@@ -2360,17 +2472,16 @@ export function forceDetachSourceRowUnsafe(id) {
   }
 
   try {
-    try {
-      db.exec(`DELETE FROM reading_positions WHERE book_id IN (SELECT id FROM books WHERE source_id = ${sid})`);
-      db.exec(`DELETE FROM reader_bookmarks WHERE book_id IN (SELECT id FROM books WHERE source_id = ${sid})`);
-    } catch { /* best-effort */ }
+    try { stashUserDataRefsForSource(sid); } catch { /* best-effort */ }
 
     dropBooksFtsTriggers();
     try {
+      db.pragma('foreign_keys = OFF'); // не каскадить удаление пользовательских данных
       db.prepare('DELETE FROM books WHERE source_id = ?').run(sid);
     } catch {
       // книги останутся сиротами, но будут скрыты через active_books
     } finally {
+      db.pragma('foreign_keys = ON');
       ensureBooksFtsTriggers();
     }
 
@@ -2642,7 +2753,7 @@ let _stmtGetUserShelves = null;
 export function getUserShelves(username) {
   _stmtGetUserShelves ??= db.prepare(`
     SELECT s.id, s.name, s.description, s.created_at AS createdAt,
-           (SELECT COUNT(*) FROM shelf_books sb WHERE sb.shelf_id = s.id) AS bookCount,
+           (SELECT COUNT(*) FROM shelf_books sb WHERE sb.shelf_id = s.id AND EXISTS (SELECT 1 FROM books bb WHERE bb.id = sb.book_id)) AS bookCount,
            (SELECT GROUP_CONCAT(sb2.book_id, '|') FROM (
               SELECT sb2.book_id FROM shelf_books sb2
               JOIN active_books b ON b.id = sb2.book_id
@@ -4189,7 +4300,7 @@ function _ensureUserStatsStmt() {
               WHERE rb.username = rh.username AND rb.book_id = rh.book_id
             )
         ) AS readingCount,
-        (SELECT COUNT(*) FROM bookmarks WHERE username = ?) AS bookmarkCount,
+        (SELECT COUNT(*) FROM bookmarks bk WHERE bk.username = ? AND EXISTS (SELECT 1 FROM books bb WHERE bb.id = bk.book_id)) AS bookmarkCount,
         (SELECT COUNT(*) FROM read_books rb2 JOIN active_books ab2 ON ab2.id = rb2.book_id WHERE rb2.username = ?) AS readBooksCount,
         (SELECT COUNT(*) FROM favorite_authors WHERE username = ?) AS favoriteAuthorsCount,
         (SELECT COUNT(*) FROM favorite_series WHERE username = ?) AS favoriteSeriesCount,

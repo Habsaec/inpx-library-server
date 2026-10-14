@@ -14,6 +14,9 @@ import {
   getSourceByPath,
   updateSourceBookCount,
   updateSourceIndexedAt,
+  reattachDetachedUserData,
+  stashUserDataRefsForSource,
+  runWithForeignKeysOff,
   dropBooksFtsTriggers,
   ensureBooksFtsTriggers,
   rebuildBooksFtsFromContent,
@@ -2321,6 +2324,7 @@ async function ensureInpxSourceIndex(source, force = false, incremental = true) 
   setMeta(mtimeKey, currentMtime);
   updateSourceBookCount(source.id);
   updateSourceIndexedAt(source.id);
+  reattachDetachedUserData(source.id);
 }
 
 export function getConfiguredInpxFile() {
@@ -2435,6 +2439,7 @@ export async function ensureIndex(force = false, incremental = false) {
 
   const useIncremental = incremental && indexed && !force;
   await rebuildIndex(inpxFile, useIncremental);
+  reattachDetachedUserData(null);
   setMeta('inpx_mtime', currentMtime);
   setMeta('indexed_at', new Date().toISOString());
   return { rebuilt: true, indexedAt: getMeta('indexed_at') };
@@ -2610,16 +2615,22 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
     dropBulkImportIndexes();
   }
   if (!incremental) {
+    // Пользовательские данные по книгам (позиции, «прочитано», закладки…) сохраняем:
+    // отпечаток в detached_book_refs, удаление без FK-каскада, перепривязка после индексации.
+    stashUserDataRefsForSource(sourceId || null);
     if (sourceId) {
-      db.transaction(() => {
+      runWithForeignKeysOff(() => db.transaction(() => {
         db.prepare('DELETE FROM book_details_cache WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sourceId);
+        db.prepare('DELETE FROM book_reviews WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sourceId);
         db.prepare('DELETE FROM book_authors WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sourceId);
         db.prepare('DELETE FROM book_series WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sourceId);
         db.prepare('DELETE FROM book_genres WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sourceId);
         db.prepare('DELETE FROM books WHERE source_id = ?').run(sourceId);
-      })();
+      })());
     } else {
-      db.transaction(() => {
+      runWithForeignKeysOff(() => db.transaction(() => {
+        db.exec('DELETE FROM book_details_cache');
+        db.exec('DELETE FROM book_reviews');
         db.exec('DELETE FROM book_authors');
         db.exec('DELETE FROM book_series');
         db.exec('DELETE FROM book_genres');
@@ -2627,7 +2638,7 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         db.exec('DELETE FROM series_catalog');
         db.exec('DELETE FROM genres_catalog');
         db.exec('DELETE FROM books');
-      })();
+      })());
     }
     db.exec('VACUUM');
     await yieldEventLoop();

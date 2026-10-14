@@ -13,6 +13,9 @@ import {
   setMeta,
   updateSourceBookCount,
   updateSourceIndexedAt,
+  reattachDetachedUserData,
+  stashUserDataRefsForSource,
+  runWithForeignKeysOff,
   dropBooksFtsTriggers,
   ensureBooksFtsTriggers,
   rebuildBooksFtsFromContent,
@@ -721,13 +724,16 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
     dropBulkImportIndexes();
   }
   if (!incremental) {
-    db.transaction(() => {
+    // Пользовательские данные сохраняем: отпечаток + удаление без FK-каскада + перепривязка в конце.
+    stashUserDataRefsForSource(source.id);
+    runWithForeignKeysOff(() => db.transaction(() => {
       db.prepare('DELETE FROM book_details_cache WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
+      db.prepare('DELETE FROM book_reviews WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
       db.prepare('DELETE FROM book_authors WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
       db.prepare('DELETE FROM book_series WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
       db.prepare('DELETE FROM book_genres WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
       db.prepare('DELETE FROM books WHERE source_id = ?').run(source.id);
-    })();
+    })());
     await yieldEventLoop();
   } else {
     if (!canReconcileDeletedFiles && deletedKeys.length > 0) {
@@ -1020,6 +1026,7 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
   setMeta(metaKey, JSON.stringify(currentFiles));
   updateSourceBookCount(source.id);
   updateSourceIndexedAt(source.id);
+  reattachDetachedUserData(source.id);
 
   const resolvedSidecarRoot = path.resolve(source.path);
   try {
