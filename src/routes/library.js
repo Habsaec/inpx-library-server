@@ -97,6 +97,18 @@ import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup
 import { clearCardHtmlCache } from '../templates/shared.js';
 
 // --- Library routes ---
+// "First Last" display names (home quotes) vs "Last First Middle" in the index.
+const looseAuthorNameCache = new Map();
+
+function resolveAuthorNameLoose(name) {
+  const key = name.toLowerCase();
+  if (looseAuthorNameCache.has(key)) return looseAuthorNameCache.get(key);
+  const found = listAuthors({ query: name, page: 1, pageSize: 1, sort: 'count' }).items[0]?.name || null;
+  if (looseAuthorNameCache.size >= 500) looseAuthorNameCache.clear();
+  looseAuthorNameCache.set(key, found);
+  return found;
+}
+
 // --- Book details cache ---
 
 const detailsCache = new Map();
@@ -1240,7 +1252,7 @@ export function registerLibraryRoutes(app, deps) {
       if (!name) {
         return res.status(400).end();
       }
-      const resolved = resolveAuthorName(name);
+      const resolved = resolveAuthorName(name) || resolveAuthorNameLoose(name);
       if (resolved) name = resolved;
       const sourceId = getAuthorFlibustaSourceId(name);
       if (sourceId == null) {

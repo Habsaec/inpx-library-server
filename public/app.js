@@ -195,6 +195,9 @@ function initHomeQuoteRotation() {
   const data = banner?.querySelector('[data-home-quotes]');
   const quoteEl = banner?.querySelector('.welcome-hero-quote');
   const authorEl = banner?.querySelector('.welcome-hero-author');
+  const coverEl = banner?.querySelector('.welcome-hero-mark');
+  const coverTitleEl = coverEl?.querySelector('.cover-fallback-title');
+  const portraitTitleEl = coverEl?.querySelector('.welcome-hero-mark-title');
   if (!data || !quoteEl || !authorEl) return;
   if (document.documentElement.dataset.eink === '1') return;
   let pool = [];
@@ -208,9 +211,25 @@ function initHomeQuoteRotation() {
   banner.addEventListener('pointerleave', resume);
   banner.addEventListener('focusin', pause);
   banner.addEventListener('focusout', () => setTimeout(resume, 0));
-  const swap = () => {
-    let next = Math.floor(Math.random() * (pool.length - 1));
-    if (next >= current) next += 1;
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const portraits = new Map();
+  const loadPortrait = ({ author, href }) => {
+    if (!coverEl || !href || !author) return Promise.resolve(null);
+    if (!portraits.has(author)) {
+      portraits.set(author, new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img.src);
+        img.onerror = () => resolve(null);
+        img.src = `/api/authors/portrait?name=${encodeURIComponent(author)}`;
+      }));
+    }
+    return Promise.race([portraits.get(author), wait(2500).then(() => null)]);
+  };
+  const pickNext = () => {
+    const next = Math.floor(Math.random() * (pool.length - 1));
+    return next >= current ? next + 1 : next;
+  };
+  const swap = (next, portrait) => {
     current = next;
     const { quote, author, href } = pool[current];
     quoteEl.textContent = quote;
@@ -223,16 +242,38 @@ function initHomeQuoteRotation() {
     } else {
       authorEl.textContent = author;
     }
+    if (coverTitleEl && author) coverTitleEl.textContent = author;
+    if (portraitTitleEl) portraitTitleEl.textContent = author;
+    if (coverEl) {
+      if (href) coverEl.setAttribute('href', href);
+      else coverEl.removeAttribute('href');
+      coverEl.querySelector('.cover-image')?.remove();
+      if (portrait) {
+        const img = document.createElement('img');
+        img.className = 'cover-image is-loaded';
+        img.alt = '';
+        img.src = portrait;
+        coverEl.prepend(img);
+      }
+    }
   };
+  let swapping = false;
   const timer = setInterval(() => {
     if (!banner.isConnected) { clearInterval(timer); return; }
-    if (paused || document.hidden) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { swap(); return; }
+    if (paused || document.hidden || swapping) return;
+    const next = pickNext();
+    const portrait = loadPortrait(pool[next]);
+    swapping = true;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      portrait.then((src) => { swap(next, src); swapping = false; });
+      return;
+    }
     banner.classList.add('is-quote-swapping');
-    setTimeout(() => {
-      swap();
+    Promise.all([portrait, wait(HOME_QUOTE_FADE_MS)]).then(([src]) => {
+      swap(next, src);
       banner.classList.remove('is-quote-swapping');
-    }, HOME_QUOTE_FADE_MS);
+      swapping = false;
+    });
   }, HOME_ROTATE_MS);
 }
 
@@ -313,7 +354,7 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
     ? `<div class="hero-card-kicker">${escapeHtml(uiT('home.heroKicker'))}</div>`
     : '';
   return `
-    <div class="hero-card-cover-side">
+    <div class="hero-card-cover-side book-3d"><div class="book-3d-body">
       <a class="hero-cover-link cover" href="${bookPagePath(book.id)}">
         <img class="cover-image hero-cover-image" loading="${eager ? 'eager' : 'lazy'}" draggable="false" src="${coverSrc}" data-cover-src="${coverSrc}" alt="${title}">
         <span class="cover-fallback hero-cover-fallback" hidden>
@@ -323,7 +364,7 @@ function renderHeroSlideInnerHtml(book, { eager = false, heading = 'h1', showKic
         </span>
         ${coverRating}
       </a>
-    </div>
+    </div></div>
     <div class="hero-card-info-side">
       ${kicker}
       <${headingTag} class="hero-card-title">${title}</${headingTag}>
@@ -3681,7 +3722,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
   const coverRating = _libRateClamped ? `<span class="cover-rating-wrapper"><span class="cover-rating-badge cover-rating-${_libRateClamped}">${Array.from({ length: _libRateClamped }, () => '<span>★</span>').join('')}</span></span>` : '';
   return `<article class="card" ${cardAttrs}>
     ${batchCb}
-    <div class="card-cover">
+    <div class="card-cover-hit"><div class="card-cover">
     <a class="cover" href="${bookPagePath(book.id)}" data-role="cover">
       <img class="cover-image" loading="lazy" draggable="false" src="${apiBookPath(book.id, 'cover-thumb')}" data-cover-src="${apiBookPath(book.id, 'cover-thumb')}" alt="${title}">
       <span class="cover-fallback" hidden>
@@ -3693,7 +3734,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
       ${coverRating}
     </a>
     <div class="card-cover-actions">${downloadMenu}<a class="button card-cover-action" href="${bookPagePath(book.id)}">${escapeHtml(uiT('card.more'))}</a></div>
-    </div>
+    </div></div>
     <div class="meta">
       <h3><a href="${bookPagePath(book.id)}">${title}</a></h3>
       <div class="author">${book.authors ? uiRenderAuthorLinks(book.authorsList, book.authors, `ajax-a-${book.id}`) : escapeHtml(uiT('book.authorUnknown'))}</div>

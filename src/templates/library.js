@@ -30,6 +30,10 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
   const welcomeQuotePool = getHomeWelcomeQuotePool(getLocale());
   const welcomeQuote = pickHomeWelcomeQuote(getLocale());
+  // The quote cover is the author's "book": same link as the author name under the quote.
+  const welcomeQuoteHref = isWelcomeQuoteAuthorLinkable(welcomeQuote.author)
+    ? `/catalog?field=authors&q=${encodeURIComponent(welcomeQuote.author)}`
+    : '';
   const welcomeQuotesJson = JSON.stringify(welcomeQuotePool.map(({ quote, author }) => ({
     quote,
     author,
@@ -54,15 +58,19 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     <h1 class="visually-hidden">${escapeHtml(siteTitleForDisplay())}</h1>
     ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
     <section class="welcome-hero-banner home-reveal"${continueAttr}>
-      <div class="welcome-hero-mark cover" aria-hidden="true">
+      <div class="welcome-hero-cover book-3d"><div class="book-3d-body">
+      <a class="welcome-hero-mark cover"${welcomeQuoteHref ? ` href="${escapeHtml(welcomeQuoteHref)}"` : ''} tabindex="-1" aria-hidden="true">
+        ${welcomeQuoteHref ? `<img class="cover-image" src="/api/authors/portrait?name=${escapeHtml(encodeURIComponent(welcomeQuote.author))}" alt="" onload="this.classList.add('is-loaded')" onerror="this.remove()">` : ''}
         <span class="cover-fallback">
           ${renderCoverFallbackImage()}
           <span class="cover-fallback-overlay"></span>
           <span class="cover-fallback-copy">
-            <span class="cover-fallback-title">${escapeHtml(t('home.quoteCoverTitle'))}</span>
+            <span class="cover-fallback-title">${escapeHtml(welcomeQuote.author || t('home.quoteCoverTitle'))}</span>
           </span>
         </span>
-      </div>
+        <span class="welcome-hero-mark-title">${escapeHtml(welcomeQuote.author)}</span>
+      </a>
+      </div></div>
       <div class="welcome-hero-content">
         <blockquote class="welcome-hero-quote">${escapeHtml(welcomeQuote.quote)}</blockquote>
         <cite class="welcome-hero-author">${renderWelcomeQuoteAuthor(welcomeQuote.author)}</cite>

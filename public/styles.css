@@ -2727,8 +2727,13 @@ textarea:focus-visible {
   margin-top: 2px;
 }
 
+.hero-card-cover-side .book-3d-body {
+  width: 100%;
+  max-width: 152px;
+}
+
 @media (hover: hover) and (pointer: fine) {
-  .hero-carousel-slide:hover .hero-cover-link.cover {
+  .hero-card-cover-side:hover .hero-cover-link.cover {
     transform: translateY(-8px);
     box-shadow: var(--card-cover-shadow-hover);
   }
@@ -3086,17 +3091,19 @@ html[data-theme="light"] .actions-primary .button-primary:hover {
   transition: transform 0.35s var(--ease-premium);
 }
 
+/* The cover reacts to the pointer over the cover only, not over the title/author below.
+   .card-cover-hit is the still hover target, so a moving .card-cover can't flicker at its edges. */
 @media (hover: hover) and (pointer: fine) {
-  .card:hover .card-cover {
+  .card-cover-hit:hover .card-cover {
     transform: translateY(-8px);
   }
 
-  .card:hover .cover {
+  .card-cover-hit:hover .cover {
     box-shadow: var(--card-cover-shadow-hover);
   }
 }
 
-.card:active .card-cover {
+.card-cover-hit:active .card-cover {
   transform: translateY(-1px) scale(0.99);
 }
 
@@ -11913,7 +11920,7 @@ html[data-ui-manuscript="0"] .magic-manuscript {
   padding: 32px 36px;
 }
 
-.welcome-hero-mark {
+.welcome-hero-cover {
   position: relative;
   z-index: 1;
   justify-self: center;
@@ -11966,6 +11973,38 @@ html[data-ui-typography="1"] .shell .welcome-hero-quote {
   transform: translateY(-6px);
   transition-duration: 0.55s;
   transition-delay: 0s;
+}
+
+.welcome-hero-mark-title {
+  display: none;
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 3;
+  padding: 2.4em 10% 9%;
+  background: linear-gradient(180deg, transparent 0%, rgba(13, 13, 20, 0.55) 45%, rgba(13, 13, 20, 0.82) 100%);
+  font-family: var(--cover-title-font, var(--display-font));
+  font-size: calc(clamp(0.6875rem, 8cqi, 1.25rem) * var(--cover-title-scale, 1));
+  line-height: 1.16;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: #f6f1e6;
+  text-align: center;
+  text-wrap: balance;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.6);
+  pointer-events: none;
+}
+
+.welcome-hero-mark .cover-image.is-loaded ~ .welcome-hero-mark-title {
+  display: block;
+}
+
+.welcome-hero-banner .welcome-hero-cover {
+  transition: opacity 0.55s var(--ease-out-expo), filter 0.55s var(--ease-out-expo);
+}
+
+.welcome-hero-banner.home-reveal-active.is-quote-swapping .welcome-hero-cover {
+  opacity: 0;
+  filter: blur(8px);
 }
 
 .welcome-hero-author {
@@ -12122,14 +12161,16 @@ html[data-theme="light"] .modal-form-submit:hover:not(:disabled) {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .card:hover .cover,
-  .premium-hero-card:hover .hero-cover-link.cover,
+  .card-cover-hit:hover .cover,
+  .hero-card-cover-side:hover .hero-cover-link.cover,
+  .welcome-hero-cover:hover .cover,
   .book-detail-cover .cover:hover {
     --spot: 1;
   }
 
-  .card:hover .cover,
-  .premium-hero-card:hover .hero-cover-link.cover {
+  .card-cover-hit:hover .cover,
+  .hero-card-cover-side:hover .hero-cover-link.cover,
+  .welcome-hero-cover:hover .cover {
     box-shadow: var(--card-cover-shadow-hover), 0 22px 44px -20px var(--magic-glow-strong);
   }
 }
@@ -12283,7 +12324,7 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
     text-align: center;
   }
 
-  .welcome-hero-mark {
+  .welcome-hero-cover {
     max-width: 120px;
   }
 
@@ -13015,7 +13056,6 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
    Wrapper gets a page edge (::before); hero and book page also get a back plate (::after).
    Cards: .card-cover wraps cover + hover actions, all lifted in front of the page edge. */
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-  html:not([data-ui-book3d="0"]) .hero-carousel .hero-card-cover-side,
   html:not([data-ui-book3d="0"]) .book-3d-body,
   html:not([data-ui-book3d="0"]) .card-cover {
     /* Thickness scales with the cover width (cqw of this container), so it looks the same everywhere. */
@@ -13030,11 +13070,10 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
     transition: transform 0.6s var(--ease-premium);
   }
 
-  html:not([data-ui-book3d="0"]) .book-3d-body {
+  html:not([data-ui-book3d="0"]) .book-detail-cover .book-3d-body {
     --bk-persp: 1200px;
   }
 
-  html:not([data-ui-book3d="0"]) .hero-carousel .hero-card-cover-side::before,
   html:not([data-ui-book3d="0"]) .book-3d-body::before,
   html:not([data-ui-book3d="0"]) .card-cover::before {
     content: '';
@@ -13050,7 +13089,6 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
 
   /* Back plate; hidden at rest so a flat cover keeps its normal shadow. On cards it replaces
      the old gradient (.card-cover::after), which moves to .card-cover-actions::before below. */
-  html:not([data-ui-book3d="0"]) .hero-carousel .hero-card-cover-side::after,
   html:not([data-ui-book3d="0"]) .book-3d-body::after,
   html:not([data-ui-book3d="0"]) .card .card-cover::after {
     content: '';
@@ -13066,9 +13104,8 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
     pointer-events: none;
   }
 
-  html:not([data-ui-book3d="0"]) .hero-carousel .hero-carousel-slide .hero-cover-link.cover,
-  html:not([data-ui-book3d="0"]) .hero-carousel .hero-carousel-slide:hover .hero-cover-link.cover,
-  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d .cover,
+  html:not([data-ui-book3d="0"]) .book-3d-body > .cover,
+  html:not([data-ui-book3d="0"]) .hero-card-cover-side:hover .book-3d-body > .hero-cover-link.cover,
   html:not([data-ui-book3d="0"]) .card-cover > .cover {
     transform: translateZ(calc(var(--bk-depth) / 2));
   }
@@ -13102,31 +13139,30 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
         transparent 100%);
   }
 
-  /* Hover: the book turns. */
-  html:not([data-ui-book3d="0"]) .hero-carousel-slide:hover .hero-card-cover-side {
+  /* Hover over the cover only: the outer .book-3d stays still and catches the pointer,
+     so the turning body can't flicker at its edges. Hero and quote covers also lift. */
+  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body {
     --bk-tilt: -20deg;
+  }
+
+  html:not([data-ui-book3d="0"]) .hero-card-cover-side.book-3d:hover .book-3d-body,
+  html:not([data-ui-book3d="0"]) .welcome-hero-cover.book-3d:hover .book-3d-body {
     --bk-lift: -8px;
   }
 
-  /* Book page: the outer wrapper stays still and catches the pointer, so the turning body can't flicker at its edges. */
-  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d:hover .book-3d-body {
-    --bk-tilt: -20deg;
-  }
-
-  html:not([data-ui-book3d="0"]) .hero-carousel-slide:hover .hero-card-cover-side::after,
-  html:not([data-ui-book3d="0"]) .book-detail-cover.book-3d:hover .book-3d-body::after,
-  html:not([data-ui-book3d="0"]) .card:hover .card-cover::after {
+  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::after,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::after {
     opacity: 1;
   }
 
-  html:not([data-ui-book3d="0"]) .card:hover .card-cover,
-  html:not([data-ui-book3d="0"]) .card:focus-within .card-cover {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover {
     --bk-tilt: -20deg;
     --bk-lift: -8px;
     transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
   }
 
-  html:not([data-ui-book3d="0"]) .card:active .card-cover {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:active .card-cover {
     --bk-lift: -1px;
     transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
   }

@@ -196,7 +196,7 @@ function renderCardCoverActions(book, downloadHtml = '') {
 }
 
 export function renderCardCover(book, { readBookIds = null, downloadHtml = '' } = {}) {
-  return `<div class="card-cover">${renderCover(book, { readBookIds })}${renderCardCoverActions(book, downloadHtml)}</div>`;
+  return `<div class="card-cover-hit"><div class="card-cover">${renderCover(book, { readBookIds })}${renderCardCoverActions(book, downloadHtml)}</div></div>`;
 }
 
 export function browseEntityPluralType(path) {
