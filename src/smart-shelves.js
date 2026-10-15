@@ -7,6 +7,7 @@ import { parseGenreList, parseGenreMode, parseHasSeries, searchCatalog } from '.
 
 const SORTS = ['recent', 'title', 'author', 'series', 'rating'];
 const NAME_MAX = 100;
+const PREVIEW_COUNT = 8;
 
 function readParams(input) {
   if (typeof input === 'string' || input instanceof URLSearchParams) {
@@ -74,12 +75,26 @@ function toShelf(row) {
     name: row.name,
     query: row.query,
     catalogUrl: `/catalog?${row.query}`,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    onHome: row.on_home ? 1 : 0
   };
 }
 
-export function listSmartShelves(username) {
-  return db.prepare('SELECT * FROM smart_shelves WHERE username = ? ORDER BY name COLLATE NOCASE, id').all(username).map(toShelf);
+/** `withPreview` — добавляет `bookCount` и `previewBookIds` (обложки, как у обычных полок); это поиск на каждую полку. */
+export function listSmartShelves(username, { withPreview = false } = {}) {
+  const shelves = db.prepare('SELECT * FROM smart_shelves WHERE username = ? ORDER BY name COLLATE NOCASE, id').all(username).map(toShelf);
+  if (!withPreview) return shelves;
+  for (const shelf of shelves) {
+    try {
+      const { items, total } = getSmartShelfBooks(shelf, { page: 1, pageSize: PREVIEW_COUNT });
+      shelf.bookCount = total;
+      shelf.previewBookIds = items.map((book) => book.id);
+    } catch {
+      shelf.bookCount = 0;
+      shelf.previewBookIds = [];
+    }
+  }
+  return shelves;
 }
 
 export function getSmartShelf(id, username) {
@@ -107,6 +122,10 @@ export function updateSmartShelf(id, username, { name, filter: filterInput } = {
   const query = filterInput === undefined ? shelf.query : serializeSmartShelfFilter(parseSmartShelfFilter(filterInput));
   assertNameFree(username, cleanedName, shelf.id);
   return db.prepare('UPDATE smart_shelves SET name = ?, query = ? WHERE id = ? AND username = ?').run(cleanedName, query, shelf.id, username).changes;
+}
+
+export function setSmartShelfOnHome(id, username, onHome) {
+  return db.prepare('UPDATE smart_shelves SET on_home = ? WHERE id = ? AND username = ?').run(onHome ? 1 : 0, Number(id) || 0, username).changes;
 }
 
 export function deleteSmartShelf(id, username) {

@@ -565,6 +565,16 @@ function ensureFlibustaSidecarSchema() {
 
 const ALLOWED_CATALOG_TABLES = new Set(['authors', 'series_catalog', 'genres_catalog']);
 
+/** `on_home` — полка (обычная и умная) закреплена на главной странице пользователя. */
+function ensureShelfHomeColumns() {
+  for (const table of ['shelves', 'smart_shelves']) {
+    const names = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
+    if (names.size && !names.has('on_home')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN on_home INTEGER NOT NULL DEFAULT 0`);
+    }
+  }
+}
+
 function ensureCatalogSchema(tableName) {
   if (!ALLOWED_CATALOG_TABLES.has(tableName)) {
     throw new Error(`Invalid catalog table: ${tableName}`);
@@ -1779,6 +1789,7 @@ WHERE rp.progress >= 99
   migrateBookSeriesJunction();
   ensureBookSeriesNoColumn();
   ensureLibRateColumn();
+  ensureShelfHomeColumns();
 
   // Add book_count column to catalog tables (idempotent, must run before index creation).
   for (const tbl of ['authors', 'series_catalog', 'genres_catalog']) {
@@ -2767,7 +2778,7 @@ export function getLibraryStatsSnapshot() {
 let _stmtGetUserShelves = null;
 export function getUserShelves(username) {
   _stmtGetUserShelves ??= db.prepare(`
-    SELECT s.id, s.name, s.description, s.created_at AS createdAt,
+    SELECT s.id, s.name, s.description, s.created_at AS createdAt, s.on_home AS onHome,
            (SELECT COUNT(*) FROM shelf_books sb WHERE sb.shelf_id = s.id AND EXISTS (SELECT 1 FROM books bb WHERE bb.id = sb.book_id)) AS bookCount,
            (SELECT GROUP_CONCAT(sb2.book_id, '|') FROM (
               SELECT sb2.book_id FROM shelf_books sb2
@@ -2818,6 +2829,10 @@ export function updateShelf(shelfId, username, name, description) {
   if (dup) throw new Error('Полка с таким названием уже существует');
   _stmtUpdateShelf ??= db.prepare('UPDATE shelves SET name = ?, description = ? WHERE id = ? AND username = ?');
   return _stmtUpdateShelf.run(trimmed, String(description || '').trim(), shelfId, username).changes;
+}
+
+export function setShelfOnHome(shelfId, username, onHome) {
+  return db.prepare('UPDATE shelves SET on_home = ? WHERE id = ? AND username = ?').run(onHome ? 1 : 0, shelfId, username).changes;
 }
 
 let _stmtDeleteShelf = null;

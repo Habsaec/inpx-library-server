@@ -9334,6 +9334,14 @@ html[data-theme="light"] .sidebar-overlay {
   min-width: 0;
 }
 
+.shelf-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* ?? Admin responsive (tablet) ?? */
 @media (max-width: 768px) {
   .admin-grid-2col {

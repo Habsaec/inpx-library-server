@@ -4,11 +4,11 @@ import express from 'express';
 import { initDb, db, createUser, deleteUser } from '../src/db.js';
 import {
   parseSmartShelfFilter, serializeSmartShelfFilter, createSmartShelf, updateSmartShelf, deleteSmartShelf,
-  listSmartShelves, getSmartShelf, getSmartShelfBooks
+  listSmartShelves, getSmartShelf, getSmartShelfBooks, setSmartShelfOnHome
 } from '../src/smart-shelves.js';
 import { registerSmartShelfRoutes } from '../src/routes/smart-shelves.js';
 import { registerOpdsRoutes } from '../src/routes/opds.js';
-import { renderShelves, renderCatalog } from '../src/templates/library.js';
+import { renderShelves, renderCatalog, renderHome } from '../src/templates/library.js';
 
 const SOURCE_ID = 9301;
 const USER = 'smart_shelf_user';
@@ -198,4 +198,40 @@ test('catalog filter panel offers "save as smart shelf" only to signed-in users 
   assert.ok(!renderCatalog({ ...props, user: null }).includes('action="/shelves/smart"'));
   assert.ok(!renderCatalog({ ...props, query: '', genres: [], lang: '', user: { username: USER, role: 'user' }, csrfToken: 'tok' })
     .includes('action="/shelves/smart"'), 'nothing to save without a query or filter');
+});
+
+test('smart shelves show cover previews like regular shelves and can be pinned to home', () => {
+  const id = createSmartShelf(USER, 'Pinned', { genre: 'smartsf' });
+  const [plain] = listSmartShelves(USER);
+  assert.equal(plain.previewBookIds, undefined, 'previews are opt-in (API/OPDS stay cheap)');
+  assert.equal(plain.onHome, 0);
+
+  const [shelf] = listSmartShelves(USER, { withPreview: true });
+  assert.equal(shelf.bookCount, 2);
+  assert.deepEqual([...shelf.previewBookIds].sort(), [IDS[1], IDS[0]].sort());
+
+  assert.equal(setSmartShelfOnHome(id, OTHER, true), 0, 'other users cannot pin');
+  assert.equal(setSmartShelfOnHome(id, USER, true), 1);
+  assert.equal(listSmartShelves(USER)[0].onHome, 1);
+
+  const user = { username: USER, role: 'user' };
+  const page = renderShelves({ shelves: [], smartShelves: [{ ...shelf, onHome: 1 }], user, stats: {}, indexStatus: {}, csrfToken: 'tok' });
+  assert.ok(page.includes('shelf-cover-thumb'), 'smart shelf row has cover thumbs');
+  assert.ok(page.includes(`action="/shelves/smart/${id}/home"`));
+  assert.ok(/name="on" value="0"/.test(page), 'pinned shelf offers to unpin');
+
+  const regular = renderShelves({
+    shelves: [{ id: 5, name: 'Reg', bookCount: 0, previewBookIds: [], onHome: 0 }],
+    smartShelves: [], user, stats: {}, indexStatus: {}, csrfToken: 'tok'
+  });
+  assert.ok(regular.includes('action="/shelves/5/home"'));
+  assert.ok(/name="on" value="1"/.test(regular));
+
+  const book = { id: IDS[0], title: 'Smart Alpha', authors: 'Smart Author', genres: 'smartsf', ext: 'fb2', lang: 'ru' };
+  const homeShelves = [{ title: 'Pinned shelf title', href: '/catalog?a=1&b=2', items: [book] }];
+  const home = renderHome({ user, stats: {}, indexStatus: {}, sections: { newest: [] }, homeShelves });
+  assert.ok(home.includes('Pinned shelf title'));
+  assert.ok(home.includes('href="/catalog?a=1&amp;b=2"'));
+  assert.ok(!renderHome({ user: null, stats: {}, indexStatus: {}, sections: { newest: [] }, homeShelves }).includes('Pinned shelf title'));
+  deleteSmartShelf(id, USER);
 });

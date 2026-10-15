@@ -31,7 +31,7 @@ import {
   PAGE_CACHE_TTL_MS
 } from '../constants.js';
 import {
-  getUserShelves, getShelfById, getShelfBooks, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats,
+  getUserShelves, getShelfById, getShelfBooks, setShelfOnHome, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats,
   getAllReaderBookmarksPage, queryReaderAnnotations, getReaderAnnotationFacets,
   getUserByUsername, resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser
 } from '../db.js';
@@ -83,7 +83,7 @@ import {
   listRecentSectionGenres
 } from '../inpx.js';
 import { getDistinctLanguages, getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
-import { listSmartShelves } from '../smart-shelves.js';
+import { listSmartShelves, getSmartShelfBooks } from '../smart-shelves.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
 import {
@@ -273,6 +273,24 @@ function getHomeNewestDisplayCount() {
   return config.homeNewestCount;
 }
 
+const HOME_SHELVES_MAX = 8;
+
+/** Полки (обычные и умные), закреплённые пользователем на главной; пустые не показываем. */
+function getPinnedHomeShelves(username, limit) {
+  const result = [];
+  for (const shelf of getUserShelves(username)) {
+    if (!shelf.onHome) continue;
+    result.push({ title: shelf.name, href: `/shelves/${shelf.id}`, items: getShelfBooks(shelf.id, username).slice(0, limit) });
+  }
+  for (const shelf of listSmartShelves(username)) {
+    if (!shelf.onHome) continue;
+    try {
+      result.push({ title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfBooks(shelf, { page: 1, pageSize: limit }).items });
+    } catch { /* битый фильтр не должен ломать главную */ }
+  }
+  return result.filter((shelf) => shelf.items.length).slice(0, HOME_SHELVES_MAX);
+}
+
 // --- Exported accessors for other modules ---
 
 export { detailsCache, getDetails, getDetailsFull, clearBookDetailsCache, bookFlibustaSidecarEffective, resolveBestCoverDetails };
@@ -315,9 +333,10 @@ export function registerLibraryRoutes(app, deps) {
     const canUseAnonymousHomeHtmlCache = !user && !listView && !indexStatus?.active && !indexStatus?.error;
     const csrfToken = req.csrfToken || '';
     const homeSubtitle = getSetting('home_subtitle') || '';
+    const homeShelves = username ? getPinnedHomeShelves(username, DISPLAY_COUNT) : [];
     const html = canUseAnonymousHomeHtmlCache
       ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken: '', hasContinueData: false, listView: false }), 1000 * 60 * 2)
-      : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData, readBookIds, listView });
+      : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData, readBookIds, listView, homeShelves });
     res.send(html);
     // Фоновый прогрев per-user кэшей для последующих переходов
     if (username) {
@@ -954,7 +973,12 @@ export function registerLibraryRoutes(app, deps) {
   app.get('/shelves', requireWebAuth, (req, res) => {
     const stats = getCachedStats();
     const shelves = getUserShelves(req.user.username);
-    res.send(renderShelves({ shelves, smartShelves: listSmartShelves(req.user.username), user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+    res.send(renderShelves({ shelves, smartShelves: listSmartShelves(req.user.username, { withPreview: true }), user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+  });
+
+  app.post('/shelves/:id/home', requireWebAuth, (req, res) => {
+    setShelfOnHome(Number(req.params.id), req.user.username, req.body?.on === '1');
+    res.redirect(303, '/shelves');
   });
 
   // --- «Моя библиотека»: хаб (нижняя навигация), закладки и заметки читалки ---

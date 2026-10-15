@@ -25,7 +25,7 @@ import {
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
 import { encodeBookRef } from '../utils/book-ref.js';
 
-export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false }) {
+export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false, homeShelves = [] }) {
   const isAuthenticated = Boolean(user);
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
   const welcomeQuotePool = getHomeWelcomeQuotePool(getLocale());
@@ -80,6 +80,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}
     ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, showBatch: false, user, readBookIds, listView })}
     ${recommendationsShelf}
+    ${isAuthenticated ? homeShelves.map((shelf) => renderHomeShelf({ title: shelf.title, href: escapeHtml(shelf.href), items: shelf.items, type: 'books', isAuthenticated, showBatch: false, user, readBookIds, listView })).join('') : ''}
     `;
   return pageShell({ title: t('home.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home') }], currentPath: '/', csrfToken, readBookIds });
 }
@@ -1407,6 +1408,15 @@ function summarizeSmartShelfQuery(query) {
   return parts.join(' · ');
 }
 
+function renderShelfHomeForm(action, onHome, csrfToken) {
+  return `
+    <form method="post" action="${escapeHtml(action)}" class="admin-inline-form">
+      ${csrfHiddenField(csrfToken)}
+      <input type="hidden" name="on" value="${onHome ? '0' : '1'}">
+      <button type="submit" class="button${onHome ? ' is-active' : ''}">${escapeHtml(t(onHome ? 'shelves.home.remove' : 'shelves.home.add'))}</button>
+    </form>`;
+}
+
 function renderSmartShelvesSection(smartShelves, csrfToken) {
   return `
     <section class="library-shelf">
@@ -1421,11 +1431,20 @@ function renderSmartShelvesSection(smartShelves, csrfToken) {
               <div class="account-list-row-main shelf-row-info">
                 <strong>${escapeHtml(shelf.name)}</strong>
                 <br><span class="muted">${escapeHtml(summarizeSmartShelfQuery(shelf.query))}</span>
+                ${shelf.bookCount != null ? `<br><span class="muted">${countLabel('book', shelf.bookCount)}</span>` : ''}
+                ${shelf.previewBookIds && shelf.previewBookIds.length ? `
+                  <div class="shelf-covers-preview">
+                    ${shelf.previewBookIds.map((bookId) => `<img class="shelf-cover-thumb" src="${apiBookPath(bookId, 'cover')}" alt="" loading="lazy" onerror="this.style.display='none'">`).join('')}
+                  </div>
+                ` : ''}
               </div>
-              <form method="post" action="/shelves/smart/${shelf.id}/delete" class="admin-inline-form" data-confirm="${escapeHtml(tp('smartShelves.deleteConfirm', { name: shelf.name }))}">
-                ${csrfHiddenField(csrfToken)}
-                <button type="submit" class="button-danger">${escapeHtml(t('smartShelves.delete'))}</button>
-              </form>
+              <div class="shelf-row-actions">
+                ${renderShelfHomeForm(`/shelves/smart/${shelf.id}/home`, shelf.onHome, csrfToken)}
+                <form method="post" action="/shelves/smart/${shelf.id}/delete" class="admin-inline-form" data-confirm="${escapeHtml(tp('smartShelves.deleteConfirm', { name: shelf.name }))}">
+                  ${csrfHiddenField(csrfToken)}
+                  <button type="submit" class="button-danger">${escapeHtml(t('smartShelves.delete'))}</button>
+                </form>
+              </div>
             </div>
           `).join('')}
         </div>
@@ -1463,10 +1482,13 @@ export function renderShelves({ shelves = [], smartShelves = [], user, stats, in
                   </div>
                 ` : ''}
               </div>
-              ${renderListRemoveBtn({
-                titleKey: 'shelves.delete',
-                extraAttrs: `data-shelf-delete="${shelf.id}" data-shelf-name="${escapeHtml(shelf.name)}" data-shelf-description="${escapeHtml(shelf.description || '')}"`
-              })}
+              <div class="shelf-row-actions">
+                ${renderShelfHomeForm(`/shelves/${shelf.id}/home`, shelf.onHome, csrfToken)}
+                ${renderListRemoveBtn({
+                  titleKey: 'shelves.delete',
+                  extraAttrs: `data-shelf-delete="${shelf.id}" data-shelf-name="${escapeHtml(shelf.name)}" data-shelf-description="${escapeHtml(shelf.description || '')}"`
+                })}
+              </div>
             </div>
           `).join('')}
         </div>

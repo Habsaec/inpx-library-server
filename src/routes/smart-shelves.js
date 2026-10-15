@@ -7,7 +7,7 @@ import { requireApiAuth, requireWebAuth } from '../middleware/auth.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { safePage } from '../utils/safe-int.js';
 import {
-  listSmartShelves, getSmartShelf, createSmartShelf, updateSmartShelf, deleteSmartShelf, getSmartShelfBooks
+  listSmartShelves, getSmartShelf, createSmartShelf, updateSmartShelf, deleteSmartShelf, getSmartShelfBooks, setSmartShelfOnHome
 } from '../smart-shelves.js';
 
 const PAGE_SIZE = 24;
@@ -58,6 +58,11 @@ export function registerSmartShelfRoutes(app) {
     } catch (error) {
       return res.status(400).type('text/plain; charset=utf-8').send(translateKnownErrorMessage(error.message));
     }
+    res.redirect(303, '/shelves');
+  });
+
+  app.post('/shelves/smart/:id/home', requireWebAuth, (req, res) => {
+    setSmartShelfOnHome(req.params.id, req.user.username, req.body?.on === '1');
     res.redirect(303, '/shelves');
   });
 
