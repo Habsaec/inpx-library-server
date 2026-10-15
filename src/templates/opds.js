@@ -3,6 +3,7 @@
  */
 import { escapeHtml, sanitizeHtml, siteTitleForDisplay, t, FORMAT_LABELS, formatGenreLabel, downloadBookPath, apiBookPath } from './shared.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
+import { withOpdsProgress } from '../opds-progress.js';
 
 function renderOpdsBaseLinks(baseUrl, selfPath, { acquisition = false } = {}) {
   const selfType = acquisition
@@ -44,7 +45,7 @@ const OPDS_MIME_FOR_SOURCE = {
 function renderOpdsBookEntries(baseUrl, items, { includeContent = false } = {}) {
   const now = new Date().toISOString().substring(0, 19) + 'Z';
   return items.map((book) => {
-    const title = `${book.seriesNo ? `${escapeHtml(String(book.seriesNo))}. ` : ''}${escapeHtml(book.title || t('opds.noTitle'))} (${escapeHtml(book.ext || 'fb2')})`;
+    const title = `${book.opdsProgressIcon ? `${book.opdsProgressIcon} ` : ''}${book.seriesNo ? `${escapeHtml(String(book.seriesNo))}. ` : ''}${escapeHtml(book.title || t('opds.noTitle'))} (${escapeHtml(book.ext || 'fb2')})`;
     const authors = String(book.authors || '').split(':').map((item) => item.trim()).filter(Boolean);
     const extLower = String(book.ext || 'fb2').toLowerCase();
     const sourceMime = OPDS_MIME_FOR_SOURCE[extLower] || 'application/octet-stream';
@@ -148,7 +149,7 @@ function renderOpdsNavEntry(now, entry) {
   </entry>`;
 }
 
-export function renderOpdsBooksFeed(baseUrl, { id, title, selfPath, items, nextHref = '', navEntries = [] }) {
+export function renderOpdsBooksFeed(baseUrl, { id, title, selfPath, items, nextHref = '', navEntries = [], username = '' }) {
   const now = new Date().toISOString().substring(0, 19) + 'Z';
   const nextLink = nextHref
     ? `\n  <link href="${escapeHtml(nextHref)}" rel="next" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>`
@@ -160,11 +161,11 @@ export function renderOpdsBooksFeed(baseUrl, { id, title, selfPath, items, nextH
   <id>${escapeHtml(String(id))}</id>
   <title>${escapeHtml(title)}</title>
   ${renderOpdsBaseLinks(baseUrl, selfPath, { acquisition: true })}${nextLink}
-${navXml}  ${renderOpdsBookEntries(baseUrl, items)}
+${navXml}  ${renderOpdsBookEntries(baseUrl, withOpdsProgress(items, username))}
 </feed>`;
 }
 
-export function renderOpdsBookDetail(baseUrl, book) {
+export function renderOpdsBookDetail(baseUrl, book, { username = '' } = {}) {
   const title = book?.title || t('opds.noTitle');
   const now = new Date().toISOString().substring(0, 19) + 'Z';
   const selfPath = `/opds/book?uid=${encodeURIComponent(book?.id || '')}`;
@@ -174,6 +175,6 @@ export function renderOpdsBookDetail(baseUrl, book) {
   <id>book-${escapeHtml(book?.id || '')}</id>
   <title>${escapeHtml(title)}</title>
   ${renderOpdsBaseLinks(baseUrl, selfPath, { acquisition: true })}
-  ${book ? renderOpdsBookEntries(baseUrl, [book], { includeContent: true }) : ''}
+  ${book ? renderOpdsBookEntries(baseUrl, withOpdsProgress([book], username), { includeContent: true }) : ''}
 </feed>`;
 }

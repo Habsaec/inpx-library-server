@@ -21,6 +21,7 @@ import {
   getFavoriteSeriesLight,
 } from '../inpx.js';
 import { getUserShelves, getShelfById, getShelfBooks } from '../db.js';
+import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
 import {
   renderOpdsRoot,
   renderOpdsOpenSearch,
@@ -84,6 +85,12 @@ export function registerOpdsRoutes(app, deps) {
         content: t('opds.user.shelvesDesc')
       },
       {
+        id: 'user-smart-shelves',
+        title: t('opds.user.smartShelves'),
+        href: '/opds/user/smart-shelves',
+        content: t('opds.user.smartShelvesDesc')
+      },
+      {
         id: 'user-fav-authors',
         title: t('opds.user.favoriteAuthors'),
         href: '/opds/user/favorite-authors',
@@ -106,7 +113,7 @@ export function registerOpdsRoutes(app, deps) {
     const items = getBookmarks(username, 'date');
     await attachFlibustaAnnotationsFromShards(items);
     res.type('application/atom+xml; charset=utf-8');
-    res.send(renderOpdsBooksFeed(baseUrl(req), {
+    res.send(renderOpdsBooksFeed(baseUrl(req), { username: req.user?.username,
       id: 'user-bookmarks',
       title: t('opds.user.bookmarks'),
       selfPath: '/opds/user/bookmarks',
@@ -138,11 +145,45 @@ export function registerOpdsRoutes(app, deps) {
     const items = getShelfBooks(shelf.id, username);
     await attachFlibustaAnnotationsFromShards(items);
     res.type('application/atom+xml; charset=utf-8');
-    res.send(renderOpdsBooksFeed(baseUrl(req), {
+    res.send(renderOpdsBooksFeed(baseUrl(req), { username: req.user?.username,
       id: `user-shelf-${shelf.id}`,
       title: shelf.name,
       selfPath: req.originalUrl,
       items
+    }));
+  });
+
+  app.get('/opds/user/smart-shelves', requireOpdsAuth, (req, res) => {
+    const username = req.user?.username;
+    if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
+    const entries = listSmartShelves(username).map((shelf) => ({
+      id: `smart-shelf-${shelf.id}`,
+      title: shelf.name,
+      href: `/opds/user/smart-shelves/${shelf.id}`,
+      acquisition: true
+    }));
+    res.type('application/atom+xml; charset=utf-8');
+    res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-smart-shelves', title: t('opds.user.smartShelves'), selfPath: '/opds/user/smart-shelves', entries }));
+  });
+
+  app.get('/opds/user/smart-shelves/:id', requireOpdsAuth, async (req, res) => {
+    const username = req.user?.username;
+    if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
+    const shelf = getSmartShelf(req.params.id, username);
+    if (!shelf) return res.status(404).type('text/plain').send(t('shelf.notFound'));
+    const page = safePage(req.query.page);
+    const limit = 100;
+    const result = getSmartShelfBooks(shelf, { page, pageSize: limit });
+    await attachFlibustaAnnotationsFromShards(result.items);
+    const nextHref = result.total > page * limit ? `/opds/user/smart-shelves/${shelf.id}?page=${page + 1}` : '';
+    res.type('application/atom+xml; charset=utf-8');
+    res.send(renderOpdsBooksFeed(baseUrl(req), {
+      username,
+      id: `user-smart-shelf-${shelf.id}`,
+      title: shelf.name,
+      selfPath: req.originalUrl,
+      items: result.items,
+      nextHref
     }));
   });
 
@@ -251,7 +292,7 @@ export function registerOpdsRoutes(app, deps) {
           : '';
         await attachFlibustaAnnotationsFromShards(result.items);
         res.type('application/atom+xml; charset=utf-8');
-        return res.send(renderOpdsBooksFeed(base, { id: 'search', title: t('opds.nav.search'), selfPath: req.originalUrl, items: result.items, nextHref }));
+        return res.send(renderOpdsBooksFeed(base, { username: req.user?.username, id: 'search', title: t('opds.nav.search'), selfPath: req.originalUrl, items: result.items, nextHref }));
       }
 
       const entries = result.items.map((item) => ({
@@ -284,7 +325,7 @@ export function registerOpdsRoutes(app, deps) {
         : getSeriesBooksOpds(seriesQ);
       await attachFlibustaAnnotationsFromShards(items);
       res.type('application/atom+xml; charset=utf-8');
-      return res.send(renderOpdsBooksFeed(base, { id: 'search', title: seriesQ, selfPath: req.originalUrl, items }));
+      return res.send(renderOpdsBooksFeed(base, { username: req.user?.username, id: 'search', title: seriesQ, selfPath: req.originalUrl, items }));
     }
 
     if (author.startsWith('=')) {
@@ -313,7 +354,7 @@ export function registerOpdsRoutes(app, deps) {
         }));
       await attachFlibustaAnnotationsFromShards(standalone);
       res.type('application/atom+xml; charset=utf-8');
-      return res.send(renderOpdsBooksFeed(base, {
+      return res.send(renderOpdsBooksFeed(base, { username: req.user?.username,
         id: 'search',
         title: authorName,
         selfPath: req.originalUrl,
@@ -350,7 +391,7 @@ export function registerOpdsRoutes(app, deps) {
       const items = getSeriesBooksOpds(seriesName);
       await attachFlibustaAnnotationsFromShards(items);
       res.type('application/atom+xml; charset=utf-8');
-      return res.send(renderOpdsBooksFeed(base, { id: 'search', title: seriesName || t('facet.facetSeries'), selfPath: req.originalUrl, items }));
+      return res.send(renderOpdsBooksFeed(base, { username: req.user?.username, id: 'search', title: seriesName || t('facet.facetSeries'), selfPath: req.originalUrl, items }));
     }
 
     const entries = [];
@@ -465,6 +506,6 @@ export function registerOpdsRoutes(app, deps) {
       console.warn('[OPDS] book detail annotation extraction failed for uid=%s: %s', book.id, err?.message || err);
     }
     res.type('application/atom+xml; charset=utf-8');
-    res.send(renderOpdsBookDetail(baseUrl(req), book));
+    res.send(renderOpdsBookDetail(baseUrl(req), book, { username: req.user?.username }));
   });
 }

@@ -1097,6 +1097,9 @@ export function deleteUser(username) {
     db.prepare(`DELETE FROM telegram_link_tokens WHERE username = ?`).run(normalizedUsername);
     db.prepare(`DELETE FROM password_reset_tokens WHERE username = ?`).run(normalizedUsername);
     db.prepare(`DELETE FROM app_pairing_tokens WHERE username = ?`).run(normalizedUsername);
+    db.prepare(`DELETE FROM kosync_keys WHERE username = ?`).run(normalizedUsername);
+    db.prepare(`DELETE FROM kosync_progress WHERE username = ?`).run(normalizedUsername);
+    db.prepare(`DELETE FROM smart_shelves WHERE username = ?`).run(normalizedUsername);
     return db.prepare(`DELETE FROM users WHERE username = ?`).run(normalizedUsername).changes;
   })();
 }
@@ -3324,6 +3327,44 @@ db.exec(`CREATE TABLE IF NOT EXISTS reading_positions (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (username, book_id)
 )`);
+
+/* KOReader sync (src/kosync.js): прогресс по хешу документа, ключ пользователя и кэш «хеш → книга».
+   Прогресс не привязан к book_id (как на оригинальном kosync-сервере) и переживает переиндексацию. */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kosync_keys (
+    username TEXT PRIMARY KEY,
+    key_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS kosync_progress (
+    username TEXT NOT NULL,
+    document TEXT NOT NULL,
+    progress TEXT NOT NULL DEFAULT '',
+    percentage REAL NOT NULL DEFAULT 0,
+    device TEXT NOT NULL DEFAULT '',
+    device_id TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (username, document)
+  );
+  CREATE TABLE IF NOT EXISTS kosync_documents (
+    document TEXT PRIMARY KEY,
+    book_id TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_kosync_documents_book ON kosync_documents(book_id);
+`);
+
+/* Умные полки (src/smart-shelves.js): сохранённый фильтр каталога, книги подбираются при открытии.
+   Не хранит book_id, поэтому переживает переиндексацию и удаление источников. */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS smart_shelves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    name TEXT NOT NULL,
+    query TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(username, name)
+  );
+`);
 
 function ensureReadingPositionsSchema() {
   const columns = db.prepare(`PRAGMA table_info(reading_positions)`).all();

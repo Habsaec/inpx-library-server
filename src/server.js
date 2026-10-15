@@ -17,6 +17,8 @@ import { registerBrowseApiRoutes } from './routes/browse-api.js';
 import { registerProfileApiRoutes } from './routes/profile-api.js';
 import { registerOpdsRoutes } from './routes/opds.js';
 import { registerOpdsV2Routes } from './routes/opds-v2.js';
+import { registerKosyncRoutes } from './routes/kosync.js';
+import { registerSmartShelfRoutes } from './routes/smart-shelves.js';
 import { registerAuthRoutes } from './routes/auth-routes.js';
 import { registerOidcRoutes } from './routes/oidc.js';
 import { registerDownloadRoutes } from './routes/download.js';
@@ -1075,6 +1077,7 @@ registerLiteRoutes(app, { getCachedStats });
 const batchEmailLocks = new Set();
 registerReaderRoutes(app);
 registerUserApiRoutes(app, { batchEmailLocks });
+registerSmartShelfRoutes(app);
 registerNotesRoutes(app, { batchEmailLocks });
 registerAdminRoutes(app, {
   operationsState,
@@ -1104,6 +1107,7 @@ registerDownloadRoutes(app);
 
 registerOpdsRoutes(app, { baseUrl });
 registerOpdsV2Routes(app, { baseUrl });
+registerKosyncRoutes(app);
 
 app.use((error, req, res, next) => {
   console.error(error);

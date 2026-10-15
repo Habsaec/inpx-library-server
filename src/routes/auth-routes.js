@@ -1,8 +1,8 @@
-/**
+﻿/**
  * Маршруты аутентификации: login, logout, register, profile.
  */
 import { config } from '../config.js';
-import { t, translateKnownErrorMessage } from '../i18n.js';
+import { t, tp, translateKnownErrorMessage } from '../i18n.js';
 import { requireWebAuth, invalidateSessionUserCache } from '../middleware/auth.js';
 import { verifyPassword, timingSafeStringEqual } from '../auth.js';
 import { createSessionValue } from '../services/session.js';
@@ -28,6 +28,7 @@ import {
 import { isOidcConfigured } from '../services/oidc.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolvePublicBaseUrl, sendPasswordResetEmail } from '../services/password-reset.js';
+import { createKosyncPassword, hasKosyncPassword, revokeKosyncPassword } from '../kosync.js';
 
 /** Secure-cookie на голом HTTP по LAN браузер молча выбрасывает: вход в журнале есть, сессии нет. */
 function sessionCookieOptions(req) {
@@ -365,12 +366,16 @@ export function registerAuthRoutes(app, deps) {
     return String(req.query.section || req.body?.section || '') === 'view' ? 'view' : 'account';
   }
 
-  function renderSettingsPage(user, flash, csrfToken, section = 'account') {
-    return renderProfileSettings(buildProfileSettingsData(user, flash, csrfToken, { section }));
+  function renderSettingsPage(req, flash, csrfToken, section = 'account', user = req.user) {
+    return renderProfileSettings(buildProfileSettingsData(user, flash, csrfToken, {
+      section,
+      kosyncUrl: `${resolvePublicBaseUrl(req)}/kosync`,
+      kosyncHasPassword: hasKosyncPassword(user.username)
+    }));
   }
 
   app.get('/profile/settings', requireWebAuth, (req, res) => {
-    res.send(renderSettingsPage(req.user, String(req.query.flash || ''), req.csrfToken || '', profileSettingsSection(req)));
+    res.send(renderSettingsPage(req, String(req.query.flash || ''), req.csrfToken || '', profileSettingsSection(req)));
   });
 
   app.get('/profile/view', requireWebAuth, (req, res) => {
@@ -383,28 +388,39 @@ export function registerAuthRoutes(app, deps) {
   app.post('/profile/email', requireWebAuth, (req, res) => {
     const rawEmail = String(req.body.ereaderEmail || '').trim();
     if (rawEmail && !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(rawEmail)) {
-      return res.status(400).send(renderSettingsPage(req.user, t('profile.invalidEmail'), req.csrfToken || '', 'account'));
+      return res.status(400).send(renderSettingsPage(req, t('profile.invalidEmail'), req.csrfToken || '', 'account'));
     }
     const fullUser = getUserByUsername(req.user.username);
     if (!isEreaderEmailAllowedForUser(fullUser)) {
-      return res.status(403).send(renderSettingsPage(req.user, t('profile.ereaderEmail.accessDenied'), req.csrfToken || '', 'account'));
+      return res.status(403).send(renderSettingsPage(req, t('profile.ereaderEmail.accessDenied'), req.csrfToken || '', 'account'));
     }
     try {
       setEreaderEmail(req.user.username, rawEmail);
-      res.send(renderSettingsPage(req.user, t('profile.emailSaved'), req.csrfToken || '', 'account'));
+      res.send(renderSettingsPage(req, t('profile.emailSaved'), req.csrfToken || '', 'account'));
     } catch (error) {
-      res.status(500).send(renderSettingsPage(req.user, translateKnownErrorMessage(error.message), req.csrfToken || '', 'account'));
+      res.status(500).send(renderSettingsPage(req, translateKnownErrorMessage(error.message), req.csrfToken || '', 'account'));
     }
   });
 
   app.post('/profile/account-email', requireWebAuth, (req, res) => {
     try {
       setUserAccountEmail(req.user.username, req.body.accountEmail);
-      res.send(renderSettingsPage(req.user, t('profile.emailSaved'), req.csrfToken || '', 'account'));
+      res.send(renderSettingsPage(req, t('profile.emailSaved'), req.csrfToken || '', 'account'));
     } catch (error) {
       const status = /^(Invalid email|Email already in use)$/.test(error.message) ? 400 : 500;
-      res.status(status).send(renderSettingsPage(req.user, translateKnownErrorMessage(error.message), req.csrfToken || '', 'account'));
+      res.status(status).send(renderSettingsPage(req, translateKnownErrorMessage(error.message), req.csrfToken || '', 'account'));
     }
+  });
+
+  app.post('/profile/kosync-password', requireWebAuth, (req, res) => {
+    const password = createKosyncPassword(req.user.username);
+    logSystemEvent('info', 'auth', 'kosync password created', { username: req.user.username });
+    res.send(renderSettingsPage(req, tp('profile.kosync.created', { password }), req.csrfToken || '', 'account'));
+  });
+
+  app.post('/profile/kosync-password/revoke', requireWebAuth, (req, res) => {
+    revokeKosyncPassword(req.user.username);
+    res.send(renderSettingsPage(req, t('profile.kosync.revoked'), req.csrfToken || '', 'account'));
   });
 
   app.post('/profile/view', requireWebAuth, (req, res) => {
@@ -413,15 +429,15 @@ export function registerAuthRoutes(app, deps) {
         homeView: req.body.homeView,
         catalogView: req.body.catalogView
       });
-      res.send(renderSettingsPage(req.user, t('profile.viewPrefsSaved'), req.csrfToken || '', 'view'));
+      res.send(renderSettingsPage(req, t('profile.viewPrefsSaved'), req.csrfToken || '', 'view'));
     } catch (error) {
-      res.status(500).send(renderSettingsPage(req.user, translateKnownErrorMessage(error.message), req.csrfToken || '', 'view'));
+      res.status(500).send(renderSettingsPage(req, translateKnownErrorMessage(error.message), req.csrfToken || '', 'view'));
     }
   });
 
   app.post('/profile/password', requireWebAuth, (req, res) => {
     const { currentPassword, newPassword, confirmPassword } = req.body;
-    const renderErr = (msg) => res.status(400).send(renderSettingsPage(req.user, msg, req.csrfToken || '', 'account'));
+    const renderErr = (msg) => res.status(400).send(renderSettingsPage(req, msg, req.csrfToken || '', 'account'));
 
     const fullUser = getUserByUsername(req.user.username);
     const hasLocal = Number(fullUser?.hasLocalPassword ?? 1) !== 0;
@@ -445,7 +461,7 @@ export function registerAuthRoutes(app, deps) {
       });
       logSystemEvent('info', 'auth', 'password changed', { username: req.user.username });
       const okMsg = hasLocal ? t('profile.passwordChanged') : t('profile.passwordSet');
-      res.send(renderSettingsPage(freshUser, okMsg, req.csrfToken || '', 'account'));
+      res.send(renderSettingsPage(req, okMsg, req.csrfToken || '', 'account', freshUser));
     } catch (error) {
       return renderErr(translateKnownErrorMessage(error.message));
     }

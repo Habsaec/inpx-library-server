@@ -168,6 +168,7 @@ const KNOWN_ERROR_TO_KEY = {
   'Источник с таким путём уже существует': 'admin.sources.error.duplicatePath',
   'Название полки не указано': 'shelves.error.nameRequired',
   'Полка с таким названием уже существует': 'shelves.error.duplicateName',
+  'Фильтр умной полки пуст': 'smartShelves.error.emptyFilter',
   'Invalid Telegram ID': 'profile.telegram.errorInvalidId',
   'Invalid email': 'profile.invalidEmail',
   'Email already in use': 'profile.accountEmail.taken',

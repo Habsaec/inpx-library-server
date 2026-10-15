@@ -204,7 +204,8 @@ function renderCatalogFilterPanel({
   action = '/catalog',
   formId = 'catalog-filters',
   showLang = true,
-  showGenreMode = true
+  showGenreMode = true,
+  smartShelfCsrf = null
 }) {
   const selected = new Set(genres);
   const baseParams = buildCatalogQueryParams({
@@ -252,6 +253,17 @@ function renderCatalogFilterPanel({
   const resetHref = resetQs ? `${action}?${resetQs}` : action;
   const summaryCount = hasActive ? ` (${chips.length})` : '';
   const filterFormId = formId;
+  const smartSaveHtml = smartShelfCsrf !== null && (hasActive || String(query || '').trim())
+    ? `<details class="catalog-smart-save">
+      <summary class="button">${escapeHtml(t('smartShelves.save'))}</summary>
+      <form method="post" action="/shelves/smart" class="shelf-create-form">
+        ${csrfHiddenField(smartShelfCsrf)}
+        <input type="hidden" name="query" value="${escapeHtml(buildCatalogQueryParams({ query, sort, order, genres, lang, format, year, minRate, hasSeries, genreMode }).toString())}">
+        <input type="text" name="name" maxlength="100" placeholder="${escapeHtml(t('smartShelves.namePlaceholder'))}" required>
+        <button type="submit" class="button-primary">${escapeHtml(t('smartShelves.saveBtn'))}</button>
+      </form>
+    </details>`
+    : '';
   return `
     <form id="${filterFormId}" class="catalog-filter-panel" method="get" action="${escapeHtml(action)}" data-catalog-filters${lazyAttrs}>
       ${query ? `<input type="hidden" name="q" value="${escapeHtml(query)}">` : ''}
@@ -269,6 +281,7 @@ function renderCatalogFilterPanel({
         ${hasActive ? `<div class="catalog-filter-active"><div class="catalog-filter-chips" aria-label="${escapeHtml(t('catalog.filtersActive'))}">${chips.join('')}</div><a class="catalog-filter-reset" href="${escapeHtml(resetHref)}">${escapeHtml(t('catalog.filtersReset'))}</a></div>` : ''}
       </div>
     </form>
+    ${smartSaveHtml}
     <div class="catalog-filter-body">
       <details class="catalog-filter-details"${genres.length ? ' open' : ''}>
         <summary>${escapeHtml(t('catalog.filtersGenres'))}${genres.length ? ` (${genres.length})` : ''}</summary>
@@ -519,7 +532,8 @@ export function renderCatalog({
     : '';
   const filterPanel = isBookField ? renderCatalogFilterPanel({
     query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, langs, formats, genreOptions, genreOptionsLazy,
-    view: isListView ? 'list' : ''
+    view: isListView ? 'list' : '',
+    smartShelfCsrf: user ? csrfToken : null
   }) : '';
   const content = `
     <section class="page-intro catalog-page-intro">
@@ -1379,7 +1393,47 @@ export function renderAuthorOutsideSeriesPage({
   });
 }
 
-export function renderShelves({ shelves = [], user, stats, indexStatus, csrfToken = '' }) {
+function summarizeSmartShelfQuery(query) {
+  const p = new URLSearchParams(String(query || ''));
+  const parts = [];
+  if (p.get('q')) parts.push(tp('smartShelves.filter.q', { value: p.get('q') }));
+  for (const g of p.getAll('genre')) parts.push(tp('catalog.filter.genre', { value: formatGenreLabel(g) }));
+  if (p.get('lang')) parts.push(tp('catalog.filter.lang', { value: p.get('lang').toUpperCase() }));
+  if (p.get('format')) parts.push(tp('catalog.filter.format', { value: p.get('format').toUpperCase() }));
+  if (p.get('year')) parts.push(tp('catalog.filter.year', { value: p.get('year') }));
+  if (p.get('minRate')) parts.push(tp('catalog.filter.minRate', { value: p.get('minRate') }));
+  if (p.get('hasSeries') === '1') parts.push(t('catalog.filter.hasSeries'));
+  if (p.get('hasSeries') === '0') parts.push(t('catalog.filter.noSeries'));
+  return parts.join(' · ');
+}
+
+function renderSmartShelvesSection(smartShelves, csrfToken) {
+  return `
+    <section class="library-shelf">
+      <div class="section-title">
+        <h2>${escapeHtml(t('smartShelves.title'))}</h2>
+      </div>
+      <p class="muted">${escapeHtml(t('smartShelves.hint'))}</p>
+      ${smartShelves.length ? `
+        <div class="table-list entity-list">
+          ${smartShelves.map((shelf) => `
+            <div class="table-row table-row-clickable account-list-row" data-href="${escapeHtml(shelf.catalogUrl)}">
+              <div class="account-list-row-main shelf-row-info">
+                <strong>${escapeHtml(shelf.name)}</strong>
+                <br><span class="muted">${escapeHtml(summarizeSmartShelfQuery(shelf.query))}</span>
+              </div>
+              <form method="post" action="/shelves/smart/${shelf.id}/delete" class="admin-inline-form" data-confirm="${escapeHtml(tp('smartShelves.deleteConfirm', { name: shelf.name }))}">
+                ${csrfHiddenField(csrfToken)}
+                <button type="submit" class="button-danger">${escapeHtml(t('smartShelves.delete'))}</button>
+              </form>
+            </div>
+          `).join('')}
+        </div>
+      ` : `<p class="muted">${escapeHtml(t('smartShelves.empty'))}</p>`}
+    </section>`;
+}
+
+export function renderShelves({ shelves = [], smartShelves = [], user, stats, indexStatus, csrfToken = '' }) {
   const content = `
     <section class="page-intro page-intro-slim">
       <div class="page-intro-copy">
@@ -1417,7 +1471,8 @@ export function renderShelves({ shelves = [], user, stats, indexStatus, csrfToke
           `).join('')}
         </div>
       ` : renderEmptyState({ title: t('shelves.emptyTitle'), text: t('shelves.emptyText') })}
-    </section>`;
+    </section>
+    ${renderSmartShelvesSection(smartShelves, csrfToken)}`;
   return pageShell({ title: t('shelves.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('shelves.title') }], currentPath: '/shelves', csrfToken });
 }
 
@@ -2196,6 +2251,7 @@ export function renderProfileSettings({
   telegramBotAvailable = false, telegramBotAllowed = true, ereaderEmailAllowed = true,
   flash = '', csrfToken = '', hasLocalPassword = true,
   homeView = 'grid', catalogView = 'grid',
+  kosyncUrl = '', kosyncHasPassword = false,
   section = 'account'
 } = {}) {
   const fmtDate = (d) => formatLocaleDateLong(d);
@@ -2237,6 +2293,26 @@ export function renderProfileSettings({
             <div><input type="email" name="accountEmail" value="${escapeHtml(accountEmail)}" placeholder="name@example.com" autocomplete="email"></div>
             <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button></div>
           </form>
+        </div>
+      </div>
+      <div class="table-row table-row-stack profile-form-row">
+        <div>
+          <strong>${escapeHtml(t('profile.kosync.title'))}</strong>
+          <p class="muted" style="margin:4px 0 8px;font-size:12px;">${escapeHtml(t('profile.kosync.hint'))}</p>
+          <p style="margin:0 0 4px;">${escapeHtml(t('profile.kosync.url'))}: <code>${escapeHtml(kosyncUrl)}</code></p>
+          <p style="margin:0 0 8px;">${escapeHtml(t('profile.kosync.username'))}: <code>${escapeHtml(user.username)}</code> · <span class="muted">${escapeHtml(t(kosyncHasPassword ? 'profile.kosync.status.on' : 'profile.kosync.status.off'))}</span></p>
+          <div class="actions">
+            <form method="post" action="/profile/kosync-password" class="admin-inline-form">
+              ${csrfHiddenField(csrfToken)}
+              <button type="submit" class="button-primary">${escapeHtml(t(kosyncHasPassword ? 'profile.kosync.reset' : 'profile.kosync.create'))}</button>
+            </form>
+            ${kosyncHasPassword
+              ? `<form method="post" action="/profile/kosync-password/revoke" class="admin-inline-form" data-confirm="${escapeHtml(t('profile.kosync.revokeConfirm'))}">
+                   ${csrfHiddenField(csrfToken)}
+                   <button type="submit" class="button-danger">${escapeHtml(t('profile.kosync.revoke'))}</button>
+                 </form>`
+              : ''}
+          </div>
         </div>
       </div>
       <div class="table-row table-row-stack profile-form-row">

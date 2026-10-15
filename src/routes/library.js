@@ -83,6 +83,7 @@ import {
   listRecentSectionGenres
 } from '../inpx.js';
 import { getDistinctLanguages, getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
+import { listSmartShelves } from '../smart-shelves.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
 import {
@@ -953,7 +954,7 @@ export function registerLibraryRoutes(app, deps) {
   app.get('/shelves', requireWebAuth, (req, res) => {
     const stats = getCachedStats();
     const shelves = getUserShelves(req.user.username);
-    res.send(renderShelves({ shelves, user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+    res.send(renderShelves({ shelves, smartShelves: listSmartShelves(req.user.username), user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
   });
 
   // --- «Моя библиотека»: хаб (нижняя навигация), закладки и заметки читалки ---
