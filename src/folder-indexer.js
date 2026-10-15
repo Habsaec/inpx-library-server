@@ -658,6 +658,20 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
     });
   }, control);
   const allFiles = [...zipEntries, ...looseFiles];
+  // Пустой обход при уже проиндексированных книгах — почти всегда не смонтированный том, а не «все файлы удалены».
+  // Прерываемся до любых изменений БД, иначе чистка удалит книги источника (вместе с пользовательскими данными).
+  if (allFiles.length === 0 && db.prepare('SELECT 1 FROM books WHERE source_id = ? LIMIT 1').get(source.id)) {
+    const message = `Папка источника пуста или недоступна: ${rootPath}. В индексе уже есть книги этого источника — индексация прервана, ничего не удалено. Проверьте монтирование диска; если файлы удалены намеренно, удалите источник.`;
+    logSystemEvent('error', 'index', 'folder source is empty, index aborted to keep existing books', {
+      sourceId: source.id,
+      name: sourceLabel,
+      path: rootPath,
+      incremental,
+      hadReadErrors,
+      hadListErrors
+    });
+    throw new Error(message);
+  }
   const canReconcileDeletedFiles = !hadReadErrors && !hadListErrors;
   console.log(`[folder-index] ${allFiles.length} paths to stat (loose + inside archives)`);
   const filesToProcess = [];

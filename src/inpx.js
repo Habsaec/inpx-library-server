@@ -2446,6 +2446,24 @@ export async function ensureIndex(force = false, incremental = false) {
 }
 
 /**
+ * Выборочная проверка (до `sample` архивов, равномерно по списку .inp): лежат ли архивы на диске.
+ * Ловит неверный путь / не смонтированный том сразу после индексации, а не при первом скачивании.
+ */
+export function checkInpxArchivesOnDisk(archiveRoot, inpEntries, { sample = 50 } = {}) {
+  const total = inpEntries.length;
+  if (!total) return { total: 0, checked: 0, missing: 0, missingNames: [] };
+  const step = Math.max(1, Math.floor(total / sample));
+  const missingNames = [];
+  let checked = 0;
+  for (let i = 0; i < total && checked < sample; i += step) {
+    const archiveName = resolveArchiveNameForInp(archiveRoot, inpEntries[i].path);
+    checked += 1;
+    if (!resolveLibraryArchiveFile(archiveRoot, archiveName)) missingNames.push(archiveName);
+  }
+  return { total, checked, missing: missingNames.length, missingNames };
+}
+
+/**
  * Как FLibrary `Parser::Impl::ProcessInpx` (inpx.cpp): маска — только basename(.inp) + «.*» в папке коллекции,
  * не полный путь из архива INPX (`f/foo.inp` → ищем `foo.*` в корне). Так на диске оказывается реальный `foo.7z`.
  */
@@ -3127,6 +3145,28 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
   });
   console.log(`[index] INPX diagnostics total: ${JSON.stringify(diagnosticsTotal)}`);
   appendIndexDiaryLine(`INPX диагностика итог: ${JSON.stringify(diagnosticsTotal)}`);
+
+  try {
+    const archiveCheck = checkInpxArchivesOnDisk(archiveRoot, inpEntries);
+    if (archiveCheck.checked > 0 && archiveCheck.missing > 0) {
+      const none = archiveCheck.missing === archiveCheck.checked;
+      const text = none
+        ? `INPX: ни один из ${archiveCheck.checked} проверенных архивов не найден в ${archiveRoot} — проверьте путь и монтирование диска (примеры: ${archiveCheck.missingNames.slice(0, 3).join(', ')})`
+        : `INPX: ${archiveCheck.missing} из ${archiveCheck.checked} проверенных архивов отсутствуют в ${archiveRoot} (неполная коллекция — книги из них не скачать)`;
+      console.warn(`[index] ${text}`);
+      appendIndexDiaryLine(text);
+      logSystemEvent(none ? 'warn' : 'info', 'index', 'INPX archives missing on disk', {
+        sourceId,
+        archiveRoot,
+        total: archiveCheck.total,
+        checked: archiveCheck.checked,
+        missing: archiveCheck.missing,
+        examples: archiveCheck.missingNames.slice(0, 5)
+      });
+    }
+  } catch (err) {
+    console.warn('[index] archive presence check failed:', err.message);
+  }
 
   if (!incremental) {
     for (const entry of inpEntries) {
