@@ -11,11 +11,13 @@ import {
   readFlibustaAnnotationHtml,
   readFlibustaCover,
   mergeSidecarBinariesIntoFb2Xml,
+  fb2SidecarMergeSignature,
   resolveLibraryArchiveFile,
   hasCoversArchives,
   hasImagesArchives
 } from './flibusta-sidecar.js';
 import { ensureEpubZipFromBookBuffer } from './epub-seven-zip.js';
+import { mergedFb2CacheKey, readMergedFb2, storeMergedFb2, withMergedFb2Lock } from './fb2-sidecar-cache.js';
 import { normalizeCachedAnnotation, unwrapEscapedMarkup } from './html-sanitize.js';
 
 /** Кэш по корню источника: есть ли на диске covers|images (без обхода при каждой книге). */
@@ -260,22 +262,34 @@ function decodeFb2BufferToString(buffer) {
  * FB2 для выдачи в читалку / скачивание / конвертацию: для Flibusta sidecar вшивает обложку и иллюстрации из ZIP.
  */
 export async function readBookBufferForDelivery(book) {
-  let buffer = await readBookBuffer(book);
   const ext = String(book?.ext || 'fb2').toLowerCase();
-  if (ext === 'epub') {
-    buffer = await ensureEpubZipFromBookBuffer(buffer, book, getSourceRoot(book.sourceId));
-  }
   if (ext !== 'fb2' || !shouldTryFlibustaCoverPaths(book)) {
+    let buffer = await readBookBuffer(book);
+    if (ext === 'epub') {
+      buffer = await ensureEpubZipFromBookBuffer(buffer, book, getSourceRoot(book.sourceId));
+    }
     return buffer;
   }
-  try {
-    const xml = decodeFb2BufferToString(buffer);
-    const root = getSourceRoot(book.sourceId);
-    const merged = await mergeSidecarBinariesIntoFb2Xml(xml, book, root);
-    return Buffer.from(merged, 'utf8');
-  } catch {
-    return buffer;
-  }
+  const root = getSourceRoot(book.sourceId);
+  const key = mergedFb2CacheKey([
+    book.id, book.archiveName, book.fileName, String(book.size ?? ''), String(book.date ?? ''),
+    ...(await fb2SidecarMergeSignature(root, book))
+  ]);
+  return withMergedFb2Lock(key, async () => {
+    const cached = await readMergedFb2(key);
+    if (cached) return cached;
+    const buffer = await readBookBuffer(book);
+    const startedAt = Date.now();
+    try {
+      const xml = decodeFb2BufferToString(buffer);
+      const merged = await mergeSidecarBinariesIntoFb2Xml(xml, book, root);
+      const out = Buffer.from(merged, 'utf8');
+      storeMergedFb2(key, out, Date.now() - startedAt);
+      return out;
+    } catch {
+      return buffer;
+    }
+  });
 }
 
 async function extractBookDetails(book) {

@@ -26,6 +26,7 @@
     "install:linux": "sudo bash install.sh"
   },
   "dependencies": {
+    "@jsquash/jxl": "^1.3.0",
     "7zip-bin": "^5.2.0",
     "archiver": "^7.0.1",
     "basic-auth": "^2.0.1",

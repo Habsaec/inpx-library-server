@@ -21,6 +21,9 @@ import {
   getBookRowsForReviewPointerBuild
 } from './db.js';
 import { readArchiveEntryBuffer, listArchiveFiles } from './archives.js';
+import { decodeJxlInWorker, getJxlWorkerLimit } from './services/jxl-pool.js';
+import { getSharp } from './services/sharp-loader.js';
+import { acquireSharpSlot, releaseSharpSlot } from './services/cover.js';
 import { parseEnvTimeoutMs } from './utils/async-timeout.js';
 import { readSevenZipEntry } from './seven-zip.js';
 import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarkup } from './html-sanitize.js';
@@ -680,15 +683,46 @@ function decodeJxlToPngBuffer(bytes) {
   }
 }
 
-function normalizeSidecarImageBuffer(buf) {
+/**
+ * jxl-oxide-wasm умеет только PNG: кадр 8 МБ JXL превращается в 150 МБ PNG (FB2 с иллюстрациями
+ * раздувался до сотен МБ). Без прозрачности пережимаем в JPEG через sharp (в 5–10 раз меньше);
+ * с альфой, без sharp (COVER_PROCESSING=0 / старый CPU) или если JPEG не меньше — остаётся PNG.
+ */
+async function compactPngForFb2(png) {
+  const sharp = await getSharp();
+  if (!sharp) return null;
+  let gotSlot = false;
+  try {
+    await acquireSharpSlot();
+    gotSlot = true;
+    const meta = await sharp(png, { failOn: 'none' }).metadata();
+    if (meta.hasAlpha) return null;
+    const jpeg = await sharp(png, { failOn: 'none' }).jpeg({ quality: 85 }).toBuffer();
+    return jpeg.length && jpeg.length < png.length ? jpeg : null;
+  } catch {
+    return null;
+  } finally {
+    if (gotSlot) releaseSharpSlot();
+  }
+}
+
+async function normalizeSidecarImageBuffer(buf) {
   if (!buf?.length) return null;
   let contentType = sniffImageMime(buf);
   let data = buf;
   if (contentType === 'image/jxl') {
+    // Основной путь: воркер (libjxl → JPEG/PNG), не блокирует сервер. Откат — jxl-oxide в главном потоке.
+    const viaWorker = await decodeJxlInWorker(buf);
+    if (viaWorker) return viaWorker;
     const png = decodeJxlToPngBuffer(buf);
     if (png?.length) {
       data = png;
       contentType = 'image/png';
+      const jpeg = await compactPngForFb2(png);
+      if (jpeg) {
+        data = jpeg;
+        contentType = 'image/jpeg';
+      }
     }
   }
   return { contentType, data };
@@ -1029,7 +1063,7 @@ export async function readFlibustaIllustration(libraryRoot, archiveName, libId, 
   if (!archivePath) return null;
   try {
     const buf = await readArchiveEntryBuffer(archivePath, item.pathInZip, { listFallback: false });
-    return normalizeSidecarImageBuffer(buf);
+    return await normalizeSidecarImageBuffer(buf);
   } catch {
     return null;
   }
@@ -1089,19 +1123,28 @@ function binaryPayloadSufficient(xml, binaryId) {
   }
 }
 
-function injectOrReplaceBinaryBlock(xml, binaryId, contentType, dataBuffer) {
-  const b64 = dataBuffer.toString('base64');
-  const ct = String(contentType || 'image/jpeg').trim() || 'image/jpeg';
-  const safeId = escapeXmlIdAttr(binaryId);
-  const safeCt = escapeXmlIdAttr(ct);
-  const re = new RegExp(
+function binaryBlockRegExp(binaryId) {
+  return new RegExp(
     `(<binary\\b[^>]*\\bid\\s*=\\s*(["'])${escapeRegExp(binaryId)}\\2[^>]*>)([\\s\\S]*?)(<\\/binary>)`,
     'i'
   );
+}
+
+function hasBinaryBlock(xml, binaryId) {
+  return binaryBlockRegExp(binaryId).test(xml);
+}
+
+function binaryBlockXml(binaryId, contentType, dataBuffer) {
+  const ct = String(contentType || 'image/jpeg').trim() || 'image/jpeg';
+  return `<binary id="${escapeXmlIdAttr(binaryId)}" content-type="${escapeXmlIdAttr(ct)}">${dataBuffer.toString('base64')}</binary>\n`;
+}
+
+function injectOrReplaceBinaryBlock(xml, binaryId, contentType, dataBuffer) {
+  const re = binaryBlockRegExp(binaryId);
   if (re.test(xml)) {
-    return xml.replace(re, `$1${b64}$4`);
+    return xml.replace(re, `$1${dataBuffer.toString('base64')}$4`);
   }
-  const insert = `<binary id="${safeId}" content-type="${safeCt}">${b64}</binary>\n`;
+  const insert = binaryBlockXml(binaryId, contentType, dataBuffer);
   return xml.replace(/<\/FictionBook\s*>/i, (close) => insert + close);
 }
 
@@ -1115,6 +1158,22 @@ function ensureXmlUtf8EncodingDeclaration(xml) {
     }
     return decl.replace(/\?>/, ' encoding="utf-8"?>');
   });
+}
+
+/** Подпись sidecar-архивов книги (размер + mtime covers/images) для ключа кэша собранного FB2. */
+export async function fb2SidecarMergeSignature(libraryRoot, book) {
+  const root = path.resolve(String(libraryRoot || '').trim());
+  const rel = book?.archiveName ? resolveLibraryArchiveRelPath(root, book.archiveName) : '';
+  const parts = [];
+  for (const subdir of ['images', 'covers']) {
+    try {
+      const stat = await fs.promises.stat(resolveSidecarArchivePath(root, subdir, rel));
+      parts.push(`${subdir}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
+    } catch {
+      parts.push(`${subdir}:-`);
+    }
+  }
+  return parts;
 }
 
 /**
@@ -1154,20 +1213,49 @@ export async function mergeSidecarBinariesIntoFb2Xml(xml, book, libraryRoot) {
   }
   const archRel = resolveLibraryArchiveRelPath(path.resolve(root), book.archiveName);
   const imagesArchivePath = resolveSidecarArchivePath(path.resolve(root), 'images', archRel);
+  // Вставка картинки не влияет на другие id, поэтому «нужна ли картинка» считаем один раз по исходному xml.
+  const neededIds = refIds.filter((bid) => !binaryPayloadSufficient(out, bid));
+
+  // Картинки читаются и перекодируются с опережением (окно), результат потребляется строго по порядку:
+  // i-я нужная ссылка получает первую успешно прочитанную иллюстрацию, битые пропускаются, как раньше.
+  const loads = new Map();
+  const load = (i) => {
+    if (!loads.has(i)) {
+      loads.set(i, (async () => {
+        try {
+          const buf = await readArchiveEntryBuffer(imagesArchivePath, illList[i].pathInZip);
+          const normalized = await normalizeSidecarImageBuffer(buf);
+          return normalized?.data?.length ? normalized : null;
+        } catch {
+          return null;
+        }
+      })());
+    }
+    return loads.get(i);
+  };
+  const lookahead = Math.max(4, getJxlWorkerLimit() * 2);
+  const items = [];
   let illPos = 0;
-  for (const bid of refIds) {
-    if (binaryPayloadSufficient(out, bid)) continue;
+  for (const bid of neededIds) {
     while (illPos < illList.length && imagesArchivePath) {
-      const item = illList[illPos++];
-      try {
-        const buf = await readArchiveEntryBuffer(imagesArchivePath, item.pathInZip);
-        const normalized = normalizeSidecarImageBuffer(buf);
-        if (!normalized?.data?.length) continue;
-        out = injectOrReplaceBinaryBlock(out, bid, normalized.contentType, normalized.data);
-        break;
-      } catch {
-        continue;
-      }
+      const idx = illPos++;
+      const want = Math.min(illList.length, idx + Math.min(lookahead, neededIds.length - items.length));
+      for (let j = idx; j < want; j++) load(j);
+      const normalized = await load(idx);
+      loads.delete(idx);
+      if (!normalized) continue;
+      items.push({ id: bid, ...normalized });
+      break;
+    }
+  }
+  if (items.length) {
+    const existing = items.filter((it) => hasBinaryBlock(out, it.id));
+    const fresh = items.filter((it) => !existing.includes(it));
+    for (const it of existing) out = injectOrReplaceBinaryBlock(out, it.id, it.contentType, it.data);
+    if (fresh.length) {
+      // Одна вставка перед </FictionBook> вместо regexp по растущему xml на каждую картинку.
+      const tail = fresh.map((it) => binaryBlockXml(it.id, it.contentType, it.data)).join('');
+      out = out.replace(/<\/FictionBook\s*>/i, (close) => tail + close);
     }
   }
 
@@ -1301,7 +1389,7 @@ export async function readFlibustaAuthorPortraitBuffer(authorKey, libraryRoot) {
   if (!fs.existsSync(zipPath)) return null;
   try {
     const buf = await readArchiveEntryBuffer(zipPath, row.entry_path.replace(/\\/g, '/'), { listFallback: false });
-    if (buf?.length) return normalizeSidecarImageBuffer(buf);
+    if (buf?.length) return await normalizeSidecarImageBuffer(buf);
   } catch {
     /* нет в архиве или битый zip — после индексации путь должен совпадать */
   }
