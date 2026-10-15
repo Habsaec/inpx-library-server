@@ -241,6 +241,8 @@ docker compose up -d
 | `COVER_MAX_HEIGHT` | `320` | Высота миниатюры |
 | `COVER_QUALITY` | `86` | Качество WebP |
 | `SCAN_INTERVAL_HOURS` | `0` | Автоскан каждые N часов (0 = выкл.) |
+| `FOLDER_WATCH` | `1` | Слежение за папочными источниками: после изменений запускается инкрементальная индексация (`0` = выкл.) |
+| `FOLDER_WATCH_QUIET_SEC` | `120` | Сколько секунд без изменений ждать перед индексацией (10–3600) |
 | `EVENTS_STDOUT` | `true` | События в stdout (`docker logs`) |
 | `HEALTH_MINIMAL` | `false` | Минимальный `/health` |
 | `CLUSTER_WORKERS` | `0` | Воркеры кластера (0 = один процесс) |

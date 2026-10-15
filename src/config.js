@@ -156,6 +156,9 @@ export const config = {
 
   // ── Scan scheduler ───────────────────────────────
   scanIntervalHours: parseEnvInt('SCAN_INTERVAL_HOURS', process.env.SCAN_INTERVAL_HOURS, 0, { min: 0, max: 8760 }),
+  // Слежение за папочными источниками: после тишины в N секунд запускается инкрементальная индексация источника
+  folderWatch: parseBoolean(process.env.FOLDER_WATCH, true),
+  folderWatchQuietSec: parseEnvInt('FOLDER_WATCH_QUIET_SEC', process.env.FOLDER_WATCH_QUIET_SEC, 120, { min: 10, max: 3600 }),
 
   // ── Performance profile ────────────────────────────
   ...resolvePerfProfile(),
