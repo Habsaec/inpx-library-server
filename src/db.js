@@ -8,6 +8,7 @@ import { config, parseTelegramApiBase } from './config.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { hashPassword } from './auth.js';
 import { runMigrations } from './services/migrations.js';
+import { resolveIndexImportMode } from './index-import-mode.js';
 import { IDLE_MS, sessionStatusFromActivityAt } from '../public/position-sync.js';
 
 function deriveEncKey() {
@@ -2340,9 +2341,18 @@ export async function deleteSourceProgressive(
     stashUserDataRefsForSource(sid);
     await new Promise(r => setImmediate(r));
 
+    // Bulk-путь (сброс 46 индексов + полная пересборка FTS по всей БД) окупается только когда удаляется заметная
+    // доля библиотеки. Для 100 книг из 700 тысяч это минуты ради секунд: там обычный DELETE, триггер books_ad
+    // чистит FTS построчно.
+    const libraryRows = db.prepare('SELECT MAX(rowid) AS n FROM books').get()?.n ?? 0;
+    const bulkDelete = resolveIndexImportMode({ incremental: true, toProcess: total, total: libraryRows }).incrementalBulk;
+    console.log(`[db] delete source ${sid}: ${total}/${libraryRows} books, bulk=${bulkDelete}`);
+
     // Drop books indexes and FTS triggers for fast bulk DELETE.
-    dropBooksFtsTriggers();
-    dropBooksTableIndexes();
+    if (bulkDelete) {
+      dropBooksFtsTriggers();
+      dropBooksTableIndexes();
+    }
     let deleted = 0;
     try {
       // FK OFF только на время синхронной транзакции (без yield): иначе ON DELETE CASCADE
@@ -2360,12 +2370,14 @@ export async function deleteSourceProgressive(
       }
       onProgress?.({ deleted, total, stage: 'books' });
     } finally {
-      await ensureBooksTableIndexes();
-      ensureBooksFtsTriggers();
+      if (bulkDelete) {
+        await ensureBooksTableIndexes();
+        ensureBooksFtsTriggers();
+      }
     }
 
     // Rebuild FTS once instead of per-row deletes.
-    try {
+    if (bulkDelete) try {
       await rebuildBooksFtsFromContent({
         onProgress: (p) => onProgress?.({
           deleted,

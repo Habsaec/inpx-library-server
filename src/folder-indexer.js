@@ -718,10 +718,14 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
   const willReconcileDeletes = incremental && canReconcileDeletedFiles && deletedKeys.length > 0;
   const workUnits = filesToProcess.length + (willReconcileDeletes ? deletedKeys.length : 0);
 
+  // Доля изменений считается от всей библиотеки, а не от числа файлов источника. Иначе небольшое пополнение
+  // (например, 135 книг в источнике, который был пуст) = 100% и включает bulk-режим: полная пересборка FTS и
+  // всех индексов по всей БД — минуты эксклюзивной работы ради нескольких десятков книг.
+  const libraryRows = incremental ? (db.prepare('SELECT MAX(rowid) AS n FROM books').get()?.n || 0) : 0;
   const { ftsBulkMode, useFastSqlite, incrementalBulk } = resolveIndexImportMode({
     incremental,
     toProcess: workUnits,
-    total: allFiles.length
+    total: Math.max(allFiles.length, libraryRows)
   });
   console.log(
     `[folder-index] import plan source_id=${source.id}: process=${filesToProcess.length}/${allFiles.length} ftsBulk=${ftsBulkMode}`

@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { initDb, db, addSource, updateSourceIndexedAt, setSetting, getMeta } from '../src/db.js';
 import {
-  startFolderWatcher, stopFolderWatcher, reconcileFolderWatchers, getFolderWatchConfig, readFolderWatchStatus
+  startFolderWatcher, stopFolderWatcher, reconcileFolderWatchers, getFolderWatchConfig, readFolderWatchStatus,
+  notifyIndexCompleted
 } from '../src/services/folder-watcher.js';
 import { isRelevantWatchName } from '../src/services/folder-watch-worker.js';
 
@@ -92,7 +93,7 @@ test('admin settings override env defaults; turning watching off stops triggers 
   }
 });
 
-test('folder watcher retries triggering while the indexer is busy', async () => {
+test('busy indexer: no timer retries; re-trigger only after a successful index completion', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'watch-busy-'));
   let attempts = 0;
   try {
@@ -101,7 +102,16 @@ test('folder watcher retries triggering while the indexer is busy', async () => 
     startFolderWatcher({ trigger: () => { attempts += 1; return attempts >= 2; }, quietMs: 300, reconcileMs: 60_000 });
     await new Promise((resolve) => setTimeout(resolve, 1500));
     fs.writeFileSync(path.join(folder, 'Автор - Книга.epub'), 'x');
-    assert.ok(await waitFor(() => attempts >= 2, 8000), 'busy indexer → trigger is retried after the next quiet period');
+    assert.ok(await waitFor(() => attempts >= 1, 8000), 'first trigger attempt');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal(attempts, 1, 'busy indexer (stopped or running) is not retried on a timer');
+
+    notifyIndexCompleted();
+    assert.ok(await waitFor(() => attempts >= 2, 5000), 'after a completed index the pending change is picked up');
+    const done = attempts;
+    notifyIndexCompleted();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    assert.equal(attempts, done, 'nothing pending → completion does not re-trigger');
   } finally {
     stopFolderWatcher();
     db.prepare('DELETE FROM sources WHERE path = ?').run(folder);

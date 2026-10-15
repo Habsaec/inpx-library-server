@@ -17,7 +17,7 @@ import cluster from 'node:cluster';
 import { Worker } from 'node:worker_threads';
 import { config } from '../config.js';
 import { db, getEnabledSources, getSourceById, setMeta } from '../db.js';
-import { startSourceIndexing } from '../inpx.js';
+import { startSourceIndexing, onIndexComplete } from '../inpx.js';
 import { logSystemEvent } from './system-events.js';
 
 const RECONCILE_MS = 60_000;
@@ -28,11 +28,12 @@ const STABLE_AFTER_MS = 10 * 60_000;
 
 export const FOLDER_WATCH_STATUS_META_KEY = 'folder_watch_status';
 
-/** @type {Map<number, {path:string, worker:Worker|null, timer:any, failures:number, retryAt:number, readyAt:number, gaveUp:boolean, lastError:string}>} */
+/** @type {Map<number, {path:string, worker:Worker|null, timer:any, failures:number, retryAt:number, readyAt:number, gaveUp:boolean, lastError:string, dirty:boolean}>} */
 const watchers = new Map();
 let reconcileTimer = null;
 let options = null;
 let lastPublishedStatus = '';
+let indexCompleteHooked = false;
 
 // Читаем settings напрямую (минуя кэш getSetting): в кластере значение мог сохранить другой воркер.
 function readRawSetting(key) {
@@ -127,14 +128,27 @@ function fire(id) {
   if (!source || !source.enabled || !source.lastIndexedAt) return;
   const started = options.trigger(id);
   if (started) {
+    state.dirty = false;
     logSystemEvent('info', 'folder-watch', 'folder changed, incremental index started', {
       sourceId: id,
       name: source.name
     });
     return;
   }
-  // Индексатор занят — повторим после следующей паузы, изменения не теряем.
-  schedule(id);
+  // Индексатор занят: изменения не теряем, но и по таймеру не долбимся — запустим после УСПЕШНОГО завершения
+  // текущей индексации. Остановленная пользователем индексация сама не перезапускается.
+  state.dirty = true;
+}
+
+/** Вызывается по завершении индексации: источники, у которых были изменения во время неё, ставим в очередь. */
+export function notifyIndexCompleted() {
+  if (!options) return;
+  for (const [id, state] of watchers) {
+    if (state.dirty) {
+      state.dirty = false;
+      schedule(id);
+    }
+  }
 }
 
 function schedule(id) {
@@ -149,7 +163,8 @@ function startWatcher(source) {
   let state = watchers.get(source.id);
   if (!state) {
     state = {
-      path: source.path, worker: null, timer: null, failures: 0, retryAt: 0, readyAt: 0, gaveUp: false, lastError: ''
+      path: source.path, worker: null, timer: null, failures: 0, retryAt: 0, readyAt: 0, gaveUp: false, lastError: '',
+      dirty: false
     };
     watchers.set(source.id, state);
   }
@@ -222,6 +237,10 @@ export function startFolderWatcher(opts = {}) {
   if (reconcileTimer) return;
   // В кластере наблюдает только первый воркер — как Telegram-бот.
   if (cluster.isWorker && cluster.worker.id !== 1) return;
+  if (!indexCompleteHooked) {
+    indexCompleteHooked = true;
+    onIndexComplete(() => notifyIndexCompleted());
+  }
   options = {
     trigger: opts.trigger || ((sourceId) => startSourceIndexing(sourceId, false)),
     quietMs: opts.quietMs ?? config.folderWatchQuietSec * 1000,
