@@ -58,7 +58,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     <h1 class="visually-hidden">${escapeHtml(siteTitleForDisplay())}</h1>
     ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
     <section class="welcome-hero-banner home-reveal"${continueAttr}>
-      <div class="welcome-hero-cover book-3d"><div class="book-3d-body">
+      <div class="welcome-hero-cover">
       <a class="welcome-hero-mark cover"${welcomeQuoteHref ? ` href="${escapeHtml(welcomeQuoteHref)}"` : ''} tabindex="-1" aria-hidden="true">
         ${welcomeQuoteHref ? `<img class="cover-image" src="/api/authors/portrait?name=${escapeHtml(encodeURIComponent(welcomeQuote.author))}" alt="" onload="this.classList.add('is-loaded')" onerror="this.remove()">` : ''}
         <span class="cover-fallback">
@@ -70,7 +70,7 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
         </span>
         <span class="welcome-hero-mark-title">${escapeHtml(welcomeQuote.author)}</span>
       </a>
-      </div></div>
+      </div>
       <div class="welcome-hero-content">
         <blockquote class="welcome-hero-quote">${escapeHtml(welcomeQuote.quote)}</blockquote>
         <cite class="welcome-hero-author">${renderWelcomeQuoteAuthor(welcomeQuote.author)}</cite>

@@ -104,6 +104,8 @@ function resolveAuthorNameLoose(name) {
   const key = name.toLowerCase();
   if (looseAuthorNameCache.has(key)) return looseAuthorNameCache.get(key);
   const found = listAuthors({ query: name, page: 1, pageSize: 1, sort: 'count' }).items[0]?.name || null;
+  // Misses are not cached: the author may appear once indexing finishes.
+  if (!found) return null;
   if (looseAuthorNameCache.size >= 500) looseAuthorNameCache.clear();
   looseAuthorNameCache.set(key, found);
   return found;

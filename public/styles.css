@@ -13140,13 +13140,12 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   }
 
   /* Hover over the cover only: the outer .book-3d stays still and catches the pointer,
-     so the turning body can't flicker at its edges. Hero and quote covers also lift. */
+     so the turning body can't flicker at its edges. Hero covers also lift. */
   html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body {
     --bk-tilt: -20deg;
   }
 
-  html:not([data-ui-book3d="0"]) .hero-card-cover-side.book-3d:hover .book-3d-body,
-  html:not([data-ui-book3d="0"]) .welcome-hero-cover.book-3d:hover .book-3d-body {
+  html:not([data-ui-book3d="0"]) .hero-card-cover-side.book-3d:hover .book-3d-body {
     --bk-lift: -8px;
   }
 
