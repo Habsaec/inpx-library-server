@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import cluster from 'node:cluster';
 import { config } from '../config.js';
 import { getSharp } from './sharp-loader.js';
-import { getMeta, setMeta, resolveTelegramRuntimeConfig, getTelegramSettings, getUserByTelegramId, completeTelegramLink, unlinkTelegramByTelegramId, getUserShelves, getShelfBooks, getShelfById, isTelegramBotAllowedForUser, registerTelegramChat, removeTelegramChat, listTelegramAnnounceChats, getPublicBaseUrlSetting, syncTelegramChatsFromLinkedUsers } from '../db.js';
+import { getMeta, setMeta, resolveTelegramRuntimeConfig, resolveTelegramApiBase, getTelegramSettings, getUserByTelegramId, completeTelegramLink, unlinkTelegramByTelegramId, getUserShelves, getShelfBooks, getShelfById, isTelegramBotAllowedForUser, registerTelegramChat, removeTelegramChat, listTelegramAnnounceChats, getPublicBaseUrlSetting, syncTelegramChatsFromLinkedUsers } from '../db.js';
 import {
   searchCatalog,
   searchOverview,
@@ -41,7 +41,6 @@ import {
   renderNewBooksAnnounceMessage,
 } from '../telegram-bot-defaults.js';
 
-const TG_API = 'https://api.telegram.org';
 const POLL_TIMEOUT_SEC = 30;
 /** Книг/элементов на страницу (Telegram: каждая книга — отдельное сообщение). */
 const PAGE_SIZE = 10;
@@ -259,9 +258,9 @@ async function tgCall(method, body, { multipart = false } = {}) {
 
     let res;
     if (multipart) {
-      res = await fetch(`${TG_API}/bot${_token}/${method}`, { method: 'POST', body });
+      res = await fetch(`${resolveTelegramApiBase()}/bot${_token}/${method}`, { method: 'POST', body });
     } else {
-      res = await fetch(`${TG_API}/bot${_token}/${method}`, {
+      res = await fetch(`${resolveTelegramApiBase()}/bot${_token}/${method}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -406,7 +405,7 @@ async function prepareSiteLogoProfilePhoto() {
 }
 
 async function callTelegramMultipart(token, method, form) {
-  const res = await fetch(`${TG_API}/bot${token}/${method}`, { method: 'POST', body: form });
+  const res = await fetch(`${resolveTelegramApiBase()}/bot${token}/${method}`, { method: 'POST', body: form });
   return res.json();
 }
 
@@ -418,7 +417,7 @@ async function setBotProfilePhotoWithToken(token, buffer) {
 }
 
 async function removeBotProfilePhotoWithToken(token) {
-  const res = await fetch(`${TG_API}/bot${token}/removeMyProfilePhoto`, {
+  const res = await fetch(`${resolveTelegramApiBase()}/bot${token}/removeMyProfilePhoto`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
@@ -467,7 +466,7 @@ async function fetchUpdates(signal) {
     timeout: String(POLL_TIMEOUT_SEC),
     allowed_updates: JSON.stringify(['message', 'callback_query', 'my_chat_member']),
   });
-  const res = await fetch(`${TG_API}/bot${_token}/getUpdates?${params}`, { signal });
+  const res = await fetch(`${resolveTelegramApiBase()}/bot${_token}/getUpdates?${params}`, { signal });
   const data = await res.json();
   if (!data.ok) {
     const isConflict = data.error_code === 409;
@@ -542,7 +541,7 @@ function isTelegramChatGoneError(description = '') {
 }
 
 async function sendTelegramHtmlWithToken(token, chatId, text) {
-  const res = await fetch(`${TG_API}/bot${token}/sendMessage`, {
+  const res = await fetch(`${resolveTelegramApiBase()}/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import express from 'express';
-import { config } from '../config.js';
+import { config, parseTelegramApiBase } from '../config.js';
 import { validateNewBooksAnnounceTemplate } from '../telegram-bot-defaults.js';
 
 function normalizeNewBooksAnnounceTemplate(template = '') {
@@ -46,7 +46,7 @@ import {
 import {
   setSetting, getSetting, encryptValue, decryptValue, getSources, getSourceById,
   addSource, updateSource, deleteSourceProgressive, forceDetachSourceRowUnsafe,
-  getSmtpSettings, setSmtpSettings, getTelegramSettings, setTelegramSettings, resolveTelegramTokenForAdmin, syncTelegramChatsFromLinkedUsers, hasAdminUser, listUsers, countAdminUsers,
+  getSmtpSettings, setSmtpSettings, getTelegramSettings, setTelegramSettings, resolveTelegramTokenForAdmin, resolveTelegramApiBase, syncTelegramChatsFromLinkedUsers, hasAdminUser, listUsers, countAdminUsers,
   isPasswordResetEnabled, getPublicBaseUrlSetting, setPasswordResetSettings,
   getOidcSettings, setOidcSettings,
   getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser, getUserByTelegramId, normalizeTelegramId, setUserTelegramId, setUserTelegramBotAllowed, setUserEreaderEmailAllowed, setUserEreaderEmail, getEreaderEmail, setUserAccountEmail, assertAccountEmailAvailable,
@@ -1002,7 +1002,7 @@ export function registerAdminRoutes(app, deps) {
   app.get('/admin/telegram', requireAdminWeb, (req, res) => {
     res.send(renderAdminTelegram({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
-      tg: getTelegramSettings(), botRunning: isTelegramBotRunning(),
+      tg: { ...getTelegramSettings(), apiUrlDefault: config.telegramApiBase }, botRunning: isTelegramBotRunning(),
       flash: String(req.query.flash || ''), csrfToken: req.csrfToken || ''
     }));
   });
@@ -1065,6 +1065,12 @@ export function registerAdminRoutes(app, deps) {
     const newBooksAnnounceEnabled = req.body.newBooksAnnounceEnabled === '1';
     const isTest = req.body.test === '1';
 
+    const apiUrlRaw = String(req.body.telegramApiUrl ?? '').trim();
+    const apiUrl = parseTelegramApiBase(apiUrlRaw);
+    if (apiUrlRaw && !apiUrl) {
+      return res.redirect('/admin/telegram?flash=' + encodeURIComponent(t('admin.telegram.flashApiUrlInvalid')));
+    }
+
     const token = resolveTelegramTokenForAdmin(rawToken);
 
     if (isTest) {
@@ -1072,7 +1078,7 @@ export function registerAdminRoutes(app, deps) {
         return res.redirect('/admin/telegram?flash=' + encodeURIComponent(t('admin.telegram.flashNoToken')));
       }
       try {
-        const resp = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+        const resp = await fetch(`${apiUrl || resolveTelegramApiBase()}/bot${token}/getMe`, { signal: AbortSignal.timeout(15000) });
         const data = await resp.json();
         if (!data.ok) throw new Error(data.description || 'Telegram API error');
         const username = data.result?.username ?? '?';
@@ -1092,6 +1098,7 @@ export function registerAdminRoutes(app, deps) {
       newBooksAnnounceEnabled,
       newBooksAnnounceTemplate: normalizeNewBooksAnnounceTemplate(newBooksAnnounceTemplate),
       enabled,
+      apiUrl,
     });
     syncTelegramChatsFromLinkedUsers();
     restartTelegramBot().catch((err) => {

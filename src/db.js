@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import { normalizeLookupEmail } from './utils/email-address.js';
 import Database from 'better-sqlite3';
-import { config } from './config.js';
+import { config, parseTelegramApiBase } from './config.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { hashPassword } from './auth.js';
 import { runMigrations } from './services/migrations.js';
@@ -3221,6 +3221,8 @@ export function getTelegramSettings() {
     newBooksAnnounceEnabled: getSetting('telegram_new_books_announce_enabled') === '1',
     newBooksAnnounceTemplate: getSetting('telegram_new_books_announce_template') || '',
     announceChatCount: countTelegramAnnounceChats(),
+    /** Admin override of the Bot API base URL ('' = use TELEGRAM_API_URL / default) */
+    apiUrl: getSetting('telegram_api_url') || '',
     /** '0' = явно отключён; иначе считается включённым */
     enabled: getSetting('telegram_enabled') !== '0',
   };
@@ -3236,7 +3238,11 @@ export function setTelegramSettings({
   profileShortDescription,
   newBooksAnnounceEnabled,
   newBooksAnnounceTemplate,
+  apiUrl,
 }) {
+  if (apiUrl !== undefined) {
+    setSetting('telegram_api_url', parseTelegramApiBase(apiUrl));
+  }
   if (token !== undefined && String(token).trim()) {
     setSetting('telegram_bot_token', encryptValue(String(token).trim()));
   }
@@ -3266,6 +3272,11 @@ export function setTelegramSettings({
     setSetting('telegram_enabled', enabled ? '1' : '0');
   }
   setSetting('telegram_configured', '1');
+}
+
+/** Telegram Bot API base URL: admin setting > TELEGRAM_API_URL > https://api.telegram.org */
+export function resolveTelegramApiBase() {
+  return parseTelegramApiBase(getSetting('telegram_api_url')) || config.telegramApiBase;
 }
 
 /** Эффективная конфигурация бота: после сохранения в админке env не подменяет пустые поля. */

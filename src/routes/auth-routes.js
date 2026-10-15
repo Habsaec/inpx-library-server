@@ -14,7 +14,7 @@ import {
   setEreaderEmail, getEreaderEmail, setUserAccountEmail, getUserStats,
   getUserBrowseViewPrefs, setUserBrowseViewPrefs,
   getUserReadingStats, decryptValue,
-  createTelegramLinkToken, unlinkTelegram, getTelegramBotUsername, resolveTelegramRuntimeConfig, setMeta,
+  createTelegramLinkToken, unlinkTelegram, getTelegramBotUsername, resolveTelegramRuntimeConfig, resolveTelegramApiBase, setMeta,
   isTelegramBotAllowedForUser,
   isEreaderEmailAllowedForUser,
   isPasswordResetConfigured,
@@ -56,7 +56,7 @@ async function resolveTelegramBotUsernameForLink() {
   if (!tgRuntime.enabled || !tgRuntime.token) return '';
 
   try {
-    const resp = await fetch(`https://api.telegram.org/bot${tgRuntime.token}/getMe`);
+    const resp = await fetch(`${resolveTelegramApiBase()}/bot${tgRuntime.token}/getMe`);
     const data = await resp.json();
     const username = data?.result?.username;
     if (data?.ok && username) {

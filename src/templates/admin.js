@@ -1515,6 +1515,11 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
           <input type="password" name="token" value="" placeholder="${tokenSaved ? escapeHtml(t('admin.telegram.tokenSavedPlaceholder')) : '123456789:AAxxxxxx...'}" autocomplete="new-password">
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.tokenHint'))} <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:var(--accent);">@BotFather</a>${tokenSaved ? ` · ${escapeHtml(t('admin.telegram.tokenSavedHint'))}` : ''}</span>
         </div>
+        <div class="admin-field-group">
+          <label>${escapeHtml(t('admin.telegram.apiUrl'))}</label>
+          <input type="url" name="telegramApiUrl" value="${escapeHtml(tg.apiUrl || '')}" placeholder="${escapeHtml(tg.apiUrlDefault || 'https://api.telegram.org')}" autocomplete="off" spellcheck="false">
+          <span class="admin-field-hint">${escapeHtml(t('admin.telegram.apiUrlHint'))}</span>
+        </div>
       </div>
       <div class="admin-card admin-card--form">
         <div class="admin-card-title">${escapeHtml(t('admin.telegram.accessTitle'))}</div>

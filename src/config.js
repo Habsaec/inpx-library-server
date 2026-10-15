@@ -76,6 +76,23 @@ function parseEnvInt(envName, raw, defaultValue, { min, max } = {}) {
   return Math.trunc(n);
 }
 
+const DEFAULT_TELEGRAM_API_BASE = 'https://api.telegram.org';
+
+/** Normalized Telegram Bot API base URL, or '' when empty/invalid (must be http:// or https://). */
+export function parseTelegramApiBase(raw) {
+  const value = String(raw || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\/[^\s/]+\S*$/i.test(value) ? value : '';
+}
+
+function resolveTelegramApiBase(raw) {
+  const parsed = parseTelegramApiBase(raw);
+  if (parsed) return parsed;
+  if (String(raw || '').trim()) {
+    console.warn(`[config] TELEGRAM_API_URL must start with http:// or https:// (got "${String(raw).trim()}"), using ${DEFAULT_TELEGRAM_API_BASE}`);
+  }
+  return DEFAULT_TELEGRAM_API_BASE;
+}
+
 export const config = {
   rootDir,
   dataDir,
@@ -145,6 +162,8 @@ export const config = {
 
   // ── Telegram Bot ───────────────────────────────────
   telegramBotToken: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
+  /** Base URL of the Telegram Bot API (reverse proxy / local Bot API server); default https://api.telegram.org */
+  telegramApiBase: resolveTelegramApiBase(process.env.TELEGRAM_API_URL),
   /** Массив Telegram user ID (строки); пустой = доступ у всех */
   telegramAllowedUsers: (process.env.TELEGRAM_ALLOWED_USERS || '')
     .split(',')
