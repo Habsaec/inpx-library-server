@@ -1296,7 +1296,57 @@ function formatNextRunLine(mode, nextRunAtIso) {
   return tp('admin.schedule.nextRun', { when: formatLocaleDateTimeShort(nextRunAtIso) });
 }
 
-export function renderAdminSources({ user, stats, indexStatus, sources = [], flash = '', csrfToken = '', scanIntervalHours = 0, scanSchedule = null, scanScheduleNextRunAt = null, scanScheduleLog = [], coverWidth = 220, coverHeight = 320, coverQuality = 86 }) {
+function renderFolderWatchLine(source, folderWatch) {
+  if (source.type !== 'folder' || !folderWatch) return '';
+  const entry = folderWatch.status?.sources?.[source.id];
+  let text;
+  if (!folderWatch.config.enabled || folderWatch.status?.enabled === false) text = t('admin.sources.watch.statusOff');
+  else if (!source.enabled) text = t('admin.sources.watch.statusSourceOff');
+  else if (!entry) text = t('admin.sources.watch.statusPending');
+  else if (entry.status === 'watching') text = t('admin.sources.watch.statusWatching');
+  else if (entry.status === 'starting') text = t('admin.sources.watch.statusStarting');
+  else if (entry.status === 'retry') text = tp('admin.sources.watch.statusRetry', { when: formatLocaleDateTimeShort(new Date(entry.retryAt).toISOString()) });
+  else if (entry.status === 'failed') text = t('admin.sources.watch.statusFailed');
+  else text = t('admin.sources.watch.statusPending');
+  const title = entry?.error ? ` title="${escapeHtml(entry.error)}"` : '';
+  return `<div class="muted admin-compact-btn" data-watch-status="${source.id}"${title}>${escapeHtml(t('admin.sources.watch.label'))}: ${escapeHtml(text)}</div>`;
+}
+
+function renderFolderWatchForm({ csrfToken, folderWatch }) {
+  if (!folderWatch) return '';
+  const { enabled, quietSec } = folderWatch.config;
+  return `
+    <form action="/admin/settings/folder-watch" method="post" data-track-dirty data-folder-watch-form>
+      ${csrfHiddenField(csrfToken)}
+      <div class="admin-action-item admin-action-item--stack">
+        <div class="admin-action-item-info">
+          <strong>${escapeHtml(t('admin.sources.watch.title'))}</strong>
+          <span class="muted">${escapeHtml(t('admin.sources.watch.hint'))}</span>
+          <div class="admin-field-group">
+            <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;">
+              <input type="hidden" name="enabled" value="0">
+              <input type="checkbox" name="enabled" value="1" ${enabled ? 'checked' : ''} style="accent-color:var(--accent);width:16px;height:16px;">
+              ${escapeHtml(t('admin.sources.watch.enabled'))}
+            </label>
+          </div>
+          <div class="admin-field-group">
+            <label for="folder-watch-quiet">${escapeHtml(t('admin.sources.watch.quietLabel'))}</label>
+            <div class="admin-inline-row">
+              <input id="folder-watch-quiet" type="number" name="quietSec" value="${quietSec}" min="10" max="3600" class="admin-input-sm">
+              <span class="muted">${escapeHtml(t('admin.sources.watch.quietUnit'))}</span>
+            </div>
+            <span class="admin-field-hint">${escapeHtml(t('admin.sources.watch.quietHint'))}</span>
+          </div>
+        </div>
+        <div class="admin-actions-row">
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
+        </div>
+      </div>
+    </form>
+  `;
+}
+
+export function renderAdminSources({ user, stats, indexStatus, sources = [], flash = '', csrfToken = '', scanIntervalHours = 0, scanSchedule = null, scanScheduleNextRunAt = null, scanScheduleLog = [], folderWatch = null, coverWidth = 220, coverHeight = 320, coverQuality = 86 }) {
   const typeBadge = (stype) => stype === 'inpx'
     ? '<span class="admin-chip admin-compact-btn">INPX</span>'
     : `<span class="admin-chip admin-compact-btn">${escapeHtml(t('admin.sources.typeFolder'))}</span>`;
@@ -1310,6 +1360,7 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
         <div style="margin-top:4px">
           <span class="muted admin-compact-btn source-path-text" style="word-break:break-all" data-path-status="${s.id}">${escapeHtml(s.path)}</span>
         </div>
+        ${renderFolderWatchLine(s, folderWatch)}
       </td>
       <td data-label="${escapeHtml(t('admin.sources.thBooks'))}" style="text-align:center" data-source-books>${formatLocaleInt(Number(s.bookCount || 0))}</td>
       <td data-label="${escapeHtml(t('admin.sources.thEnabled'))}" style="text-align:center">${s.enabled ? escapeHtml(t('common.yes')) : escapeHtml(t('common.no'))}</td>
@@ -1401,6 +1452,8 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
           <button type="submit" id="add-source-btn" class="button-primary">${escapeHtml(t('admin.sources.addBtn'))}</button>
         </div>
       </form>
+      <hr class="admin-divider">
+      ${renderFolderWatchForm({ csrfToken, folderWatch })}
       <hr class="admin-divider">
       ${renderScanScheduleForm({ csrfToken, scanSchedule, scanScheduleNextRunAt, scanScheduleLog, scanIntervalHours })}
     </div>

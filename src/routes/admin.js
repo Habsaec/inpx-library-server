@@ -28,6 +28,7 @@ import {
 } from '../services/system-events.js';
 import { getRecentRuntimeLogs, subscribeRuntimeLogs, getRuntimeLogFilePath } from '../services/runtime-logs.js';
 import { restartScanScheduler, getSchedulerIntervalHours, getScheduleConfig, getNextRunAt, parseScheduleForm } from '../services/scheduler.js';
+import { getFolderWatchConfig, readFolderWatchStatus, reconcileFolderWatchers } from '../services/folder-watcher.js';
 import {
   getUpdateState, isUpdateTimedOut, readUpdateLog, appendUpdateLog,
   beginUpdate, endUpdate, runUpdateFromZip
@@ -52,7 +53,7 @@ import {
   getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser, getUserByTelegramId, normalizeTelegramId, setUserTelegramId, setUserTelegramBotAllowed, setUserEreaderEmailAllowed, setUserEreaderEmail, getEreaderEmail, setUserAccountEmail, assertAccountEmailAvailable,
   db, getDistinctLanguages, getDistinctGenres, rebuildActiveBooksView, refreshCatalogBookCounts,
   getSuppressedBooks, unsuppressBook, unsuppressAll, getScheduleLog, adjustCatalogCountsForBook, isBookInActiveView,
-  setMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache
+  setMeta, getMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache
 } from '../db.js';
 import {
   getBookById, getIndexStatus, getConfiguredInpxFile, setConfiguredInpxFile, findInpxFiles,
@@ -319,6 +320,20 @@ export function registerAdminRoutes(app, deps) {
         admin: req.user.username, mode, hours, time, dow, full
       });
       res.redirect('/admin/sources?flash=' + encodeURIComponent(t('admin.schedule.flashSaved') || 'Schedule saved'));
+    } catch (error) {
+      res.redirect('/admin/sources?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
+    }
+  });
+
+  app.post('/admin/settings/folder-watch', requireAdminWeb, (req, res) => {
+    try {
+      const enabled = [].concat(req.body.enabled ?? []).includes('1');
+      const quietSec = Math.max(10, Math.min(3600, Math.floor(Number(req.body.quietSec) || 120)));
+      setSetting('folder_watch_enabled', enabled ? '1' : '0');
+      setSetting('folder_watch_quiet_sec', String(quietSec));
+      reconcileFolderWatchers();
+      logSystemEvent('info', 'admin', 'folder watch settings updated', { admin: req.user.username, enabled, quietSec });
+      res.redirect('/admin/sources?flash=' + encodeURIComponent(t('admin.sources.watch.flashSaved')));
     } catch (error) {
       res.redirect('/admin/sources?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
@@ -1166,6 +1181,7 @@ export function registerAdminRoutes(app, deps) {
       scanSchedule: getScheduleConfig(),
       scanScheduleNextRunAt: getNextRunAt(),
       scanScheduleLog: getScheduleLog(10),
+      folderWatch: { config: getFolderWatchConfig(), status: readFolderWatchStatus(getMeta) },
       coverWidth: Number(getSetting('cover_max_width')) || config.coverMaxWidth,
       coverHeight: Number(getSetting('cover_max_height')) || config.coverMaxHeight,
       coverQuality: Number(getSetting('cover_quality')) || config.coverQuality
@@ -1184,6 +1200,7 @@ export function registerAdminRoutes(app, deps) {
       }
       const fastScan = ['1', 'true'].includes(String(req.body.fast_scan));
       const source = addSource({ name, type, path: sourcePath, fastScan });
+      reconcileFolderWatchers();
       clearPageDataCache();
       markLibraryDedupProjectionStale();
       logSystemEvent('info', 'settings', 'source added', { actor: req.user.username, source: source.name, type, path: sourcePath, fastScan: Boolean(source.fastScan) });
@@ -1201,6 +1218,7 @@ export function registerAdminRoutes(app, deps) {
       const name = req.body.name !== undefined ? String(req.body.name).trim() : undefined;
       const enabled = req.body.enabled !== undefined ? req.body.enabled === '1' : undefined;
       updateSource(id, { name, enabled });
+      reconcileFolderWatchers();
       if (enabled !== undefined) {
         await refreshCatalogBookCounts();
       }
