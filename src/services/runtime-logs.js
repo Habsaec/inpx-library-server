@@ -4,6 +4,7 @@ import path from 'node:path';
 import util from 'node:util';
 import { config } from '../config.js';
 import { rotateIfNeeded } from '../utils/log-rotate.js';
+import { appendLineAsync } from '../utils/async-log-append.js';
 
 const MAX_RUNTIME_LOGS = 5000;
 const runtimeLogs = [];
@@ -118,7 +119,7 @@ function appendFileLine(line) {
   try {
     fs.mkdirSync(config.dataDir, { recursive: true });
     rotateIfNeeded(runtimeLogPath);
-    fs.appendFileSync(runtimeLogPath, line + '\n', 'utf8');
+    appendLineAsync(runtimeLogPath, line + '\n');
   } catch {
     // Ignore I/O errors in logging path.
   }

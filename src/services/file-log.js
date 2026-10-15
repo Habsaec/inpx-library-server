@@ -3,6 +3,7 @@ import util from 'node:util';
 import path from 'node:path';
 import { config } from '../config.js';
 import { rotateIfNeeded } from '../utils/log-rotate.js';
+import { appendLineAsync } from '../utils/async-log-append.js';
 
 /** Строки с этими маркерами дублируются в data/index.log (индексация без консоли). */
 const MIRROR_MARKERS = [
@@ -69,7 +70,7 @@ function safeAppendText(logPath, line) {
   try {
     fs.mkdirSync(config.dataDir, { recursive: true });
     rotateIfNeeded(logPath);
-    fs.appendFileSync(logPath, line, 'utf8');
+    appendLineAsync(logPath, line);
   } catch {
     /* нет места и т.п. */
   }
