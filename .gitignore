@@ -21,3 +21,10 @@ test-data-debug/
 .idea/
 .windsurf/
 .vscode/
+
+# Local agent tooling
+.github/skills/
+.github/agents/
+.github/hooks/
+.agents/
+.impeccable/
