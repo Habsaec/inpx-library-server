@@ -153,6 +153,8 @@ export const config = {
   coverMaxWidth: parseEnvInt('COVER_MAX_WIDTH', process.env.COVER_MAX_WIDTH, 220, { min: 32, max: 1200 }),
   coverMaxHeight: parseEnvInt('COVER_MAX_HEIGHT', process.env.COVER_MAX_HEIGHT, 320, { min: 32, max: 1600 }),
   coverQuality: parseEnvInt('COVER_QUALITY', process.env.COVER_QUALITY, 86, { min: 1, max: 100 }),
+  coverThumbDiskTtlDays: parseEnvInt('COVER_THUMB_DISK_TTL_DAYS', process.env.COVER_THUMB_DISK_TTL_DAYS, 30, { min: 1, max: 3650 }),
+  coverThumbDiskCacheMb: parseEnvInt('COVER_THUMB_DISK_CACHE_MB', process.env.COVER_THUMB_DISK_CACHE_MB, 2048, { min: 64, max: 102400 }),
 
   // ── Scan scheduler ───────────────────────────────
   scanIntervalHours: parseEnvInt('SCAN_INTERVAL_HOURS', process.env.SCAN_INTERVAL_HOURS, 0, { min: 0, max: 8760 }),

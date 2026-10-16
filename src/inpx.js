@@ -28,6 +28,7 @@ import {
   beginExclusiveOperation,
   endExclusiveOperation,
   refreshCatalogBookCounts,
+  isActiveBooksProjectionFresh,
   adjustCatalogCountsForBook,
   isBookInActiveView,
   getLibraryStatsSnapshot,
@@ -4266,6 +4267,7 @@ export function searchBooks({
   };
 
   if (!query.trim()) {
+    const browseBooksView = isActiveBooksProjectionFresh() ? 'catalog_active_books' : 'active_books';
     const whereParts = [];
     const whereParams = [];
     if (genreFilter) { whereParts.push(genreFilter.where.replace(/active_books\./g, 'b.')); whereParams.push(...genreFilter.params); }
@@ -4283,21 +4285,23 @@ export function searchBooks({
 
     /* Без фильтров total одинаков для всех страниц листания — не считать 600k строк на каждую. */
     const memoTotal = !whereSql && mode === 'exact';
-    const { total } = memoTotal && _browseTotalMemo && (Date.now() - _browseTotalMemo.at) < PAGE_CACHE_TTL_MS
+    const { total } = memoTotal && _browseTotalMemo
+      && _browseTotalMemo.source === browseBooksView
+      && (Date.now() - _browseTotalMemo.at) < PAGE_CACHE_TTL_MS
       ? _browseTotalMemo
       : resolveSqlTotal(
-        `SELECT COUNT(*) AS count FROM active_books b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
+        `SELECT COUNT(*) AS count FROM ${browseBooksView} b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
         gfParams,
-        `SELECT 1 FROM active_books b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
+        `SELECT 1 FROM ${browseBooksView} b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
         gfParams
       );
-    if (memoTotal) _browseTotalMemo = { total, at: Date.now() };
+    if (memoTotal) _browseTotalMemo = { total, at: Date.now(), source: browseBooksView };
 
     const items = db
       .prepare(
         `
       SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
-      FROM active_books b
+      FROM ${browseBooksView} b
       LEFT JOIN sources s ON s.id = b.source_id
       ${whereSql}
       ORDER BY ${listOrderBy}

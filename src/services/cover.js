@@ -63,7 +63,7 @@ export function getCoverQuality() {
 }
 
 const COVER_THUMB_CACHE_TTL_MS = 30 * 60_000;
-const COVER_THUMB_DISK_TTL_MS = 7 * 24 * 60 * 60_000;
+const COVER_THUMB_DISK_TTL_MS = config.coverThumbDiskTtlDays * 24 * 60 * 60_000;
 const COVER_THUMB_DISK_DIR = path.join(config.dataDir, 'cover-thumb-cache');
 const coverThumbCache = new Map();
 let coverThumbDiskReady = false;
