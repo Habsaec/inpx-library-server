@@ -243,6 +243,8 @@ docker compose up -d
 | `SCAN_INTERVAL_HOURS` | `0` | Автоскан каждые N часов (0 = выкл.) |
 | `FOLDER_WATCH` | `1` | Слежение за папочными источниками: после изменений запускается инкрементальная индексация (`0` = выкл.) |
 | `FOLDER_WATCH_QUIET_SEC` | `120` | Сколько секунд без изменений ждать перед индексацией (10–3600) |
+| `COVER_THUMB_DISK_TTL_DAYS` | `30` | Сколько дней хранить миниатюры обложек на диске (`data/cover-thumb-cache`) |
+| `COVER_THUMB_DISK_CACHE_MB` | `2048` | Лимит дискового кэша миниатюр, МБ: сверх лимита удаляются самые старые |
 | `EVENTS_STDOUT` | `true` | События в stdout (`docker logs`) |
 | `HEALTH_MINIMAL` | `false` | Минимальный `/health` |
 | `CLUSTER_WORKERS` | `0` | Воркеры кластера (0 = один процесс) |

@@ -6,7 +6,9 @@ import {
   setSetting,
   getSetting,
   rebuildActiveBooksView,
-  isActiveBooksProjectionFresh
+  isActiveBooksProjectionFresh,
+  ensureActiveBooksProjection,
+  refreshCatalogBookCounts
 } from '../src/db.js';
 import { searchCatalog } from '../src/inpx.js';
 
@@ -75,4 +77,36 @@ test('plain catalog falls back to the dynamic view while the projection is dirty
   const result = searchCatalog({ query: '', field: 'books', page: 1, pageSize: 24 });
   assert.ok(result.items.some((book) => book.id === id));
   db.prepare('DELETE FROM books WHERE id = ?').run(id);
+});
+
+const visibleInProjection = (id) => Boolean(db.prepare('SELECT 1 FROM active_book_ids WHERE book_id = ?').get(id));
+
+test('refreshCatalogBookCounts never rebuilds the projection synchronously; ensure() republishes it', async () => {
+  const id = 'projection-refresh-ru';
+  insertBook(id, 'ru', 'projection refresh');
+  assert.equal(isActiveBooksProjectionFresh(), false);
+  await refreshCatalogBookCounts();
+  assert.equal(isActiveBooksProjectionFresh(), false, 'only a debounced background rebuild is scheduled');
+
+  assert.equal(await ensureActiveBooksProjection(), true);
+  assert.equal(isActiveBooksProjectionFresh(), true);
+  assert.equal(visibleInProjection(id), true);
+  assert.equal(visibleInProjection(EN_ID), false, 'excluded language stays hidden');
+  db.prepare('DELETE FROM books WHERE id = ?').run(id);
+  assert.equal(isActiveBooksProjectionFresh(), false);
+  await ensureActiveBooksProjection();
+  assert.equal(visibleInProjection(id), false);
+});
+
+test('a write that races with a rebuild is never published as fresh', async () => {
+  const id = 'projection-race-ru';
+  insertBook('projection-race-tmp', 'ru', 'projection race tmp');
+  db.prepare('DELETE FROM books WHERE id = ?').run('projection-race-tmp'); // makes the projection stale
+  const rebuilding = ensureActiveBooksProjection(); // first (sync) part already marked the state as "building"
+  insertBook(id, 'ru', 'projection race');
+  assert.equal(isActiveBooksProjectionFresh(), false);
+  assert.equal(await rebuilding, true, 'a follow-up pass picks the new book up');
+  assert.equal(visibleInProjection(id), true);
+  db.prepare('DELETE FROM books WHERE id = ?').run(id);
+  await ensureActiveBooksProjection();
 });

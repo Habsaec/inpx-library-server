@@ -1537,13 +1537,21 @@ export function isActiveBooksProjectionFresh() {
   }
 }
 
+const ACTIVE_BOOKS_PROJECTION_CHUNK_ROWS = 20_000;
+const ACTIVE_BOOKS_PROJECTION_MAX_PASSES = 3;
+let _activeBooksProjectionPromise = null;
+let _activeBooksProjectionTimer = null;
+
 /**
- * Materialize the expensive language/genre visibility predicate for the plain
- * catalog. The global active_books view stays dynamic for write-heavy code and
- * compatibility; catalog browsing uses this projection only while it is fresh.
+ * One pass of the projection rebuild. The state row goes 1 (dirty) → 2 (building) → 0 (fresh):
+ * any write to the source tables while building flips it back to 1 (triggers fire on `dirty != 1`),
+ * so a pass that raced with a write never publishes a half-valid projection. Work is chunked by
+ * `books.rowid` with a yield between chunks — on 500k+ books a single sync INSERT…SELECT would
+ * freeze the HTTP event loop for seconds. Readers use the dynamic `active_books` view meanwhile.
  */
-export function rebuildActiveBooksProjection() {
+async function buildActiveBooksProjectionPass() {
   const { excluded, excludedGenres, showDeleted, langs, genres } = readActiveBooksFilters();
+  const fingerprint = `${ACTIVE_BOOKS_PROJECTION_VERSION}\n${excluded}\n${excludedGenres}\n${showDeleted ? '1' : '0'}`;
   const langFilter = langs.length > 0
     ? ` AND (b.lang IS NULL OR TRIM(b.lang) = '' OR b.lang NOT IN (SELECT value FROM excluded_filters WHERE type = 'lang'))`
     : '';
@@ -1553,34 +1561,80 @@ export function rebuildActiveBooksProjection() {
   const deletedFilter = showDeleted
     ? ` AND (b.deleted = 0 OR NOT EXISTS (SELECT 1 FROM suppressed_books sp WHERE sp.book_id = b.id))`
     : ' AND b.deleted = 0';
+  const yieldLoop = () => new Promise((resolve) => setImmediate(resolve));
 
   const started = Date.now();
-  const rebuild = db.transaction(() => {
+  db.transaction(() => {
     db.exec('DELETE FROM excluded_filters');
     const insertFilter = db.prepare('INSERT OR IGNORE INTO excluded_filters (type, value) VALUES (?, ?)');
     for (const lang of langs) insertFilter.run('lang', lang);
     for (const genre of genres) insertFilter.run('genre', genre);
+    db.prepare('UPDATE active_books_projection_state SET dirty = 2 WHERE id = 1').run();
+  })();
 
-    db.exec('DELETE FROM active_book_ids');
-    db.exec(`
-      INSERT INTO active_book_ids(book_id)
-      SELECT b.id
-      FROM books b
-      LEFT JOIN sources s ON s.id = b.source_id
-      WHERE (b.source_id IS NULL OR s.enabled = 1)${deletedFilter}${langFilter}${genreFilter}
-    `);
-    db.prepare('UPDATE active_books_projection_state SET dirty = 0 WHERE id = 1').run();
-    setMeta(
-      'active_books_projection_fp',
-      `${ACTIVE_BOOKS_PROJECTION_VERSION}\n${excluded}\n${excludedGenres}\n${showDeleted ? '1' : '0'}`
-    );
-    return Number(db.prepare('SELECT COUNT(*) AS n FROM active_book_ids').get()?.n || 0);
-  });
-  const count = rebuild();
-  for (const cb of _viewResetCallbacks) cb();
-  const elapsedMs = Date.now() - started;
-  console.log(`[db] active_books projection: ${count} books in ${elapsedMs} ms`);
-  return { count, elapsedMs };
+  const clear = db.prepare('DELETE FROM active_book_ids WHERE book_id IN (SELECT book_id FROM active_book_ids LIMIT ?)');
+  while (clear.run(ACTIVE_BOOKS_PROJECTION_CHUNK_ROWS).changes > 0) await yieldLoop();
+
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO active_book_ids(book_id)
+    SELECT b.id
+    FROM books b
+    LEFT JOIN sources s ON s.id = b.source_id
+    WHERE b.rowid >= ? AND b.rowid < ?
+      AND (b.source_id IS NULL OR s.enabled = 1)${deletedFilter}${langFilter}${genreFilter}
+  `);
+  const range = db.prepare('SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM books').get();
+  if (range?.lo != null) {
+    for (let lo = range.lo; lo <= range.hi; lo += ACTIVE_BOOKS_PROJECTION_CHUNK_ROWS) {
+      insert.run(lo, lo + ACTIVE_BOOKS_PROJECTION_CHUNK_ROWS);
+      await yieldLoop();
+    }
+  }
+
+  const published = db.transaction(() => {
+    if (getActiveBooksProjectionFingerprint() !== fingerprint) return false; // filters changed meanwhile
+    if (db.prepare('UPDATE active_books_projection_state SET dirty = 0 WHERE id = 1 AND dirty = 2').run().changes !== 1) {
+      return false; // books/sources/genres changed while building
+    }
+    setMeta('active_books_projection_fp', fingerprint);
+    return true;
+  })();
+  console.log(`[db] active_books projection pass: ${published ? 'published' : 'stale, will retry'} in ${Date.now() - started} ms`);
+  return published;
+}
+
+/**
+ * Materialize the expensive language/genre visibility predicate for the plain
+ * catalog. The global active_books view stays dynamic for write-heavy code and
+ * compatibility; catalog browsing uses this projection only while it is fresh.
+ * Single-flight, non-blocking: resolves once the projection is fresh (or after a few raced passes).
+ */
+export function ensureActiveBooksProjection() {
+  if (!_activeBooksProjectionPromise) {
+    _activeBooksProjectionPromise = (async () => {
+      try {
+        let rebuilt = false;
+        for (let pass = 0; pass < ACTIVE_BOOKS_PROJECTION_MAX_PASSES && !isActiveBooksProjectionFresh(); pass += 1) {
+          rebuilt = (await buildActiveBooksProjectionPass()) || rebuilt;
+        }
+        if (rebuilt) for (const cb of _viewResetCallbacks) cb();
+        return isActiveBooksProjectionFresh();
+      } finally {
+        _activeBooksProjectionPromise = null;
+      }
+    })();
+  }
+  return _activeBooksProjectionPromise;
+}
+
+/** Debounced background rebuild (boot, after indexing, single-book edits); does nothing when already fresh. */
+export function scheduleActiveBooksProjection(delayMs = 15_000) {
+  if (_activeBooksProjectionTimer || isActiveBooksProjectionFresh()) return;
+  _activeBooksProjectionTimer = setTimeout(() => {
+    _activeBooksProjectionTimer = null;
+    ensureActiveBooksProjection().catch((err) => console.warn('[db] active_books projection rebuild failed:', err.message));
+  }, delayMs);
+  _activeBooksProjectionTimer.unref?.();
 }
 
 export function initDb() {
@@ -1913,49 +1967,57 @@ WHERE rp.progress >= 99
       dirty INTEGER NOT NULL DEFAULT 1
     );
     INSERT OR IGNORE INTO active_books_projection_state(id, dirty) VALUES(1, 1);
+    /* Триггеры пересоздаются на каждом старте: в них смысл dirty (0 свежо / 1 устарело / 2 строится). */
+    DROP TRIGGER IF EXISTS active_books_projection_books_insert;
+    DROP TRIGGER IF EXISTS active_books_projection_books_update;
+    DROP TRIGGER IF EXISTS active_books_projection_books_delete;
+    DROP TRIGGER IF EXISTS active_books_projection_sources_change;
+    DROP TRIGGER IF EXISTS active_books_projection_genres_insert;
+    DROP TRIGGER IF EXISTS active_books_projection_genres_delete;
+    DROP TRIGGER IF EXISTS active_books_projection_genre_name;
+    DROP TRIGGER IF EXISTS active_books_projection_suppressed_insert;
+    DROP TRIGGER IF EXISTS active_books_projection_suppressed_delete;
     CREATE VIEW IF NOT EXISTS catalog_active_books AS
       SELECT b.* FROM books b JOIN active_book_ids visible ON visible.book_id = b.id;
 
     CREATE TRIGGER IF NOT EXISTS active_books_projection_books_insert
       AFTER INSERT ON books BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_books_update
       AFTER UPDATE ON books BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_books_delete
       AFTER DELETE ON books BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_sources_change
       AFTER UPDATE OF enabled ON sources BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_genres_insert
       AFTER INSERT ON book_genres BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_genres_delete
       AFTER DELETE ON book_genres BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_genre_name
       AFTER UPDATE OF name ON genres_catalog BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_suppressed_insert
       AFTER INSERT ON suppressed_books BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
     CREATE TRIGGER IF NOT EXISTS active_books_projection_suppressed_delete
       AFTER DELETE ON suppressed_books BEGIN
-        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty != 1;
       END;
   `);
-  if (!isActiveBooksProjectionFresh()) {
-    rebuildActiveBooksProjection();
-  }
+  scheduleActiveBooksProjection(2000); // chunked in the background; browse uses the dynamic view until then
 
   ensureBooksFtsTriggers();
   ensureSearchTitleTokensTable();
@@ -3145,8 +3207,9 @@ export async function rebuildActiveBooksView() {
   db.exec('DROP VIEW IF EXISTS active_books');
   db.exec(`CREATE VIEW active_books AS SELECT b.* FROM books b LEFT JOIN sources s ON s.id = b.source_id WHERE (b.source_id IS NULL OR s.enabled = 1)${deletedFilter}${langFilter}${genreFilter}`);
   resetDbPreparedStatements();
-  rebuildActiveBooksProjection();
-  await refreshCatalogBookCounts({ rebuildProjection: false });
+  for (const cb of _viewResetCallbacks) cb();
+  await ensureActiveBooksProjection();
+  await refreshCatalogBookCounts();
   setMeta('active_books_filter_fp', `v2\n${excluded || ''}\n${excludedGenres || ''}\n${showDeleted ? '1' : '0'}`);
 }
 
@@ -3212,8 +3275,8 @@ async function writeLibraryStatsSnapshotOffThread() {
   }
 }
 
-export async function refreshCatalogBookCounts({ onProgress, rebuildProjection = true } = {}) {
-  if (rebuildProjection) rebuildActiveBooksProjection();
+export async function refreshCatalogBookCounts({ onProgress } = {}) {
+  scheduleActiveBooksProjection();
   console.log('[index] catalog: пересчёт book_count (authors, series, genres)…');
   const t0 = Date.now();
 
