@@ -957,10 +957,18 @@ export async function readFlibustaCover(libraryRoot, archiveName, libIdOrKeys) {
     let data = buf;
     let contentType = sniffImageMime(buf);
     if (contentType === 'image/jxl') {
-      const png = decodeJxlToPngBuffer(buf);
-      if (!png?.length) return null;
-      data = png;
-      contentType = 'image/png';
+      // libjxl runs in a worker so a cold cover cannot stall the HTTP event loop.
+      const viaWorker = await decodeJxlInWorker(buf);
+      if (viaWorker?.data?.length) {
+        data = viaWorker.data;
+        contentType = viaWorker.contentType;
+      } else {
+        // Compatibility fallback for disabled/unavailable worker pools.
+        const png = decodeJxlToPngBuffer(buf);
+        if (!png?.length) return null;
+        data = png;
+        contentType = 'image/png';
+      }
     }
     if (!data?.length || contentType === 'application/octet-stream') return null;
     const out = { contentType, data };

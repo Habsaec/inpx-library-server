@@ -1506,6 +1506,83 @@ function ensureLibRateColumn() {
   }
 }
 
+const ACTIVE_BOOKS_PROJECTION_VERSION = 'v1';
+
+function readActiveBooksFilters() {
+  const read = db.prepare('SELECT value FROM settings WHERE key = ?');
+  const excluded = read.get('excluded_languages')?.value || '';
+  const excludedGenres = read.get('excluded_genres')?.value || '';
+  const showDeleted = read.get('show_deleted_books')?.value === '1';
+  return {
+    excluded,
+    excludedGenres,
+    showDeleted,
+    langs: excluded.split(',').map((s) => s.trim()).filter(Boolean),
+    genres: excludedGenres.split(',').map((s) => s.trim()).filter(Boolean)
+  };
+}
+
+export function getActiveBooksProjectionFingerprint() {
+  const { excluded, excludedGenres, showDeleted } = readActiveBooksFilters();
+  return `${ACTIVE_BOOKS_PROJECTION_VERSION}\n${excluded}\n${excludedGenres}\n${showDeleted ? '1' : '0'}`;
+}
+
+export function isActiveBooksProjectionFresh() {
+  try {
+    const dirty = Number(db.prepare('SELECT dirty FROM active_books_projection_state WHERE id = 1').get()?.dirty ?? 1);
+    return dirty === 0
+      && getMeta('active_books_projection_fp') === getActiveBooksProjectionFingerprint();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Materialize the expensive language/genre visibility predicate for the plain
+ * catalog. The global active_books view stays dynamic for write-heavy code and
+ * compatibility; catalog browsing uses this projection only while it is fresh.
+ */
+export function rebuildActiveBooksProjection() {
+  const { excluded, excludedGenres, showDeleted, langs, genres } = readActiveBooksFilters();
+  const langFilter = langs.length > 0
+    ? ` AND (b.lang IS NULL OR TRIM(b.lang) = '' OR b.lang NOT IN (SELECT value FROM excluded_filters WHERE type = 'lang'))`
+    : '';
+  const genreFilter = genres.length > 0
+    ? ` AND (NOT EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id) OR EXISTS (SELECT 1 FROM book_genres bg JOIN genres_catalog gc ON gc.id = bg.genre_id WHERE bg.book_id = b.id AND gc.name NOT IN (SELECT value FROM excluded_filters WHERE type = 'genre')))`
+    : '';
+  const deletedFilter = showDeleted
+    ? ` AND (b.deleted = 0 OR NOT EXISTS (SELECT 1 FROM suppressed_books sp WHERE sp.book_id = b.id))`
+    : ' AND b.deleted = 0';
+
+  const started = Date.now();
+  const rebuild = db.transaction(() => {
+    db.exec('DELETE FROM excluded_filters');
+    const insertFilter = db.prepare('INSERT OR IGNORE INTO excluded_filters (type, value) VALUES (?, ?)');
+    for (const lang of langs) insertFilter.run('lang', lang);
+    for (const genre of genres) insertFilter.run('genre', genre);
+
+    db.exec('DELETE FROM active_book_ids');
+    db.exec(`
+      INSERT INTO active_book_ids(book_id)
+      SELECT b.id
+      FROM books b
+      LEFT JOIN sources s ON s.id = b.source_id
+      WHERE (b.source_id IS NULL OR s.enabled = 1)${deletedFilter}${langFilter}${genreFilter}
+    `);
+    db.prepare('UPDATE active_books_projection_state SET dirty = 0 WHERE id = 1').run();
+    setMeta(
+      'active_books_projection_fp',
+      `${ACTIVE_BOOKS_PROJECTION_VERSION}\n${excluded}\n${excludedGenres}\n${showDeleted ? '1' : '0'}`
+    );
+    return Number(db.prepare('SELECT COUNT(*) AS n FROM active_book_ids').get()?.n || 0);
+  });
+  const count = rebuild();
+  for (const cb of _viewResetCallbacks) cb();
+  const elapsedMs = Date.now() - started;
+  console.log(`[db] active_books projection: ${count} books in ${elapsedMs} ms`);
+  return { count, elapsedMs };
+}
+
 export function initDb() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS books (
@@ -1820,12 +1897,64 @@ WHERE rp.progress >= 99
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(SCHEMA_BOOT_KEY);
   }
-  // Fast path: recreate view only if unexpectedly missing.
   const hasActiveBooksView = Boolean(
     db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'active_books'`).get()
   );
   if (!hasActiveBooksView) {
     db.exec(`CREATE VIEW active_books AS SELECT b.* FROM books b LEFT JOIN sources s ON s.id = b.source_id WHERE b.deleted = 0 AND (b.source_id IS NULL OR s.enabled = 1)`);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS active_book_ids (
+      book_id TEXT PRIMARY KEY
+    ) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS active_books_projection_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      dirty INTEGER NOT NULL DEFAULT 1
+    );
+    INSERT OR IGNORE INTO active_books_projection_state(id, dirty) VALUES(1, 1);
+    CREATE VIEW IF NOT EXISTS catalog_active_books AS
+      SELECT b.* FROM books b JOIN active_book_ids visible ON visible.book_id = b.id;
+
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_books_insert
+      AFTER INSERT ON books BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_books_update
+      AFTER UPDATE ON books BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_books_delete
+      AFTER DELETE ON books BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_sources_change
+      AFTER UPDATE OF enabled ON sources BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_genres_insert
+      AFTER INSERT ON book_genres BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_genres_delete
+      AFTER DELETE ON book_genres BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_genre_name
+      AFTER UPDATE OF name ON genres_catalog BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_suppressed_insert
+      AFTER INSERT ON suppressed_books BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+    CREATE TRIGGER IF NOT EXISTS active_books_projection_suppressed_delete
+      AFTER DELETE ON suppressed_books BEGIN
+        UPDATE active_books_projection_state SET dirty = 1 WHERE id = 1 AND dirty = 0;
+      END;
+  `);
+  if (!isActiveBooksProjectionFresh()) {
+    rebuildActiveBooksProjection();
   }
 
   ensureBooksFtsTriggers();
@@ -3016,8 +3145,8 @@ export async function rebuildActiveBooksView() {
   db.exec('DROP VIEW IF EXISTS active_books');
   db.exec(`CREATE VIEW active_books AS SELECT b.* FROM books b LEFT JOIN sources s ON s.id = b.source_id WHERE (b.source_id IS NULL OR s.enabled = 1)${deletedFilter}${langFilter}${genreFilter}`);
   resetDbPreparedStatements();
-  for (const cb of _viewResetCallbacks) cb();
-  await refreshCatalogBookCounts();
+  rebuildActiveBooksProjection();
+  await refreshCatalogBookCounts({ rebuildProjection: false });
   setMeta('active_books_filter_fp', `v2\n${excluded || ''}\n${excludedGenres || ''}\n${showDeleted ? '1' : '0'}`);
 }
 
@@ -3083,7 +3212,8 @@ async function writeLibraryStatsSnapshotOffThread() {
   }
 }
 
-export async function refreshCatalogBookCounts({ onProgress } = {}) {
+export async function refreshCatalogBookCounts({ onProgress, rebuildProjection = true } = {}) {
+  if (rebuildProjection) rebuildActiveBooksProjection();
   console.log('[index] catalog: пересчёт book_count (authors, series, genres)…');
   const t0 = Date.now();
 

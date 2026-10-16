@@ -1,13 +1,20 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { initDb, db, setSetting, getSetting, rebuildActiveBooksView } from '../src/db.js';
+import {
+  initDb,
+  db,
+  setSetting,
+  getSetting,
+  rebuildActiveBooksView,
+  isActiveBooksProjectionFresh
+} from '../src/db.js';
 import { searchCatalog } from '../src/inpx.js';
 
 const TITLE = 'скрытаякнигаязык';
 const RU_ID = 'hidden-lang-ru';
 const EN_ID = 'hidden-lang-en';
 
-function insertBook(id, lang) {
+function insertBook(id, lang, title = TITLE) {
   db.prepare(`
     INSERT INTO books (
       id, title, authors, genres, series, series_no, title_sort, author_sort,
@@ -21,7 +28,7 @@ function insertBook(id, lang) {
       '', '', ?, 'a.zip', 1, ?, 0,
       'fb2', '', ?, '', 0, NULL
     )
-  `).run(id, TITLE, TITLE, TITLE, `${id}.fb2`, id, lang);
+  `).run(id, title, title, title, `${id}.fb2`, id, lang);
 }
 
 let prevExcluded = '';
@@ -52,4 +59,20 @@ test('search total skips books in excluded languages', () => {
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].id, RU_ID);
   assert.equal(result.total, result.items.length);
+});
+
+test('plain catalog uses the fresh visibility projection', () => {
+  assert.equal(isActiveBooksProjectionFresh(), true);
+  const result = searchCatalog({ query: '', field: 'books', page: 1, pageSize: 24 });
+  assert.ok(result.items.some((book) => book.id === RU_ID));
+  assert.ok(!result.items.some((book) => book.id === EN_ID));
+});
+
+test('plain catalog falls back to the dynamic view while the projection is dirty', () => {
+  const id = 'projection-dirty-ru';
+  insertBook(id, 'ru', 'projection dirty fallback');
+  assert.equal(isActiveBooksProjectionFresh(), false);
+  const result = searchCatalog({ query: '', field: 'books', page: 1, pageSize: 24 });
+  assert.ok(result.items.some((book) => book.id === id));
+  db.prepare('DELETE FROM books WHERE id = ?').run(id);
 });

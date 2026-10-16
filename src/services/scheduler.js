@@ -27,13 +27,16 @@ let _triggerScanFn = null;
 let coverThumbGcTimer = null;
 let _nextRunAt = null; // ISO string или null
 
-const COVER_THUMB_DISK_TTL_MS = 7 * 24 * 60 * 60_000;
+const COVER_THUMB_DISK_TTL_MS = config.coverThumbDiskTtlDays * 24 * 60 * 60_000;
+const COVER_THUMB_DISK_MAX_BYTES = config.coverThumbDiskCacheMb * 1024 * 1024;
 const COVER_THUMB_GC_INTERVAL_MS = 24 * 60 * 60_000; // раз в сутки
 
-async function gcCoverThumbDiskCache() {
+export async function gcCoverThumbDiskCache() {
   const root = path.join(config.dataDir, 'cover-thumb-cache');
   let removed = 0;
+  let removedBytes = 0;
   let scanned = 0;
+  const live = [];
   try {
     const subDirs = await fs.promises.readdir(root).catch(() => []);
     const now = Date.now();
@@ -53,14 +56,39 @@ async function gcCoverThumbDiskCache() {
           if (now - st.mtimeMs > COVER_THUMB_DISK_TTL_MS) {
             await fs.promises.unlink(abs).catch(() => {});
             removed += 1;
+            removedBytes += st.size;
+          } else if (st.isFile()) {
+            live.push({ abs, size: st.size, mtimeMs: st.mtimeMs });
           }
         } catch {
           /* ignore */
         }
       }
     }
+    let liveBytes = live.reduce((sum, item) => sum + item.size, 0);
+    if (liveBytes > COVER_THUMB_DISK_MAX_BYTES) {
+      live.sort((a, b) => a.mtimeMs - b.mtimeMs);
+      for (const item of live) {
+        if (liveBytes <= COVER_THUMB_DISK_MAX_BYTES) break;
+        try {
+          await fs.promises.unlink(item.abs);
+          liveBytes -= item.size;
+          removed += 1;
+          removedBytes += item.size;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     if (removed > 0 || scanned > 0) {
-      logSystemEvent('info', 'scheduler', 'cover-thumb disk GC', { scanned, removed });
+      logSystemEvent('info', 'scheduler', 'cover-thumb disk GC', {
+        scanned,
+        removed,
+        removedBytes,
+        liveBytes,
+        maxBytes: COVER_THUMB_DISK_MAX_BYTES,
+        ttlDays: config.coverThumbDiskTtlDays
+      });
     }
   } catch (err) {
     logSystemEvent('warn', 'scheduler', 'cover-thumb disk GC failed', { error: err.message });
