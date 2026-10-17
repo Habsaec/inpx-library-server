@@ -46,6 +46,7 @@ import {
   invalidateBooksFtsHealthCache,
   ensureSearchTitleTokensTable,
   scheduleBootFtsRecoveryIfNeeded,
+  catalogNameTokensReady,
 } from './db.js';
 import { appendStemmedSearchTokens, expandSearchTokenVariants } from './search-stem.js';
 import { filterSearchContentTokens, normalizeLookalikeSortKey } from './search-normalize.js';
@@ -1492,15 +1493,43 @@ function getAuthorsByTokenSubsetStmt(tokenCount) {
   return _authorsByTokenSubsetStmtCache.get(tokenCount);
 }
 
+const _authorsByNameTokenStmtCache = new Map();
+
+function tokensLongestFirst(tokens) {
+  return [...tokens].sort((a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** Indexed whole-word lookup. Same rows as the LIKE scan, without reading every author. */
+function getAuthorsByNameTokenStmt(extraCount) {
+  if (!_authorsByNameTokenStmtCache.has(extraCount)) {
+    const exists = Array.from({ length: extraCount }, (_, i) =>
+      `AND EXISTS (SELECT 1 FROM author_name_tokens x${i} WHERE x${i}.token = ? AND x${i}.author_id = a.id)`
+    ).join('\n');
+    _authorsByNameTokenStmtCache.set(extraCount, db.prepare(`
+      SELECT a.name AS name,
+             COALESCE(a.display_name, a.name) AS displayName,
+             a.sort_name AS sort_name,
+             a.book_count AS book_count
+      FROM author_name_tokens t
+      JOIN authors a ON a.id = t.author_id
+      WHERE t.token = ? AND a.book_count > 0
+      ${exists}
+      ORDER BY a.book_count DESC
+      LIMIT 48
+    `));
+  }
+  return _authorsByNameTokenStmtCache.get(extraCount);
+}
+
 function findAuthorsMatchingTokenSubset(value = '', { requireBooks = true } = {}) {
   if (parseAuthorInitialPattern(value)) return [];
 
   const tokens = authorQueryTokensForSubset(value);
   if (tokens.length < 2) return [];
 
-  const rows = getAuthorsByTokenSubsetStmt(tokens.length).all(
-    ...tokens.map((token) => `% ${token}%`)
-  );
+  const rows = catalogNameTokensReady()
+    ? getAuthorsByNameTokenStmt(tokens.length - 1).all(...tokensLongestFirst(tokens))
+    : getAuthorsByTokenSubsetStmt(tokens.length).all(...tokens.map((token) => `% ${token}%`));
 
   return rows
     .map((row) => ({
@@ -5652,7 +5681,11 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
     }
 
     const subsetMatches = findAuthorsMatchingTokenSubset(parsed.value || query);
-    if (subsetMatches.length) {
+    /* Пустой ответ словаря — это ноль совпадений. Нельзя падать в LIKE '%слово%':
+       на промахе он снова читает всех авторов (сотни миллисекунд на большой библиотеке). */
+    const tokenLookup = catalogNameTokensReady()
+      && authorQueryTokensForSubset(parsed.value || query).length >= 2;
+    if (subsetMatches.length || tokenLookup) {
       return paginateAuthorSearchMatches(
         subsetMatches,
         { offset, pageSize, sort, order, letterNorm, scoreKey: 'subsetScore' }
@@ -5803,6 +5836,29 @@ export function listAuthors({ page = 1, pageSize = 50, query = '', sort = 'name'
  *   Когда true — только название серии (без смешанного «автор + серия»).
  *   Для OPDS «поиск по сериям».
  */
+/** Series whose search_name words start with every query token. */
+function seriesNameTokenSearch(tokens) {
+  const ordered = tokensLongestFirst(tokens);
+  const head = authorColumnPrefixClause('t.token', ordered[0]);
+  const params = [...head.params];
+  const rest = [];
+  for (let i = 1; i < ordered.length; i += 1) {
+    const clause = authorColumnPrefixClause(`t${i}.token`, ordered[i]);
+    rest.push(`EXISTS (
+      SELECT 1 FROM series_name_tokens t${i}
+      WHERE t${i}.series_id = t.series_id AND ${clause.sql}
+    )`);
+    params.push(...clause.params);
+  }
+  return {
+    where: `s.id IN (
+      SELECT t.series_id FROM series_name_tokens t
+      WHERE ${head.sql}${rest.length ? ` AND ${rest.join(' AND ')}` : ''}
+    )`,
+    params
+  };
+}
+
 export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'name', order = '', letter = '', nameOnly = false, skipTotal = false } = {}) {
   const offset = (page - 1) * pageSize;
   const parsed = parseSearchOperator(query);
@@ -5863,6 +5919,16 @@ export function listSeries({ page = 1, pageSize = 50, query = '', sort = 'name',
       nameSearch = { where: hit.clause.sql, params: hit.clause.params };
       seriesKnownTotal = hit.total;
     }
+  }
+  if (!nameSearch
+    && needleTokens.length >= 2
+    && parsed.operator !== '='
+    && parsed.operator !== '*'
+    && needleTokens.every((token) => token.length >= 3)
+    && catalogNameTokensReady()
+  ) {
+    /* Слова серии целиком (префикс слова), а не LIKE '%слово%' по всему каталогу. */
+    nameSearch = seriesNameTokenSearch(needleTokens);
   }
   if (!nameSearch) nameSearch = buildCatalogSearchSql('s.search_name', query);
 

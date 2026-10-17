@@ -2021,6 +2021,7 @@ WHERE rp.progress >= 99
 
   ensureBooksFtsTriggers();
   ensureSearchTitleTokensTable();
+  ensureCatalogNameTokens();
 
   // FTS rebuild after crash can take minutes on large libraries — defer until HTTP is up.
   scheduleBootFtsRecoveryIfNeeded();
@@ -2036,6 +2037,148 @@ export function ensureSearchTitleTokensTable() {
       freq INTEGER NOT NULL DEFAULT 0
     );
   `);
+}
+
+const CATALOG_NAME_TOKENS_META = 'catalog_name_tokens_ready';
+const CATALOG_TOKEN_SOURCES = [
+  { table: 'authors', nameCol: 'sort_name', tokenTable: 'author_name_tokens', ownerCol: 'author_id' },
+  { table: 'series_catalog', nameCol: 'search_name', tokenTable: 'series_name_tokens', ownerCol: 'series_id' }
+];
+let _catalogNameTokensReady = false;
+let _catalogTokenBackfillScheduled = false;
+
+function catalogTokenSplitSql(nameExpr) {
+  return `
+    WITH RECURSIVE parts(rest, tok, n) AS (
+      SELECT TRIM(COALESCE(${nameExpr}, '')) || ' ', '', 0
+      UNION ALL
+      SELECT substr(rest, instr(rest, ' ') + 1),
+             TRIM(substr(rest, 1, instr(rest, ' ') - 1)),
+             n + 1
+      FROM parts
+      WHERE instr(rest, ' ') > 0 AND n < 24
+    )
+    SELECT tok FROM parts WHERE tok != ''
+  `;
+}
+
+function installCatalogTokenTriggers(spec) {
+  const { table, nameCol, tokenTable, ownerCol } = spec;
+  db.exec(`DROP TRIGGER IF EXISTS ${tokenTable}_ai`);
+  db.exec(`DROP TRIGGER IF EXISTS ${tokenTable}_au`);
+  db.exec(`DROP TRIGGER IF EXISTS ${tokenTable}_ad`);
+  db.exec(`
+    CREATE TRIGGER ${tokenTable}_ai
+    AFTER INSERT ON ${table}
+    BEGIN
+      INSERT OR IGNORE INTO ${tokenTable}(token, ${ownerCol})
+      SELECT tok, NEW.id FROM (${catalogTokenSplitSql(`NEW.${nameCol}`)}) AS split_tok;
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER ${tokenTable}_au
+    AFTER UPDATE OF ${nameCol} ON ${table}
+    WHEN IFNULL(OLD.${nameCol}, '') != IFNULL(NEW.${nameCol}, '')
+    BEGIN
+      DELETE FROM ${tokenTable} WHERE ${ownerCol} = OLD.id;
+      INSERT OR IGNORE INTO ${tokenTable}(token, ${ownerCol})
+      SELECT tok, NEW.id FROM (${catalogTokenSplitSql(`NEW.${nameCol}`)}) AS split_tok;
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER ${tokenTable}_ad
+    AFTER DELETE ON ${table}
+    BEGIN
+      DELETE FROM ${tokenTable} WHERE ${ownerCol} = OLD.id;
+    END
+  `);
+}
+
+/** True once author/series name words are indexed and safe to query. */
+export function catalogNameTokensReady() {
+  return _catalogNameTokensReady;
+}
+
+function scheduleCatalogNameTokenBackfill() {
+  if (_catalogTokenBackfillScheduled) return;
+  _catalogTokenBackfillScheduled = true;
+  console.log('[search] catalog name tokens: backfill started');
+  const started = Date.now();
+  const cursor = new Map(CATALOG_TOKEN_SOURCES.map((spec) => [spec.tokenTable, 0]));
+  const selectStmt = new Map(CATALOG_TOKEN_SOURCES.map((spec) => [
+    spec.tokenTable,
+    db.prepare(`SELECT id, ${spec.nameCol} AS name FROM ${spec.table} WHERE id > ? ORDER BY id LIMIT 2000`)
+  ]));
+  const insertStmt = new Map(CATALOG_TOKEN_SOURCES.map((spec) => [
+    spec.tokenTable,
+    db.prepare(`INSERT OR IGNORE INTO ${spec.tokenTable}(token, ${spec.ownerCol}) VALUES (?, ?)`)
+  ]));
+
+  const step = () => {
+    let more = false;
+    try {
+      for (const spec of CATALOG_TOKEN_SOURCES) {
+        const rows = selectStmt.get(spec.tokenTable).all(cursor.get(spec.tokenTable));
+        if (!rows.length) continue;
+        more = true;
+        const insert = insertStmt.get(spec.tokenTable);
+        db.transaction(() => {
+          for (const row of rows) {
+            for (const token of String(row.name || '').trim().split(/\s+/)) {
+              if (token) insert.run(token, row.id);
+            }
+          }
+        })();
+        cursor.set(spec.tokenTable, rows[rows.length - 1].id);
+      }
+    } catch (err) {
+      _catalogTokenBackfillScheduled = false;
+      console.warn('[search] catalog name tokens backfill failed:', err.message);
+      return;
+    }
+    if (more) {
+      setImmediate(step);
+      return;
+    }
+    setMeta(CATALOG_NAME_TOKENS_META, '1');
+    _catalogNameTokensReady = true;
+    _catalogTokenBackfillScheduled = false;
+    console.log(`[search] catalog name tokens: backfill done in ${Date.now() - started} ms`);
+  };
+  setImmediate(step);
+}
+
+/**
+ * Word index for author sort_name and series search_name.
+ * Multi-word search reads this instead of LIKE '%token%' over the whole catalog.
+ * Existing libraries fill it in the background; until then search keeps the LIKE scan.
+ */
+function ensureCatalogNameTokens() {
+  for (const spec of CATALOG_TOKEN_SOURCES) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ${spec.tokenTable} (
+        token TEXT NOT NULL,
+        ${spec.ownerCol} INTEGER NOT NULL,
+        PRIMARY KEY (token, ${spec.ownerCol})
+      ) WITHOUT ROWID;
+      CREATE INDEX IF NOT EXISTS idx_${spec.tokenTable}_owner ON ${spec.tokenTable}(${spec.ownerCol});
+    `);
+    installCatalogTokenTriggers(spec);
+  }
+
+  if (getMeta(CATALOG_NAME_TOKENS_META) === '1') {
+    _catalogNameTokensReady = true;
+    return;
+  }
+  const pending = CATALOG_TOKEN_SOURCES.some((spec) =>
+    Number(db.prepare(`SELECT COUNT(*) AS c FROM ${spec.table}`).get()?.c) > 0
+  );
+  if (!pending) {
+    setMeta(CATALOG_NAME_TOKENS_META, '1');
+    _catalogNameTokensReady = true;
+    return;
+  }
+  scheduleCatalogNameTokenBackfill();
 }
 
 /** @returns {boolean} */
@@ -2178,7 +2321,7 @@ export function scheduleBootFtsRecoveryIfNeeded() {
  * Создаёт индексы схемы по одному с уступкой event loop — предотвращает
  * многосекундную блокировку HTTP-сервера при старте на большой БД.
  */
-export function ensureSchemaIndexes() {
+export function ensureSchemaIndexes({ sync = false } = {}) {
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_book_authors_author_id ON book_authors(author_id)',
     'CREATE INDEX IF NOT EXISTS idx_book_authors_book_id ON book_authors(book_id)',
@@ -2263,6 +2406,25 @@ export function ensureSchemaIndexes() {
     db.prepare(`SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'index'`).get()?.c ?? 0;
   let beforeCount = indexCountBefore();
 
+  const createOne = () => {
+    try {
+      db.exec(indexes[i]);
+      const afterCount = indexCountBefore();
+      if (afterCount > beforeCount) {
+        created += afterCount - beforeCount;
+        beforeCount = afterCount;
+      }
+    } catch (err) {
+      console.warn('[boot] skip index:', err.message);
+    }
+    i += 1;
+  };
+
+  if (sync) {
+    while (i < indexes.length) createOne();
+    return;
+  }
+
   function step() {
     if (i >= indexes.length) {
       // CREATE INDEX IF NOT EXISTS is cheap when present; ANALYZE on a multi‑GB DB is not.
@@ -2279,17 +2441,7 @@ export function ensureSchemaIndexes() {
       }
       return;
     }
-    try {
-      db.exec(indexes[i]);
-      const afterCount = indexCountBefore();
-      if (afterCount > beforeCount) {
-        created += afterCount - beforeCount;
-        beforeCount = afterCount;
-      }
-    } catch (err) {
-      console.warn('[boot] skip index:', err.message);
-    }
-    i += 1;
+    createOne();
     setImmediate(step);
   }
   step();

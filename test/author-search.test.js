@@ -43,6 +43,30 @@ test('resolveAuthorName prefers the alias with more books', () => {
   assert.equal(listed.items[0].bookCount, 82);
 });
 
+test('multi-word author search finds a patronymic without the surname', () => {
+  db.prepare(`
+    INSERT INTO authors (name, display_name, sort_name, search_name, book_count)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    'пушкин,александр сергеевич',
+    'Пушкин Александр Сергеевич',
+    'пушкин александр сергеевич',
+    'пушкин александр сергеевич',
+    4
+  );
+  const tokens = db.prepare(`
+    SELECT token FROM author_name_tokens t
+    JOIN authors a ON a.id = t.author_id
+    WHERE a.name = ?
+  `).all('пушкин,александр сергеевич').map((row) => row.token);
+  assert.deepEqual(tokens.sort(), ['александр', 'пушкин', 'сергеевич']);
+
+  const listed = listAuthors({ query: 'Александр Сергеевич', page: 1, pageSize: 10, sort: 'count' });
+  assert.ok(listed.items.some((row) => row.name === 'пушкин,александр сергеевич'));
+  const reversed = listAuthors({ query: 'Сергеевич Пушкин', page: 1, pageSize: 10, sort: 'count' });
+  assert.ok(reversed.items.some((row) => row.name === 'пушкин,александр сергеевич'));
+});
+
 test('surname prefix finds the author and a given name still matches', () => {
   const bySurname = listAuthors({ query: 'роулинг', page: 1, pageSize: 10, sort: 'count' });
   assert.ok(bySurname.items.some((row) => row.name === 'роулинг,джоан,к.'));

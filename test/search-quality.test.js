@@ -92,6 +92,17 @@ test('searchBooks finds author + title via FTS hot path', () => {
   assert.ok(ids.includes(BOOK_ID), `expected ${BOOK_ID} in ${JSON.stringify(ids)}`);
 });
 
+test('listSeries matches a multi-word series name in either word order', () => {
+  db.prepare(`DELETE FROM series_catalog WHERE name = ?`).run('хроники амбера');
+  db.prepare(`
+    INSERT INTO series_catalog (name, display_name, sort_name, search_name, book_count)
+    VALUES (?, ?, ?, ?, ?)
+  `).run('хроники амбера', 'Хроники Амбера', 'хроники амбера', 'хроники амбера', 2);
+  const found = listSeries({ query: 'Амбера Хроники', page: 1, pageSize: 10, nameOnly: true });
+  assert.ok(found.items.some((row) => row.name === 'хроники амбера'));
+  assert.ok(found.total >= 1);
+});
+
 test('listSeries finds series and author+series; surname-only is title-match only', () => {
   const byName = listSeries({ query: 'Алиса', page: 1, pageSize: 24, sort: 'name' });
   assert.ok(byName.items.some((row) => row.name === SERIES_NAME));
