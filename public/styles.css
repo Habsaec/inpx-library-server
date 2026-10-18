@@ -3561,6 +3561,37 @@ html[data-theme="light"] .cover-fallback-author {
   padding-top: 6px;
 }
 
+.card-lang {
+  margin-top: -4px;
+}
+
+.book-lang-badge {
+  display: inline-block;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.author-flibusta-meta-sep {
+  margin: 0 0.35em;
+}
+
+.profile-lang-prefs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 8px 0 12px;
+}
+
+.profile-lang-pref {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+}
+
 .card-series {
   font-size: 0.6875rem;
   color: var(--muted);
@@ -6360,19 +6391,100 @@ html[data-theme="light"] .page-jump::after {
 /* ??????? ????????: ????????? / ????????? / ?? ????? ? ? ?????? ??????? ??? ??????????,
    ????? ??????? ???????? ?? ???????? ?? ??????. ?? ????????? ? ? ????? ?????? ??? ????????. */
 .book-detail-corner-actions {
-  grid-column: 2;
-  grid-row: 1;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
-  z-index: 2;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 8px;
 }
 
-.book-detail-corner-actions .button {
-  font-size: 0.75rem;
-  padding: 5px 10px;
-  white-space: nowrap;
+.book-detail-icon-action {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  cursor: pointer;
+  outline: none;
+}
+
+.book-detail-icon-action svg {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.22s var(--ease-premium);
+}
+
+.book-detail-icon-action::after {
+  content: '';
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: 0;
+  width: 42%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, #fff 78%, transparent), transparent);
+  transform: translateX(-160%) skewX(-16deg);
+  pointer-events: none;
+}
+
+.book-detail-icon-action:hover,
+.book-detail-icon-action:focus-visible,
+.book-detail-icon-action:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text);
+  transform: none;
+}
+
+.book-detail-icon-action:hover svg,
+.book-detail-icon-action:focus-visible svg,
+.book-detail-icon-action:active svg {
+  transform: scale(1.12);
+}
+
+.book-detail-icon-action:hover::after,
+.book-detail-icon-action:focus-visible::after,
+.book-detail-icon-action:active::after {
+  animation: book-detail-icon-gleam 0.65s ease;
+}
+
+@keyframes book-detail-icon-gleam {
+  from { transform: translateX(-160%) skewX(-16deg); }
+  to { transform: translateX(340%) skewX(-16deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .book-detail-icon-action svg {
+    transition: none;
+  }
+
+  .book-detail-icon-action:hover svg,
+  .book-detail-icon-action:focus-visible svg,
+  .book-detail-icon-action:active svg {
+    transform: none;
+  }
+
+  .book-detail-icon-action:hover::after,
+  .book-detail-icon-action:focus-visible::after,
+  .book-detail-icon-action:active::after {
+    animation: none;
+  }
 }
 
 .card-detail-panel {
@@ -6404,10 +6516,6 @@ html[data-theme="light"] .page-jump::after {
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
-}
-
-.book-detail-main:has(.book-detail-corner-actions) .book-detail-content {
-  grid-row: 2;
 }
 
 .book-detail-title {
@@ -7159,24 +7267,34 @@ html[data-theme="light"] .page-jump::after {
   left: 0;
 }
 
-.book-detail-bookmark-action {
-  padding: 6px 12px;
+.book-detail-shell .actions-primary .book-detail-send-menu .download-menu-popover {
+  left: auto;
+  right: 0;
+  min-width: 100%;
 }
 
 .book-detail-bookmark-action.is-active,
 .book-detail-bookmark-action[data-active-favorite="true"] {
-  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
-  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--accent);
 }
 
-.book-detail-read-action {
-  padding: 6px 12px;
+.book-detail-bookmark-action.is-active svg,
+.book-detail-bookmark-action[data-active-favorite="true"] svg {
+  fill: currentColor;
 }
 
 .book-detail-read-action.is-active {
-  background: color-mix(in srgb, #4ac694 20%, var(--surface));
-  border-color: color-mix(in srgb, #4ac694 50%, transparent);
+  background: transparent;
+  border: none;
+  box-shadow: none;
   color: #4ac694;
+}
+
+.book-detail-read-action.is-active svg {
+  stroke-width: 2.2;
 }
 
 
@@ -7786,38 +7904,24 @@ html[data-theme="light"] .alert-info {
 }
 
 .book-edit-summary--inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
   margin-left: auto;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--muted);
-  background: var(--button-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  list-style: none;
   user-select: none;
-  /* ????????? ?????? ? ??????? ???? ????? details ??????: <details>
-     ???????, summary ?????? ?? ????????? ?????? ? ??????? ??? ???
-     inline-flex ? margin-left:auto ? flex-????????. */
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-weight: 400;
 }
 
-.book-edit-summary--inline:hover {
-  background-color: var(--button-bg-hover);
-  border-color: var(--button-border-hover);
-  color: var(--text);
-}
-
-.book-edit-summary--inline svg {
-  flex-shrink: 0;
-  opacity: 0.75;
-}
-
-.book-edit-summary--inline:hover svg {
-  opacity: 1;
+.book-edit-summary--inline:hover,
+.book-edit-summary--inline:focus-visible,
+.book-edit-summary--inline:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 /* ???????? ?????????: <details> ???????? flex-???????????, ????? summary
@@ -7829,28 +7933,22 @@ html[data-theme="light"] .alert-info {
 
 /* ???????? ?????????: ?????????? ?????? ?? ??? ?????? ????????. */
 .book-edit-disclosure--inline[open] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   background: var(--surface);
   border: 1px solid var(--border);
 }
 
 .book-edit-disclosure--inline[open] .book-edit-summary--inline {
-  display: flex;
-  margin-left: 0;
+  margin: 6px 6px 0 auto;
   border: none;
   background: transparent;
-  color: var(--accent);
-  padding: 10px 14px;
-  font-weight: 600;
-  font-size: 0.8125rem;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.book-edit-disclosure--inline[open] .book-edit-summary--inline:hover {
-  background: var(--button-bg);
+  box-shadow: none;
 }
 
 .book-edit-disclosure--inline[open]>.book-edit-form {
+  width: 100%;
   padding: 16px;
 }
 
@@ -8378,6 +8476,60 @@ html[data-theme="light"] .sidebar-overlay {
     font-size: 1.5rem;
   }
 
+  /* Book page: cover, title and actions first; annotation below. Author pages keep the wider portrait. */
+  .book-detail-shell:not(.author-facet-hero) .book-detail-cover {
+    width: min(188px, 48vw);
+    margin-inline: auto;
+    justify-self: center;
+  }
+
+  .book-detail-shell:not(.author-facet-hero) .book-detail-cover .cover {
+    max-width: none;
+    width: 100%;
+  }
+
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .book-detail-shell:not(.author-facet-hero) .book-detail-title { order: 1; }
+  .book-detail-shell:not(.author-facet-hero) .book-deleted-note { order: 2; }
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .author { order: 3; }
+  .book-detail-shell:not(.author-facet-hero) .book-detail-summary { order: 4; }
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .actions-primary { order: 5; }
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .book-detail-corner-actions { order: 6; }
+  .book-detail-shell:not(.author-facet-hero) .book-detail-annotation { order: 7; text-align: start; }
+  .book-detail-shell:not(.author-facet-hero) .book-detail-review-mount { order: 8; text-align: start; }
+  .book-detail-shell:not(.author-facet-hero) .book-detail-side-block { order: 9; text-align: start; }
+
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .book-detail-corner-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 2px 0 0;
+  }
+
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .actions-primary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .actions-primary > .button-primary,
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .actions-primary > :last-child:nth-child(even) {
+    grid-column: 1 / -1;
+  }
+
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .actions-primary > .button,
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .actions-primary > .download-menu,
+  .book-detail-shell:not(.author-facet-hero) .book-detail-content > .actions-primary .download-menu-trigger {
+    width: 100%;
+  }
+
   .profile-page-layout {
     grid-template-columns: 1fr;
     gap: 16px;
@@ -8634,6 +8786,12 @@ html[data-theme="light"] .sidebar-overlay {
     font-size: 0.75rem;
     padding: 10px 10px 0;
     flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .breadcrumbs > span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   /* ?? Toast ?? */
@@ -12053,8 +12211,7 @@ details:not([open])>.catalog-filter-summary,
 .card-actions-read .button-primary,
 .actions-primary .button-primary,
 .shelf-link,
-.actions a.shelf-link,
-.book-edit-disclosure--inline:not([open]) .book-edit-summary--inline {
+.actions a.shelf-link {
   background-image: linear-gradient(110deg, transparent 35%, var(--btn-sheen, var(--magic-sheen-soft)) 50%, transparent 65%);
   background-size: 260% 100%;
   background-position: 130% 0;
@@ -12069,8 +12226,7 @@ details:not([open])>.catalog-filter-summary:hover,
 .card-actions-read .button-primary:hover,
 .actions-primary .button-primary:hover,
 .shelf-link:hover,
-.actions a.shelf-link:hover,
-.book-edit-disclosure--inline:not([open]) .book-edit-summary--inline:hover {
+.actions a.shelf-link:hover {
   /* Картинка повторена здесь: hover-правила с `background:` (герой, вкладки, «Сохранить»)
      иначе обнуляют блик ровно в момент наведения. */
   background-image: linear-gradient(110deg, transparent 35%, var(--btn-sheen, var(--magic-sheen-soft)) 50%, transparent 65%);
@@ -12274,13 +12430,14 @@ html[data-theme="light"] .book-detail-shell > .book-detail-main {
 
 @media (max-width: 900px) {
   .book-detail-shell > .book-detail-main {
-    background: linear-gradient(180deg, var(--detail-veil-clear) 0, var(--detail-veil-clear) 240px, var(--detail-veil-dense) 340px);
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
   }
 
   .book-detail-shell::before {
-    height: 820px;
-    -webkit-mask-image: radial-gradient(ellipse 92% 64% at 50% 28%, #000 18%, transparent 72%);
-    mask-image: radial-gradient(ellipse 92% 64% at 50% 28%, #000 18%, transparent 72%);
+    height: 320px;
+    inset: -24px -16px auto;
+    -webkit-mask-image: radial-gradient(ellipse 70% 80% at 50% 0%, #000 8%, transparent 68%);
+    mask-image: radial-gradient(ellipse 70% 80% at 50% 0%, #000 8%, transparent 68%);
   }
 }
 

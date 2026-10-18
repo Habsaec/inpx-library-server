@@ -288,6 +288,11 @@ function ensureUsersSchema() {
     db.exec(`ALTER TABLE users ADD COLUMN ui_catalog_view TEXT NOT NULL DEFAULT 'grid'`);
   }
 
+  const hasContentLangs = columns.some((column) => column.name === 'content_langs');
+  if (!hasContentLangs) {
+    db.exec(`ALTER TABLE users ADD COLUMN content_langs TEXT NOT NULL DEFAULT ''`);
+  }
+
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
     ON users(email)
@@ -4547,6 +4552,22 @@ export function getUserBrowseViewPrefs(username) {
     homeView: normalizeUiBrowseView(row?.homeView),
     catalogView: normalizeUiBrowseView(row?.catalogView)
   };
+}
+
+let _stmtGetContentLangs = null;
+export function getUserContentLangsRaw(username) {
+  const name = String(username || '').trim();
+  if (!name) return '';
+  _stmtGetContentLangs ??= db.prepare(`SELECT COALESCE(content_langs, '') AS contentLangs FROM users WHERE username = ?`);
+  return _stmtGetContentLangs.get(name)?.contentLangs || '';
+}
+
+let _stmtSetContentLangs = null;
+export function setUserContentLangsRaw(username, value) {
+  const user = getUserByUsername(username);
+  if (!user) throw new Error('User not found');
+  _stmtSetContentLangs ??= db.prepare('UPDATE users SET content_langs = ? WHERE username = ?');
+  _stmtSetContentLangs.run(String(value || ''), username);
 }
 
 let _stmtSetBrowseViewPrefs = null;

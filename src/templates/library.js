@@ -787,12 +787,7 @@ export function renderBook({
   const content = `
     <section class="book-detail-shell" style="--detail-cover:url('${escapeHtml(apiBookPath(book.id, 'cover'))}')">
       <div class="book-detail-main card-detail-panel">
-        ${isAuthenticated ? `<div class="book-detail-corner-actions">
-          <button class="button book-detail-read-action ${isRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-read-button="1">${isRead ? escapeHtml(t('book.markedRead')) : escapeHtml(t('book.markRead'))}</button>
-          <button class="button book-detail-bookmark-action ${bookmarked ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-bookmark-button="1" ${bookmarked ? 'data-active-favorite="true"' : ''}>${bookmarked ? escapeHtml(t('book.inFavorite')) : escapeHtml(t('book.addFavorite'))}</button>
-          <button class="button" type="button" ${bookIdDataAttr(book.id)} data-add-to-shelf="1">${escapeHtml(t('book.toShelf'))}</button>
-        </div>` : ''}
-        <div class="book-detail-cover book-3d"><div class="book-3d-body">
+        <div class="book-detail-cover book-3d" ${bookIdDataAttr(book.id)}><div class="book-3d-body">
           <div class="cover ${hasRealCover ? '' : 'cover-fallback-active'}">
             <img class="cover-image" src="${apiBookPath(book.id, 'cover')}" alt="${escapeHtml(book.title)}">
             <span class="cover-fallback" ${hasRealCover ? 'hidden' : ''} aria-hidden="${hasRealCover ? 'true' : 'false'}">
@@ -804,9 +799,15 @@ export function renderBook({
               </span>
             </span>
             ${(() => { const r = Math.max(0, Math.min(5, Math.floor(Number(book.libRate) || 0))); return r ? `<span class="cover-rating-wrapper"><span class="cover-rating-badge cover-rating-${r}">${Array.from({ length: r }, () => '<span>★</span>').join('')}</span></span>` : ''; })()}
+            ${isRead ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : ''}
           </div>
         </div></div>
         <div class="book-detail-content">
+          ${isAuthenticated ? `<div class="book-detail-corner-actions">
+            <button class="book-detail-icon-action book-detail-read-action ${isRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-read-button="1" aria-pressed="${isRead ? 'true' : 'false'}" aria-label="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}" title="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7"/></svg></button>
+            <button class="book-detail-icon-action book-detail-bookmark-action ${bookmarked ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-bookmark-button="1" aria-pressed="${bookmarked ? 'true' : 'false'}" aria-label="${escapeHtml(bookmarked ? t('book.inFavorite') : t('book.addFavorite'))}" title="${escapeHtml(bookmarked ? t('book.inFavorite') : t('book.addFavorite'))}" ${bookmarked ? 'data-active-favorite="true"' : ''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.4s-6.8-4.2-6.8-8.8A3.8 3.8 0 0 1 12 8.1a3.8 3.8 0 0 1 6.8 3.5c0 4.6-6.8 8.8-6.8 8.8z"/></svg></button>
+            <button class="book-detail-icon-action book-detail-shelf-action" type="button" ${bookIdDataAttr(book.id)} data-add-to-shelf="1" aria-label="${escapeHtml(t('book.toShelf'))}" title="${escapeHtml(t('book.toShelf'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16"/><path d="M6.5 19V8.2c0-.7.6-1.2 1.3-1.2H10V19"/><path d="M10 19V6.2c0-.7.6-1.2 1.3-1.2H14V19"/><path d="M14 19V9.2c0-.7.6-1.2 1.3-1.2H18V19"/></svg></button>
+          </div>` : ''}
           <h1 class="book-detail-title">${escapeHtml(book.title)}${Number(book.deleted) ? ` <span class="deleted-badge deleted-badge--inline" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>` : ''}</h1>
           ${Number(book.deleted) ? `<p class="muted book-deleted-note">${escapeHtml(t('book.deletedHint'))}</p>` : ''}
           <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 3, bookAuthors: book.authors, inlineExpand: true }) : escapeHtml(t('book.authorUnknown'))}</div>
@@ -825,14 +826,20 @@ export function renderBook({
           <div class="actions actions-primary">
             <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${escapeHtml(t('home.heroReadBook'))}</a>
             ${renderDownloadMenu(book, { accent: true, user })}
-            ${isAuthenticated && canSendToEmailInUi(user) ? `<button class="button" type="button" ${bookIdDataAttr(book.id)} data-send-to-ereader="1">${escapeHtml(t('book.toEmail'))}</button>` : ''}
-            ${isAuthenticated && telegramSendAvailable ? `<button class="button" type="button" ${bookIdDataAttr(book.id)} data-send-to-telegram="1">${escapeHtml(t('telegram.sendToTelegram'))}</button>` : ''}
+            ${(() => {
+              const sendItems = [
+                isAuthenticated && canSendToEmailInUi(user) ? `<button type="button" class="download-format-link" ${bookIdDataAttr(book.id)} data-send-to-ereader="1">${escapeHtml(t('book.toEmail'))}</button>` : '',
+                isAuthenticated && telegramSendAvailable ? `<button type="button" class="download-format-link" ${bookIdDataAttr(book.id)} data-send-to-telegram="1">${escapeHtml(t('telegram.sendToTelegram'))}</button>` : ''
+              ].filter(Boolean);
+              return sendItems.length
+                ? `<details class="download-menu book-detail-send-menu"><summary class="button download-menu-trigger">${escapeHtml(t('book.send'))}</summary><div class="download-menu-popover">${sendItems.join('')}</div></details>`
+                : '';
+            })()}
           </div>
         </div>
         ${user?.role === 'admin' ? `<details class="book-edit-disclosure book-edit-disclosure--inline">
-          <summary class="book-edit-summary book-edit-summary--inline" title="${escapeHtml(t('book.edit.title'))}">
-            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.25.25 0 0 0-.064.108l-.558 1.953 1.953-.558a.249.249 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z"/></svg>
-          <span>${escapeHtml(t('book.edit.title'))}</span>
+          <summary class="book-edit-summary book-edit-summary--inline book-detail-icon-action" title="${escapeHtml(t('book.edit.title'))}" aria-label="${escapeHtml(t('book.edit.title'))}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
         </summary>
         <form class="book-edit-form" action="${bookPagePath(book.id, '/edit')}" method="post">
           ${csrfHiddenField(csrfToken)}
@@ -2317,6 +2324,7 @@ export function renderProfileSettings({
   telegramBotAvailable = false, telegramBotAllowed = true, ereaderEmailAllowed = true,
   flash = '', csrfToken = '', hasLocalPassword = true,
   homeView = 'grid', catalogView = 'grid',
+  contentLangOptions = [], contentLangs = [],
   kosyncUrl = '', kosyncHasPassword = false,
   section = 'account'
 } = {}) {
@@ -2436,6 +2444,21 @@ export function renderProfileSettings({
             </div>
             <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button></div>
           </form>
+        </div>
+      </div>
+      <div class="table-row table-row-stack profile-form-row">
+        <div>
+          <strong>${escapeHtml(t('profile.contentLangs'))}</strong>
+          <p class="muted" style="margin:4px 0 8px;font-size:12px;">${escapeHtml(t('profile.contentLangs.hint'))}</p>
+          ${contentLangOptions.length
+            ? `<form method="post" action="/profile/content-langs" class="vertical-form">
+                ${csrfHiddenField(csrfToken)}
+                <div class="profile-lang-prefs">
+                  ${contentLangOptions.map((code) => `<label class="profile-lang-pref"><input type="checkbox" name="contentLangs" value="${escapeHtml(code)}"${contentLangs.includes(code) ? ' checked' : ''}> ${escapeHtml(code.toUpperCase())}</label>`).join('')}
+                </div>
+                <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button></div>
+              </form>`
+            : `<p class="muted" style="margin:0;">${escapeHtml(t('profile.contentLangs.empty'))}</p>`}
         </div>
       </div>
     </div>`;

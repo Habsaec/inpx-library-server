@@ -9,6 +9,7 @@ import { createSessionValue } from '../services/session.js';
 import { isRateLimited, registerFailedLogin, clearLoginAttempts, getClientKey, isPasswordResetRateLimited, registerPasswordResetAttempt } from '../services/rate-limiter.js';
 import { DUMMY_PASSWORD_HASH } from '../constants.js';
 import { getIndexStatus } from '../inpx.js';
+import { getUserContentLangs, setUserContentLangs, normalizeContentLangList, listEnabledContentLangs } from '../user-content-langs.js';
 import {
   getUserByUsername, getSetting, createUser, changePassword,
   setEreaderEmail, getEreaderEmail, setUserAccountEmail, getUserStats,
@@ -114,6 +115,8 @@ export function registerAuthRoutes(app, deps) {
       accountEmail: fullUser?.email || '',
       homeView: browseView.homeView,
       catalogView: browseView.catalogView,
+      contentLangs: getUserContentLangs(user.username),
+      contentLangOptions: listEnabledContentLangs(),
       telegramId: fullUser?.telegramId || '',
       telegramLinkedAt: fullUser?.telegramLinkedAt || '',
       telegramBotUsername: getTelegramBotUsername(),
@@ -421,6 +424,18 @@ export function registerAuthRoutes(app, deps) {
   app.post('/profile/kosync-password/revoke', requireWebAuth, (req, res) => {
     revokeKosyncPassword(req.user.username);
     res.send(renderSettingsPage(req, t('profile.kosync.revoked'), req.csrfToken || '', 'account'));
+  });
+
+  app.post('/profile/content-langs', requireWebAuth, (req, res) => {
+    try {
+      const available = listEnabledContentLangs();
+      const picked = normalizeContentLangList(req.body.contentLangs).filter((code) => available.includes(code));
+      const stored = !picked.length || picked.length === available.length ? [] : picked;
+      setUserContentLangs(req.user.username, stored);
+      res.send(renderSettingsPage(req, t('profile.contentLangsSaved'), req.csrfToken || '', 'view'));
+    } catch (error) {
+      res.status(500).send(renderSettingsPage(req, translateKnownErrorMessage(error.message), req.csrfToken || '', 'view'));
+    }
   });
 
   app.post('/profile/view', requireWebAuth, (req, res) => {

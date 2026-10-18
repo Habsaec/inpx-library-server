@@ -1246,17 +1246,30 @@ function isFavoriteEntityListButton(button) {
   return Boolean(button.closest('.favorites-list'));
 }
 
-function syncBookBookmarkButtonUi(button, bookmarked) {
-  if (isFavoriteBookListRemoveButton(button)) {
-    button.textContent = uiT('book.remove');
-  } else {
-    button.textContent = bookmarked ? uiT('book.inFavorite') : uiT('book.addFavorite');
+function setBookActionCaption(button, label) {
+  if (!button.classList.contains('book-detail-icon-action')) {
+    button.textContent = label;
+    return;
   }
+  button.setAttribute('aria-label', label);
+  button.title = label;
+  if (button.hasAttribute('aria-pressed')) {
+    const on = button.classList.contains('is-active') || button.dataset.activeFavorite === 'true';
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
+function syncBookBookmarkButtonUi(button, bookmarked) {
   button.classList.toggle('is-active', Boolean(bookmarked));
   if (bookmarked) {
     button.dataset.activeFavorite = 'true';
   } else {
     delete button.dataset.activeFavorite;
+  }
+  if (isFavoriteBookListRemoveButton(button)) {
+    button.textContent = uiT('book.remove');
+  } else {
+    setBookActionCaption(button, bookmarked ? uiT('book.inFavorite') : uiT('book.addFavorite'));
   }
 }
 
@@ -1301,7 +1314,7 @@ function showReadToggleToast(bookId, read, syncButtons = []) {
         for (const btn of syncButtons) {
           if (!btn?.isConnected) continue;
           btn.classList.toggle('is-active', Boolean(payload.read));
-          btn.textContent = payload.read ? uiT('book.markedRead') : uiT('book.markRead');
+          setBookActionCaption(btn, payload.read ? uiT('book.markedRead') : uiT('book.markRead'));
         }
         pulseReadProgressForBook(bookId);
       })();
@@ -1328,7 +1341,7 @@ function attachReadBookActions() {
         if (!payload) return;
         const read = Boolean(payload.read);
         btn.classList.toggle('is-active', read);
-        btn.textContent = read ? uiT('book.markedRead') : uiT('book.markRead');
+        setBookActionCaption(btn, read ? uiT('book.markedRead') : uiT('book.markRead'));
         pulseUi(btn);
         toggleReadBadgesForBook(bookId, read);
         pulseReadProgressForBook(bookId);
@@ -1338,23 +1351,28 @@ function attachReadBookActions() {
   });
 }
 
+function setCoverReadBadge(cover, isRead) {
+  if (!cover) return;
+  const existing = cover.querySelector('.read-badge');
+  if (isRead && !existing) {
+    const span = document.createElement('span');
+    span.className = 'read-badge';
+    span.innerHTML = READ_BADGE_SVG;
+    cover.appendChild(span);
+  } else if (!isRead && existing) {
+    existing.remove();
+  }
+}
+
 function toggleReadBadgesForBook(bookId, isRead) {
   const set = getReadBookIdSet();
   if (isRead) set.add(bookId); else set.delete(bookId);
   const cards = typeof findCardsByBookId === 'function' ? findCardsByBookId(bookId) : [...document.querySelectorAll(`.card[data-book-id="${CSS.escape(bookId)}"]`)];
-  cards.forEach((card) => {
-    const cover = card.querySelector('.cover');
-    if (!cover) return;
-    const existing = cover.querySelector('.read-badge');
-    if (isRead && !existing) {
-      const span = document.createElement('span');
-      span.className = 'read-badge';
-      span.innerHTML = READ_BADGE_SVG;
-      cover.appendChild(span);
-    } else if (!isRead && existing) {
-      existing.remove();
-    }
-  });
+  cards.forEach((card) => setCoverReadBadge(card.querySelector('.cover'), isRead));
+  const detail = document.querySelector('.book-detail-cover');
+  if (detail && typeof resolveBookIdFromElement === 'function' && resolveBookIdFromElement(detail) === bookId) {
+    setCoverReadBadge(detail.querySelector('.cover'), isRead);
+  }
 }
 
 function attachCoverLongPress() {
@@ -1400,7 +1418,7 @@ function attachCoverLongPress() {
       });
       for (const btn of buttons) {
         btn.classList.toggle('is-active', read);
-        btn.textContent = read ? uiT('book.markedRead') : uiT('book.markRead');
+        setBookActionCaption(btn, read ? uiT('book.markedRead') : uiT('book.markRead'));
       }
       showReadToggleToast(bookId, read, buttons);
     } catch (err) { console.error('Long-press read toggle error', err); }
@@ -3545,6 +3563,13 @@ function uiRenderSeriesLinks(seriesList, popoverId, firstAuthor) {
   return `<span class="series-visible">${visibleHtml}</span><button type="button" class="series-popover-trigger" popovertarget="${id}" style="anchor-name:${anchorName}">+${rest.length}</button><div id="${id}" popover="auto" class="series-popover" style="position-anchor:${anchorName}"><div class="series-popover-inner">${restHtml}</div></div>`;
 }
 
+function bookLangBadgeHtml(book) {
+  const code = String(book?.lang || '').trim();
+  if (!code || code.toLowerCase() === 'unknown') return '';
+  const label = code.toUpperCase();
+  return `<span class="book-lang-badge" title="${escapeHtml(uiT('meta.language'))}">${escapeHtml(label)}</span>`;
+}
+
 function renderCardHtml(book, { batchSelect = false, seriesContext = null, readActions = false } = {}) {
   const id = escapeHtml(book.id);
   const authorKey = book.authorsList?.[0] || book.authors?.split(',')[0]?.trim() || '';
@@ -3606,6 +3631,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
     <div class="meta">
       <h3><a href="${bookPagePath(book.id)}">${title}</a></h3>
       <div class="author">${book.authors ? uiRenderAuthorLinks(book.authorsList, book.authors, `ajax-a-${book.id}`) : escapeHtml(uiT('book.authorUnknown'))}</div>
+      ${bookLangBadgeHtml(book) ? `<div class="card-lang">${bookLangBadgeHtml(book)}</div>` : ''}
       ${showSeries ? `<div class="card-series">${uiRenderSeriesLinks(book.seriesList, `ajax-s-${book.id}`, authorKey)}</div>` : ''}
       ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
       ${readActions
@@ -3619,6 +3645,7 @@ function renderListRowHtml(book, { batchSelect = false } = {}) {
   const id = escapeHtml(book.id);
   const title = escapeHtml(book.title || '');
   const ext = escapeHtml(String(book.ext || 'fb2').toUpperCase());
+  const langBadge = bookLangBadgeHtml(book);
   const rate = Math.max(0, Math.min(5, Math.floor(Number(book.libRate) || 0)));
   const rating = rate ? `<span class="author-flibusta-rating" title="${rate}">${'★'.repeat(rate)}</span>` : '';
   const authorHtml = book.authors
@@ -3656,7 +3683,7 @@ function renderListRowHtml(book, { batchSelect = false } = {}) {
   const cardAttrs = bookRefAttr;
   return `<li class="author-flibusta-book" ${cardAttrs}>
     ${batchCb}<a class="author-flibusta-title" href="${bookPagePath(book.id)}">${title}</a>
-    ${authorHtml}${rating}<span class="muted author-flibusta-meta">${ext}</span>${actions}
+    ${authorHtml}${rating}<span class="muted author-flibusta-meta">${langBadge}${langBadge ? '<span class="author-flibusta-meta-sep">·</span>' : ''}${ext}</span>${actions}
   </li>`;
 }
 
@@ -4797,6 +4824,8 @@ function attachSendToEreader() {
     if (!btn) return;
     // Batch format buttons use a different handler.
     if (btn.hasAttribute('data-batch-email-format')) return;
+    const sendMenu = btn.closest('details.download-menu');
+    if (sendMenu) sendMenu.open = false;
 
     const bookId = typeof resolveBookIdFromElement === 'function'
       ? resolveBookIdFromElement(btn)
@@ -4881,6 +4910,8 @@ function attachSendToTelegram() {
   document.addEventListener('click', async (e) => {
     const btn = e.target instanceof Element ? e.target.closest('[data-send-to-telegram]') : null;
     if (!btn || btn.disabled) return;
+    const sendMenu = btn.closest('details.download-menu');
+    if (sendMenu) sendMenu.open = false;
     const bookId = typeof resolveBookIdFromElement === 'function'
       ? resolveBookIdFromElement(btn)
       : (btn.dataset.sendToTelegram ? decodeURIComponent(btn.dataset.sendToTelegram).replace(/\uFFFD/g, '\0') : null);

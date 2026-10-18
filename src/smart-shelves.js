@@ -133,11 +133,11 @@ export function deleteSmartShelf(id, username) {
 }
 
 /** Страница книг полки: `{ items, total }` как у searchCatalog. */
-export function getSmartShelfBooks(shelf, { page = 1, pageSize = 24 } = {}) {
+export function getSmartShelfBooks(shelf, { page = 1, pageSize = 24, langs = null } = {}) {
   const f = parseSmartShelfFilter(shelf.query);
   return searchCatalog({
     query: f.q, field: 'books', page, pageSize, sort: f.sort, order: f.order,
-    genre: f.genre.join(','), genreMode: f.genreMode, lang: f.lang, format: f.format,
+    genre: f.genre.join(','), genreMode: f.genreMode, lang: f.lang, langs, format: f.format,
     year: f.year, minRate: f.minRate, hasSeries: f.hasSeries
   });
 }

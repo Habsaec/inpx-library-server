@@ -37,6 +37,7 @@ import {
 } from '../db.js';
 import { parseNotesFilter } from '../services/reader-notes.js';
 import { isListBrowseView, resolveAuthorFacetView, resolveFacetBookLayout } from '../browse-view-prefs.js';
+import { effectiveContentLangs, resolveContentLangFilter, contentLangCacheKey, listEnabledContentLangs } from '../user-content-langs.js';
 import {
   getBookById,
   getBooksByIds,
@@ -82,7 +83,7 @@ import {
   hasContinueBooks,
   listRecentSectionGenres
 } from '../inpx.js';
-import { getDistinctLanguages, getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
+import { getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
 import { listSmartShelves, getSmartShelfBooks } from '../smart-shelves.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
@@ -278,6 +279,7 @@ const HOME_SHELVES_MAX = 8;
 /** Полки (обычные и умные), закреплённые пользователем на главной; пустые не показываем. */
 function getPinnedHomeShelves(username, limit) {
   const result = [];
+  const contentLangs = effectiveContentLangs(username);
   for (const shelf of getUserShelves(username)) {
     if (!shelf.onHome) continue;
     result.push({ title: shelf.name, href: `/shelves/${shelf.id}`, items: getShelfBooks(shelf.id, username).slice(0, limit) });
@@ -285,7 +287,7 @@ function getPinnedHomeShelves(username, limit) {
   for (const shelf of listSmartShelves(username)) {
     if (!shelf.onHome) continue;
     try {
-      result.push({ title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfBooks(shelf, { page: 1, pageSize: limit }).items });
+      result.push({ title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfBooks(shelf, { page: 1, pageSize: limit, langs: contentLangs }).items });
     } catch { /* битый фильтр не должен ломать главную */ }
   }
   return result.filter((shelf) => shelf.items.length).slice(0, HOME_SHELVES_MAX);
@@ -325,6 +327,11 @@ export function registerLibraryRoutes(app, deps) {
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
       displayNewest = shuffled.slice(0, DISPLAY_COUNT);
+    }
+    const contentLangs = effectiveContentLangs(username);
+    if (contentLangs.length) {
+      const allowed = new Set(contentLangs);
+      displayNewest = displayNewest.filter((book) => allowed.has(String(book?.lang || '').trim().toLowerCase()));
     }
     const displaySections = { ...sections, newest: displayNewest };
     const hasContinueData = username ? hasContinueBooks(username) : false;
@@ -374,15 +381,25 @@ export function registerLibraryRoutes(app, deps) {
     const order = String(req.query.order || '');
     const page = safePage(req.query.page);
     const pageSize = 24;
-    const cacheKey = `catalog:v4:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}`;
-    const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, order, genre, genreMode, letter, lang, format, year, minRate, hasSeries }));
-    const langs = getDistinctLanguages();
+    const username = user?.username || '';
+    const contentLangs = effectiveContentLangs(username);
+    const langFilter = resolveContentLangFilter(username, lang);
+    const cacheKey = `catalog:v5:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}`;
+    const result = getCachedPageData(cacheKey, () => searchCatalog({
+      query, field, page, pageSize, sort, order, genre, genreMode, letter,
+      lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+    }));
+    const allLangs = listEnabledContentLangs();
+    const langs = contentLangs.length
+      ? allLangs.filter((code) => contentLangs.includes(String(code).toLowerCase()))
+      : allLangs;
     const formats = getDistinctFormats();
     const allGenreOptions = getCachedPageData('catalog:genre-options', () => listGenresGrouped({ sort: 'name' }), PAGE_CACHE_TTL_MS);
     // Faceted genres: when search/filters active, only genres present in matching books.
     const hasGenreScope = Boolean(
       query.trim()
       || lang
+      || contentLangs.length
       || format
       || year
       || minRate >= 1
@@ -428,8 +445,10 @@ export function registerLibraryRoutes(app, deps) {
         items = [];
       } else {
         const scoped = getCachedPageData(
-          `catalog:search-genres:${query.trim()}:${lang}:${format}:${year}:${minRate}:${hasSeries}`,
-          () => listSearchGenres({ query: query.trim(), lang, format, year, minRate, hasSeries }),
+          `catalog:search-genres:${query.trim()}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries}`,
+          () => listSearchGenres({
+            query: query.trim(), lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+          }),
           PAGE_CACHE_TTL_MS
         );
         items = (scoped.items || []).filter((g) => g?.name && allowed.has(g.name));
@@ -511,19 +530,26 @@ export function registerLibraryRoutes(app, deps) {
     const year = Number(req.query.year) || 0;
     const minRate = Math.min(5, Math.max(0, Math.floor(Number(req.query.minRate) || 0)));
     const hasSeries = parseHasSeries(req.query.hasSeries);
-    const filterKey = `${genre}:${genreMode}:${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
+    const username = user?.username || '';
+    const contentLangs = effectiveContentLangs(username);
+    const langFilter = resolveContentLangFilter(username, lang);
+    const filterKey = `${genre}:${genreMode}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
     const canUseSharedCache = view === 'recent';
-    const libraryOpts = { page, pageSize, sort, order, genre, genreMode, lang, format, year, minRate, hasSeries };
+    const libraryOpts = {
+      page, pageSize, sort, order, genre, genreMode,
+      lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+    };
     const result = canUseSharedCache
       ? getStaleOrSchedule(
-        `library:${view}:v6:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
+        `library:${view}:v7:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
         () => getLibraryView(view, libraryOpts),
         PAGE_CACHE_TTL_MS,
         { total: 0, items: [] }
       )
       : view === 'recommended'
         ? getRecommendedLibraryView({
-          page, pageSize, username: user?.username || '', genre, genreMode, lang, format, year, minRate, hasSeries, sort
+          page, pageSize, username, genre, genreMode,
+          lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, sort
         })
         : getStaleOrSchedule(
           `library:${view}:${user?.username || ''}:sort:${sort}:${order}:p${page}:s${pageSize}`,
@@ -535,13 +561,18 @@ export function registerLibraryRoutes(app, deps) {
     const readBookIds = user && !isReadSeriesList ? getReadBookIdSet(user.username) : null;
     const readSeriesNames = user && isReadSeriesList ? getFullyReadSeriesNames(user.username) : null;
     const showFilters = view === 'recent' || view === 'recommended';
-    const langs = showFilters ? getDistinctLanguages() : [];
+    const allLangs = showFilters ? listEnabledContentLangs() : [];
+    const langs = contentLangs.length
+      ? allLangs.filter((code) => contentLangs.includes(String(code).toLowerCase()))
+      : allLangs;
     const formats = showFilters ? getDistinctFormats() : [];
-    const extraFilterKey = `${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
+    const extraFilterKey = `${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
     const genreOptions = view === 'recent'
       ? getCachedPageData(
         `library:recent:genres:${extraFilterKey}`,
-        () => listRecentSectionGenres({ lang, format, year, minRate, hasSeries }),
+        () => listRecentSectionGenres({
+          lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+        }),
         PAGE_CACHE_TTL_MS
       )
       : view === 'recommended'
@@ -591,8 +622,9 @@ export function registerLibraryRoutes(app, deps) {
     const pageSize = 50;
     const startsWith = query.length <= 2;
     const stats = getCachedStats();
-    const cacheKey = `browse:authors:${page}:${sort}:${order}:${letter}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, order, startsWith, letter }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const authorLangs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `browse:authors:${contentLangCacheKey(authorLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, order, startsWith, letter, langs: authorLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.authors'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
@@ -609,8 +641,9 @@ export function registerLibraryRoutes(app, deps) {
     const page = safePage(req.query.page);
     const pageSize = 50;
     const stats = getCachedStats();
-    const cacheKey = `browse:series:${page}:${sort}:${order}:${letter}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, order, letter }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const seriesLangs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `browse:series:${contentLangCacheKey(seriesLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, order, letter, langs: seriesLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     const username = req.user?.username || '';
     res.send(renderBrowsePage({
       title: t('nav.series'),
@@ -630,8 +663,9 @@ export function registerLibraryRoutes(app, deps) {
     const page = safePage(req.query.page);
     const pageSize = 50;
     const stats = getCachedStats();
-    const cacheKey = `browse:genres:${page}:${sort}:${order}:${letter}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, order, letter }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const genreLangs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `browse:genres:${contentLangCacheKey(genreLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, order, letter, langs: genreLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.genres'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
@@ -647,8 +681,9 @@ export function registerLibraryRoutes(app, deps) {
     const page = safePage(req.query.page);
     const pageSize = 50;
     const stats = getCachedStats();
-    const cacheKey = `browse:languages:${page}:${sort}:${order}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listLanguages({ query, page, pageSize, sort, order }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const languageLangs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `browse:languages:${contentLangCacheKey(languageLangs)}:${page}:${sort}:${order}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listLanguages({ query, page, pageSize, sort, order, langs: languageLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.languages'),
       ...result, page, pageSize, user: req.user || null, stats, query,
@@ -680,7 +715,9 @@ export function registerLibraryRoutes(app, deps) {
       const p = safePage(req.query.page, 1);
       const pageSize = 48;
       const bookLayout = resolveFacetBookLayout({ queryLayout: req.query.layout, username });
-      const grouped = await getAuthorBooksGroupedCoalesced(value, sort, order, { page: p, pageSize });
+      const grouped = await getAuthorBooksGroupedCoalesced(value, sort, order, {
+        page: p, pageSize, langs: effectiveContentLangs(username)
+      });
       const facetPath = `/facet/authors/${encodeURIComponent(value)}/outside-series`;
       res.send(
         renderAuthorOutsideSeriesPage({
@@ -769,7 +806,9 @@ export function registerLibraryRoutes(app, deps) {
         const authorView = resolveAuthorFacetView({ queryView: req.query.view, username });
 
         const [grouped, fullSummary, authorPortraitUrl, authorBioHtml] = await Promise.all([
-          getAuthorBooksGroupedCoalesced(value, authorSort, order, { page: p, pageSize }),
+          getAuthorBooksGroupedCoalesced(value, authorSort, order, {
+            page: p, pageSize, langs: effectiveContentLangs(username)
+          }),
           Promise.resolve(getFacetSummary(facet, value)),
           flibSourceId != null
             ? promiseWithTimeout(
@@ -823,16 +862,17 @@ export function registerLibraryRoutes(app, deps) {
         // Агрегация авторов/серий по жанру/языку — тяжёлый GROUP BY по всему фасету.
         // Кэшируем (stale-while-revalidate), как на /authors, чтобы повторные заходы
         // на крупный жанр/язык не гоняли многосекундный синхронный подсчёт.
-        const entityCacheKey = `facet:entity:${facet}:${view}:${value}:${entitySort}:p${page}`;
+        const entityLangs = effectiveContentLangs(username);
+        const entityCacheKey = `facet:entity:${contentLangCacheKey(entityLangs)}:${facet}:${view}:${value}:${entitySort}:p${page}`;
         const entityResult = getStaleOrSchedule(entityCacheKey, () => {
           if (facet === 'genres') {
             return view === 'authors'
-              ? listAuthorsByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort })
-              : listSeriesByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort });
+              ? listAuthorsByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs })
+              : listSeriesByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs });
           }
           return view === 'authors'
-            ? listAuthorsByLanguage({ lang: value, page, pageSize: entityPageSize, sort: entitySort })
-            : listSeriesByLanguage({ lang: value, page, pageSize: entityPageSize, sort: entitySort });
+            ? listAuthorsByLanguage({ lang: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs })
+            : listSeriesByLanguage({ lang: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs });
         }, PAGE_CACHE_TTL_MS, { total: 0, items: [] });
         const summary = getFacetSummary(facet, value);
         res.send(renderFacetBooks({
@@ -854,7 +894,10 @@ export function registerLibraryRoutes(app, deps) {
         const canonical = resolveAuthorName(authorFilter);
         authorFilter = canonical ?? authorFilter.toLowerCase();
       }
-      const result = await getBooksByFacetCoalesced({ facet, value, page, pageSize, sort, order, author: authorFilter });
+      const facetLangs = effectiveContentLangs(username);
+      const result = await getBooksByFacetCoalesced({
+        facet, value, page, pageSize, sort, order, author: authorFilter, langs: facetLangs
+      });
       const summary = getFacetSummary(facet, value);
       const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
       res.send(renderFacetBooks({

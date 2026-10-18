@@ -368,10 +368,13 @@ function scheduleRecommendationBuild(username) {
 }
 
 /** Additive catalog filters over an in-memory recommendation pool. */
-function filterRecommendedPool(books, { genre = '', genreMode = 'or', lang = '', format = '', year = 0, minRate = 0, hasSeries = null } = {}) {
+function filterRecommendedPool(books, { genre = '', genreMode = 'or', lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null } = {}) {
   if (!Array.isArray(books) || books.length === 0) return [];
   const genres = parseGenreList(genre);
   const language = String(lang || '').trim().toLowerCase();
+  const langSet = Array.isArray(langs)
+    ? new Set(langs.map((code) => String(code || '').trim().toLowerCase()).filter((code) => /^[a-z]{2,8}$/.test(code)))
+    : new Set();
   const fmt = String(format || '').trim().toLowerCase();
   const rate = Math.floor(Number(minRate) || 0);
   const seriesFlag = hasSeries === 0 || hasSeries === 1 ? hasSeries : parseHasSeries(hasSeries);
@@ -379,8 +382,13 @@ function filterRecommendedPool(books, { genre = '', genreMode = 'or', lang = '',
   const hasYear = y >= 1800 && y <= 2100;
 
   let list = books;
+  if (Array.isArray(langs) && langs.length && !langSet.size) {
+    return [];
+  }
   if (language) {
     list = list.filter((b) => String(b?.lang || '').toLowerCase() === language);
+  } else if (langSet.size) {
+    list = list.filter((b) => langSet.has(String(b?.lang || '').toLowerCase()));
   }
   if (rate >= 1) {
     list = list.filter((b) => (Number(b?.libRate) || 0) >= rate);
@@ -460,6 +468,7 @@ export function getRecommendedLibraryView({
   genre = '',
   genreMode = 'or',
   lang = '',
+  langs = null,
   format = '',
   year = 0,
   minRate = 0,
@@ -473,7 +482,7 @@ export function getRecommendedLibraryView({
     scheduleRecommendationBuild(normalizedUsername);
     return { total: 0, items: [], computing: true };
   }
-  const filtered = filterRecommendedPool(recommended, { genre, genreMode, lang, format, year, minRate, hasSeries });
+  const filtered = filterRecommendedPool(recommended, { genre, genreMode, lang, langs, format, year, minRate, hasSeries });
   const sorted = sortRecommendedBooks(filtered, sort);
   const offset = (page - 1) * pageSize;
   return { total: sorted.length, items: sorted.slice(offset, offset + pageSize), computing: false };

@@ -3,6 +3,7 @@
  */
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { PAGE_CACHE_TTL_MS } from '../constants.js';
+import { effectiveContentLangs, resolveContentLangFilter, contentLangCacheKey } from '../user-content-langs.js';
 import { getCachedPageData, getStaleOrSchedule } from '../services/cache.js';
 import { safePage } from '../utils/safe-int.js';
 import {
@@ -14,6 +15,7 @@ import {
   getLibraryView,
   getSuggestions,
   listAuthors,
+  listGenres,
   listGenresGrouped,
   listSeries,
   resolveAuthorName,
@@ -49,9 +51,10 @@ export function registerBrowseApiRoutes(app) {
       : 'books';
     /* Подсказки на каждый ввод: повтор префикса (backspace, повторный фокус, другой пользователь)
        не должен снова проходить FTS и каталоги авторов/серий. */
+    const langs = effectiveContentLangs(req.user?.username);
     res.json(getCachedPageData(
-      `api:search:suggest:${field}:${q.toLowerCase()}`,
-      () => getSuggestions(q, 5, field),
+      `api:search:suggest:${contentLangCacheKey(langs)}:${field}:${q.toLowerCase()}`,
+      () => getSuggestions(q, 5, field, langs),
       PAGE_CACHE_TTL_MS
     ));
   });
@@ -82,10 +85,14 @@ export function registerBrowseApiRoutes(app) {
     const year = Number(req.query.year) || 0;
     const minRate = Math.min(5, Math.max(0, Math.floor(Number(req.query.minRate) || 0)));
     const hasSeries = parseHasSeries(req.query.hasSeries);
-    const cacheKey = `api:search:genres:${q}:${lang}:${format}:${year}:${minRate}:${hasSeries}`;
+    const username = req.user?.username || '';
+    const langFilter = resolveContentLangFilter(username, lang);
+    const cacheKey = `api:search:genres:${q}:${lang}:${contentLangCacheKey(effectiveContentLangs(username))}:${format}:${year}:${minRate}:${hasSeries}`;
     const result = getCachedPageData(
       cacheKey,
-      () => listSearchGenres({ query: q, lang, format, year, minRate, hasSeries }),
+      () => listSearchGenres({
+        query: q, lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+      }),
       PAGE_CACHE_TTL_MS
     );
     res.json(result);
@@ -114,20 +121,27 @@ export function registerBrowseApiRoutes(app) {
     const year = Number(req.query.year) || 0;
     const minRate = Math.min(5, Math.max(0, Math.floor(Number(req.query.minRate) || 0)));
     const hasSeries = parseHasSeries(req.query.hasSeries);
-    const filterKey = `${genre}:${genreMode}:${lang}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
+    const filterKey = `${genre}:${genreMode}:${lang}:${contentLangCacheKey(effectiveContentLangs(req.user?.username))}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
     const user = req.user || null;
     const canUseSharedCache = view === 'recent';
     const username = user?.username || '';
-    const libraryOpts = { page, pageSize, sort, order, genre, genreMode, lang, format, year, minRate, hasSeries };
+    const langFilter = resolveContentLangFilter(username, lang);
+    const libraryOpts = {
+      page, pageSize, sort, order, genre, genreMode,
+      lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+    };
     const result = canUseSharedCache
       ? getStaleOrSchedule(
-        `library:${view}:v6:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
+        `library:${view}:v7:sort:${sort}:${order}:f:${filterKey}:page:${page}:size:${pageSize}`,
         () => getLibraryView(view, libraryOpts),
         PAGE_CACHE_TTL_MS,
         { total: 0, items: [] }
       )
       : view === 'recommended'
-        ? getRecommendedLibraryView({ page, pageSize, username, genre, genreMode, lang, format, year, minRate, hasSeries, sort })
+        ? getRecommendedLibraryView({
+          page, pageSize, username, genre, genreMode,
+          lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, sort
+        })
         : view === 'continue' || view === 'read'
           ? getStaleOrSchedule(
             `library:${view}:${username}:sort:${sort}:${order}:p${page}:s${pageSize}`,
@@ -161,10 +175,15 @@ export function registerBrowseApiRoutes(app) {
     const hasSeries = parseHasSeries(req.query.hasSeries);
     const page = safePage(req.query.page);
     const pageSize = 24;
-    const cacheKey = `api:catalog:v3:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}:s${pageSize}`;
+    const username = req.user?.username || '';
+    const langFilter = resolveContentLangFilter(username, lang);
+    const cacheKey = `api:catalog:v4:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${contentLangCacheKey(effectiveContentLangs(username))}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}:s${pageSize}`;
     const result = getCachedPageData(
       cacheKey,
-      () => searchCatalog({ query, page, pageSize, field, sort, order, genre, genreMode, letter, lang, format, year, minRate, hasSeries }),
+      () => searchCatalog({
+        query, page, pageSize, field, sort, order, genre, genreMode, letter,
+        lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+      }),
       PAGE_CACHE_TTL_MS
     );
     const payload = { items: result.items, total: result.total, page, pageSize, field: result.field };
@@ -179,9 +198,10 @@ export function registerBrowseApiRoutes(app) {
     const query = String(req.query.q || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
     /* Без фильтра listAuthors — скан 180k авторов с коррелированным подзапросом алиасов (~1 с); кэш как у HTML /authors. */
+    const langs = effectiveContentLangs(req.user?.username);
     const result = getCachedPageData(
-      `api:browse:authors:${page}:${sort}:${letter}:${query}`,
-      () => listAuthors({ query, page, pageSize, sort, order: '', letter }),
+      `api:browse:authors:${contentLangCacheKey(langs)}:${page}:${sort}:${letter}:${query}`,
+      () => listAuthors({ query, page, pageSize, sort, order: '', letter, langs }),
       PAGE_CACHE_TTL_MS
     );
     res.json({ ...result, page, pageSize });
@@ -193,9 +213,10 @@ export function registerBrowseApiRoutes(app) {
     const sort = ['name', 'count'].includes(String(req.query.sort || '')) ? String(req.query.sort) : 'count';
     const query = String(req.query.q || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
+    const langs = effectiveContentLangs(req.user?.username);
     const result = getCachedPageData(
-      `api:browse:series:${page}:${sort}:${letter}:${query}`,
-      () => listSeries({ query, page, pageSize, sort, order: '', letter }),
+      `api:browse:series:${contentLangCacheKey(langs)}:${page}:${sort}:${letter}:${query}`,
+      () => listSeries({ query, page, pageSize, sort, order: '', letter, langs }),
       PAGE_CACHE_TTL_MS
     );
     res.json({ ...result, page, pageSize });
@@ -203,7 +224,14 @@ export function registerBrowseApiRoutes(app) {
 
   app.get('/api/browse/genres', requireBrowseAuth, (req, res) => {
     const sort = ['name', 'count'].includes(String(req.query.sort || '')) ? String(req.query.sort) : 'count';
-    const allGenres = listGenresGrouped({ sort });
+    const genreLangs = effectiveContentLangs(req.user?.username);
+    const allGenres = genreLangs.length
+      ? getCachedPageData(
+        `api:browse:genres:${contentLangCacheKey(genreLangs)}:${sort}`,
+        () => listGenres({ query: '', page: 1, pageSize: 10000, sort, langs: genreLangs }).items,
+        PAGE_CACHE_TTL_MS
+      )
+      : listGenresGrouped({ sort });
     const groups = getGenreGroups();
     const grouped = [];
     const entries = sort === 'name'
@@ -234,7 +262,9 @@ export function registerBrowseApiRoutes(app) {
       const flibSourceId = getAuthorFlibustaSourceId(value);
       const facetRoot = flibSourceId != null ? getSourceRoot(flibSourceId) : '';
       const [grouped, bioHtml, portrait] = await Promise.all([
-        getAuthorBooksGroupedCoalesced(value, sort, order, { page: 1, pageSize: 48 }),
+        getAuthorBooksGroupedCoalesced(value, sort, order, {
+          page: 1, pageSize: 48, langs: effectiveContentLangs(req.user?.username)
+        }),
         flibSourceId != null
           ? promiseWithTimeout(
             readFlibustaAuthorBioHtml(value, facetRoot, flibSourceId),
@@ -295,9 +325,10 @@ export function registerBrowseApiRoutes(app) {
         const canonical = resolveAuthorName(author);
         author = canonical ?? author.toLowerCase();
       }
+      const langFilter = resolveContentLangFilter(req.user?.username, lang);
       const result = await getBooksByFacetCoalesced({
         facet, value, page, pageSize, sort, order, author,
-        lang, format, year, minRate, hasSeries, genre
+        lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, genre
       });
       res.json({ items: result.items, total: result.total, page, pageSize });
     } catch (error) {

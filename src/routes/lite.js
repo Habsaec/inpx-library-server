@@ -23,6 +23,7 @@ import {
   getShelfById,
   getShelfBooks
 } from '../db.js';
+import { effectiveContentLangs, contentLangCacheKey } from '../user-content-langs.js';
 import {
   getBookById,
   getAuthorBooksGroupedCoalesced,
@@ -141,8 +142,9 @@ export function registerLiteRoutes(app, { getCachedStats }) {
     const sort = allowedSorts.includes(String(req.query.sort || '')) ? String(req.query.sort) : (isBookField ? 'title' : 'name');
     const page = safePage(req.query.page);
     const pageSize = 24;
-    const cacheKey = `lite:catalog:${field}:${sort}:${letter}:${query}:p${page}`;
-    const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, order: '', genre: '', letter, lang: '', format: '', year: 0 }));
+    const langs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `lite:catalog:${contentLangCacheKey(langs)}:${field}:${sort}:${letter}:${query}:p${page}`;
+    const result = getCachedPageData(cacheKey, () => searchCatalog({ query, field, page, pageSize, sort, order: '', genre: '', letter, lang: '', format: '', year: 0, langs }));
     const user = req.user || null;
     const readBookIds = user ? getReadBookIdSet(user.username) : null;
     res.send(renderLiteCatalog({ ...result, page, pageSize, query, field, sort, letter, user, readBookIds, csrfToken: csrf(req) }));
@@ -178,8 +180,9 @@ export function registerLiteRoutes(app, { getCachedStats }) {
     const pageSize = 50;
     const startsWith = query.length <= 2;
     const stats = getCachedStats();
-    const cacheKey = `browse:authors:${page}:${sort}::${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, order: '', startsWith, letter: '' }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const langs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `lite:authors:${contentLangCacheKey(langs)}:${page}:${sort}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, order: '', startsWith, letter: '', langs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderLiteBrowsePage({
       title: t('nav.authors'),
       ...result, page, pageSize, user: req.user || null, stats, query,
@@ -193,8 +196,9 @@ export function registerLiteRoutes(app, { getCachedStats }) {
     const page = safePage(req.query.page);
     const pageSize = 50;
     const stats = getCachedStats();
-    const cacheKey = `browse:series:${page}:${sort}::${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, order: '', letter: '' }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const langs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `lite:series:${contentLangCacheKey(langs)}:${page}:${sort}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, order: '', letter: '', langs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderLiteBrowsePage({
       title: t('nav.series'),
       ...result, page, pageSize, user: req.user || null, stats, query,
@@ -208,8 +212,16 @@ export function registerLiteRoutes(app, { getCachedStats }) {
     const page = safePage(req.query.page);
     const pageSize = 50;
     const stats = getCachedStats();
+    const genreLangs = effectiveContentLangs(req.user?.username);
     if (!query && page === 1 && (sort === 'count' || sort === 'name')) {
-      const allGenres = getStaleOrSchedule(`browse:genres:grouped:${sort}`, () => listGenresGrouped({ sort }), PAGE_CACHE_TTL_MS, []);
+      const allGenres = genreLangs.length
+        ? getStaleOrSchedule(
+          `lite:genres:${contentLangCacheKey(genreLangs)}:${sort}`,
+          () => listGenres({ query: '', page: 1, pageSize: 10000, sort, langs: genreLangs }).items,
+          PAGE_CACHE_TTL_MS,
+          []
+        )
+        : getStaleOrSchedule(`browse:genres:grouped:${sort}`, () => listGenresGrouped({ sort }), PAGE_CACHE_TTL_MS, []);
       const groups = getGenreGroups();
       const grouped = [];
       const entries = sort === 'name'
@@ -231,8 +243,9 @@ export function registerLiteRoutes(app, { getCachedStats }) {
       }));
       return;
     }
-    const cacheKey = `browse:genres:${page}:${sort}::${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, order: '', letter: '' }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const langs = effectiveContentLangs(req.user?.username);
+    const cacheKey = `lite:genres:${contentLangCacheKey(langs)}:${page}:${sort}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, order: '', letter: '', langs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderLiteBrowsePage({
       title: t('nav.genres'),
       ...result, page, pageSize, user: req.user || null, stats, query,
@@ -265,7 +278,9 @@ export function registerLiteRoutes(app, { getCachedStats }) {
         if (resolvedAuthor) value = resolvedAuthor;
         const p = safePage(req.query.page, 1);
         const authorPageSize = 48;
-        const grouped = await getAuthorBooksGroupedCoalesced(value, sort, '', { page: p, pageSize: authorPageSize });
+        const grouped = await getAuthorBooksGroupedCoalesced(value, sort, '', {
+          page: p, pageSize: authorPageSize, langs: effectiveContentLangs(req.user?.username)
+        });
         const displayValue = formatAuthorLabel(value);
         res.send(renderLiteAuthorFacetPage({
           title: displayValue,
@@ -286,7 +301,10 @@ export function registerLiteRoutes(app, { getCachedStats }) {
         const canonical = resolveAuthorName(authorFilter);
         authorFilter = canonical ?? authorFilter.toLowerCase();
       }
-      const result = await getBooksByFacetCoalesced({ facet, value, page, pageSize, sort, order: '', author: authorFilter });
+      const result = await getBooksByFacetCoalesced({
+        facet, value, page, pageSize, sort, order: '', author: authorFilter,
+        langs: effectiveContentLangs(req.user?.username)
+      });
       const facetPath = `${LITE_BASE}/facet/${facet}/${encodeURIComponent(value)}`;
       const user = req.user || null;
       const readBookIds = user ? getReadBookIdSet(user.username) : null;

@@ -951,7 +951,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
   const canDl = canDownloadInUi(user);
   // Flags string encodes rendering-affecting state for cache key
   /* a3: per-card download stays visible alongside batch checkboxes (series / outside-series). */
-  const flags = `${getLocale()}|${effectiveBatch ? '1' : '0'}${hideDownloads ? '1' : '0'}${canDl ? '1' : '0'}${seriesContext ? 's' : ''}a4`;
+  const flags = `${getLocale()}|${effectiveBatch ? '1' : '0'}${hideDownloads ? '1' : '0'}${canDl ? '1' : '0'}${seriesContext ? 's' : ''}a5`;
   const batchCb = (book) =>
     effectiveBatch
       ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} ${batchBookIdDataAttr(book.id)} aria-label="${escapeHtml(t('batch.selectAria'))}"></label>`
@@ -981,6 +981,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
           <div class="meta">
             <h3><a href="${bookPagePath(book.id)}">${titlePrefix}${escapeHtml(book.title)}</a></h3>
             <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `card-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
+            ${renderBookLangBadge(book) ? `<div class="card-lang">${renderBookLangBadge(book)}</div>` : ''}
             ${showSeries ? `<div class="card-series">${renderSeriesLinks(book.seriesList, { limit: 1, popoverId: `card-s-${book.id}`, firstAuthor: book.authorsList?.[0] || firstAuthorValue(book.authors) })}</div>` : ''}
             ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
             ${removeReading ? `<div class="card-actions card-actions-favorites">${renderReadingRemoveButton(book, 'card-remove-reading-action')}</div>` : ''}
@@ -1013,6 +1014,7 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
           <div class="meta">
             <h3><a href="${bookPagePath(book.id)}">${titlePrefix}${escapeHtml(book.title)}</a></h3>
             <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `fav-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
+            ${renderBookLangBadge(book) ? `<div class="card-lang">${renderBookLangBadge(book)}</div>` : ''}
             ${showSeries ? `<div class="card-series">${renderSeriesLinks(book.seriesList, { limit: 1, popoverId: `card-s-${book.id}`, firstAuthor: book.authorsList?.[0] || firstAuthorValue(book.authors) })}</div>` : ''}
             <div class="card-actions card-actions-favorites">
               <button class="button card-remove-favorite-action" type="button" ${bookIdDataAttr(book.id)} data-bookmark-button="1">${escapeHtml(t('book.remove'))}</button>
@@ -1143,6 +1145,13 @@ function formatAuthorListSeriesNo(book) {
   return `${s}.`;
 }
 
+function renderBookLangBadge(book) {
+  const code = String(book?.lang || '').trim();
+  if (!code || code.toLowerCase() === 'unknown') return '';
+  const label = formatLanguageLabel(code);
+  return `<span class="book-lang-badge" title="${escapeHtml(t('meta.language'))}">${escapeHtml(label)}</span>`;
+}
+
 function renderAuthorListRating(book) {
   const r = Math.max(0, Math.min(5, Math.floor(Number(book?.libRate) || 0)));
   if (!r) return '';
@@ -1155,7 +1164,8 @@ function renderAuthorFlibustaBookRow(book, {
   const no = showSeriesNo ? formatAuthorListSeriesNo(book) : '';
   const noHtml = no ? `<span class="author-flibusta-no">${escapeHtml(no)}</span>` : '';
   const ext = String(book.ext || 'fb2').toUpperCase();
-  const meta = `<span class="muted author-flibusta-meta">${escapeHtml(ext)}</span>`;
+  const langBadge = renderBookLangBadge(book);
+  const meta = `<span class="muted author-flibusta-meta">${langBadge}${langBadge ? '<span class="author-flibusta-meta-sep">·</span>' : ''}${escapeHtml(ext)}</span>`;
   const rating = renderAuthorListRating(book);
   const authorHtml = showAuthor
     ? `<span class="author-flibusta-author muted">${book.authors
