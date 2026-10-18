@@ -293,6 +293,21 @@ function getPinnedHomeShelves(username, limit) {
   return result.filter((shelf) => shelf.items.length).slice(0, HOME_SHELVES_MAX);
 }
 
+/** `?lang=` on author / series / genre pages, narrowed by the profile languages. */
+function facetLangState(username, rawLang) {
+  const requested = String(rawLang || '').trim().toLowerCase();
+  const lang = /^[a-z]{2,8}$/.test(requested) ? requested : '';
+  const contentLangs = effectiveContentLangs(username);
+  const enabled = listEnabledContentLangs();
+  const filter = resolveContentLangFilter(username, lang);
+  return {
+    lang,
+    options: contentLangs.length ? enabled.filter((code) => contentLangs.includes(code)) : enabled,
+    filter,
+    list: filter.lang ? [filter.lang] : filter.langs
+  };
+}
+
 // --- Exported accessors for other modules ---
 
 export { detailsCache, getDetails, getDetailsFull, clearBookDetailsCache, bookFlibustaSidecarEffective, resolveBestCoverDetails };
@@ -715,8 +730,9 @@ export function registerLibraryRoutes(app, deps) {
       const p = safePage(req.query.page, 1);
       const pageSize = 48;
       const bookLayout = resolveFacetBookLayout({ queryLayout: req.query.layout, username });
+      const langState = facetLangState(username, req.query.lang);
       const grouped = await getAuthorBooksGroupedCoalesced(value, sort, order, {
-        page: p, pageSize, langs: effectiveContentLangs(username)
+        page: p, pageSize, langs: langState.list
       });
       const facetPath = `/facet/authors/${encodeURIComponent(value)}/outside-series`;
       res.send(
@@ -730,7 +746,8 @@ export function registerLibraryRoutes(app, deps) {
           favorite, facetValue: value, csrfToken: req.csrfToken || '',
           page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
           listView: bookLayout === 'list', layout: bookLayout,
-          readBookIds: username ? getReadBookIdSet(username) : null
+          readBookIds: username ? getReadBookIdSet(username) : null,
+          lang: langState.lang, langs: langState.options
         })
       );
     } catch (error) {
@@ -796,6 +813,7 @@ export function registerLibraryRoutes(app, deps) {
         { label: displayValue }
       ];
       const facetPath = `/facet/${encodeURIComponent(facet)}/${encodeURIComponent(value)}`;
+      const langState = facetLangState(username, facet === 'languages' ? '' : req.query.lang);
 
       if (facet === 'authors') {
         const authorSort = ['recent', 'series', 'count'].includes(sort) ? sort : 'series';
@@ -807,7 +825,7 @@ export function registerLibraryRoutes(app, deps) {
 
         const [grouped, fullSummary, authorPortraitUrl, authorBioHtml] = await Promise.all([
           getAuthorBooksGroupedCoalesced(value, authorSort, order, {
-            page: p, pageSize, langs: effectiveContentLangs(username)
+            page: p, pageSize, langs: langState.list
           }),
           Promise.resolve(getFacetSummary(facet, value)),
           flibSourceId != null
@@ -841,7 +859,8 @@ export function registerLibraryRoutes(app, deps) {
             facetValue: value, favorite, authorPortraitUrl, authorBioHtml,
             csrfToken: req.csrfToken || '',
             page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
-            readSeriesNames: username ? getFullyReadSeriesNames(username) : null
+            readSeriesNames: username ? getFullyReadSeriesNames(username) : null,
+            lang: langState.lang, langs: langState.options
           })
         );
         return;
@@ -862,8 +881,8 @@ export function registerLibraryRoutes(app, deps) {
         // Агрегация авторов/серий по жанру/языку — тяжёлый GROUP BY по всему фасету.
         // Кэшируем (stale-while-revalidate), как на /authors, чтобы повторные заходы
         // на крупный жанр/язык не гоняли многосекундный синхронный подсчёт.
-        const entityLangs = effectiveContentLangs(username);
-        const entityCacheKey = `facet:entity:${contentLangCacheKey(entityLangs)}:${facet}:${view}:${value}:${entitySort}:p${page}`;
+        const entityLangs = langState.list;
+        const entityCacheKey = `facet:entity:${entityLangs.join(',')}:${facet}:${view}:${value}:${entitySort}:p${page}`;
         const entityResult = getStaleOrSchedule(entityCacheKey, () => {
           if (facet === 'genres') {
             return view === 'authors'
@@ -884,7 +903,8 @@ export function registerLibraryRoutes(app, deps) {
           favorite, seriesRead: false, breadcrumbs, csrfToken: req.csrfToken || '',
           readBookIds: null,
           view, entityItems: entityResult.items,
-          listView: bookLayout === 'list', layout: bookLayout
+          listView: bookLayout === 'list', layout: bookLayout,
+          lang: langState.lang, langs: langState.options
         }));
         return;
       }
@@ -894,9 +914,9 @@ export function registerLibraryRoutes(app, deps) {
         const canonical = resolveAuthorName(authorFilter);
         authorFilter = canonical ?? authorFilter.toLowerCase();
       }
-      const facetLangs = effectiveContentLangs(username);
       const result = await getBooksByFacetCoalesced({
-        facet, value, page, pageSize, sort, order, author: authorFilter, langs: facetLangs
+        facet, value, page, pageSize, sort, order, author: authorFilter,
+        lang: langState.filter.lang, langs: langState.filter.langs
       });
       const summary = getFacetSummary(facet, value);
       const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
@@ -908,7 +928,8 @@ export function registerLibraryRoutes(app, deps) {
         favorite, seriesRead, breadcrumbs, csrfToken: req.csrfToken || '',
         readBookIds: username ? getReadBookIdSet(username) : null,
         view, authorFilter,
-        listView: bookLayout === 'list', layout: bookLayout
+        listView: bookLayout === 'list', layout: bookLayout,
+        lang: langState.lang, langs: langState.options
       }));
     } catch (error) {
       next(error);

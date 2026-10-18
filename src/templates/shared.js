@@ -500,6 +500,23 @@ export function renderSortControl({ action, sort, order = '', options, query = '
     </form>`;
 }
 
+/** Book language picker for author / series / genre pages. Hidden when there is nothing to choose. */
+export function renderLangFilterControl({ action, lang = '', langs = [], extraHidden = {} }) {
+  if (langs.length < 2 && !lang) return '';
+  const extraFields = Object.entries(extraHidden)
+    .filter(([, v]) => v !== '' && v != null)
+    .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`).join('');
+  const options = langs.includes(lang) || !lang ? langs : [lang, ...langs];
+  return `
+    <form class="search-form sort-control lang-filter-control" action="${action}" method="get">
+      ${extraFields}
+      <select name="lang" onchange="this.form.submit()" aria-label="${escapeHtml(t('catalog.allLanguages'))}">
+        <option value="">${escapeHtml(t('catalog.allLanguages'))}</option>
+        ${options.map((code) => `<option value="${escapeHtml(code)}"${code === lang ? ' selected' : ''}>${escapeHtml(code.toUpperCase())}</option>`).join('')}
+      </select>
+    </form>`;
+}
+
 export function renderEventDetailsHtml(details) {
   if (!details) return '';
   const looksLikeTimestamp = (value) => {

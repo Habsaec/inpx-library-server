@@ -39,7 +39,7 @@ export function languageFilterClause(column, lang = '', langs = null) {
   if (hasRequest && prefs.length && !prefs.includes(requested)) {
     return { where: '0', params: [] };
   }
-  const list = hasRequest ? [requested] : prefs;
+  const list = expandLangSpellings(hasRequest ? [requested] : prefs);
   if (!list.length) return null;
   if (list.length === 1) return { where: `${column} = ?`, params: list };
   return { where: `${column} IN (${list.map(() => '?').join(',')})`, params: list };
@@ -88,8 +88,8 @@ let _presentLangsCache = null;
 let _presentLangsCacheAt = 0;
 const PRESENT_LANGS_TTL_MS = 60_000;
 
-/** Languages that still have books and that the admin left enabled. */
-export function listEnabledContentLangs() {
+/** Raw `books.lang` values: INPX may spell one language as `ru`, `RU` and `Ru`. */
+function presentRawLangs() {
   const now = Date.now();
   if (!_presentLangsCache || now - _presentLangsCacheAt >= PRESENT_LANGS_TTL_MS) {
     _stmtPresentLangs ??= db.prepare(`
@@ -98,26 +98,47 @@ export function listEnabledContentLangs() {
       WHERE deleted = 0 AND lang != ''
       GROUP BY lang
     `);
-    const seen = new Set();
-    const codes = [];
-    for (const row of _stmtPresentLangs.all()) {
-      const code = String(row.code || '').trim().toLowerCase();
-      if (!LANG_CODE.test(code) || seen.has(code)) continue;
-      seen.add(code);
-      codes.push(code);
-    }
-    codes.sort();
-    _presentLangsCache = codes;
+    _presentLangsCache = _stmtPresentLangs.all().map((row) => String(row.code || ''));
     _presentLangsCacheAt = now;
   }
+  return _presentLangsCache;
+}
+
+/** The admin hides exact raw values (same comparison as the `active_books` view). */
+function enabledRawLangs() {
   const excluded = new Set(
     String(getSetting('excluded_languages') || '')
       .split(',')
-      .map((code) => code.trim().toLowerCase())
+      .map((code) => code.trim())
       .filter(Boolean)
   );
-  if (!excluded.size) return _presentLangsCache;
-  return _presentLangsCache.filter((code) => !excluded.has(code));
+  return presentRawLangs().filter((raw) => !excluded.has(raw.trim()));
+}
+
+/** Languages that still have books and that the admin left enabled. */
+export function listEnabledContentLangs() {
+  const seen = new Set();
+  for (const raw of enabledRawLangs()) {
+    const code = raw.trim().toLowerCase();
+    if (LANG_CODE.test(code)) seen.add(code);
+  }
+  return [...seen].sort();
+}
+
+/** Raw spellings of lower-case codes, for an index-friendly `lang IN (...)`. */
+function expandLangSpellings(codes) {
+  let raws;
+  try {
+    raws = enabledRawLangs();
+  } catch {
+    return codes;
+  }
+  const wanted = new Set(codes);
+  const out = [...codes];
+  for (const raw of raws) {
+    if (wanted.has(raw.trim().toLowerCase()) && !out.includes(raw)) out.push(raw);
+  }
+  return out;
 }
 
 export function clearEnabledContentLangCache() {

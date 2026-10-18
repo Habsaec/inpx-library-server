@@ -15,6 +15,7 @@ import {
   resolveContentLangFilter
 } from '../src/user-content-langs.js';
 import { renderBookGrid, renderBookFlibustaList } from '../src/templates/shared.js';
+import { renderFacetBooks } from '../src/templates/library.js';
 
 const USER = 'content-langs-user';
 
@@ -183,6 +184,57 @@ test('profile language choices follow the languages the admin left enabled', () 
     db.prepare('DELETE FROM books WHERE id IN (?, ?, ?)').run('enabled-ru', 'enabled-hidden', 'enabled-deleted');
     clearEnabledContentLangCache();
   }
+});
+
+test('a language spelled in another case stays enabled and filterable', () => {
+  initDb();
+  const prev = getSetting('excluded_languages') || '';
+  const insert = db.prepare(`
+    INSERT INTO books (
+      id, title, authors, genres, series, series_no, title_sort, author_sort,
+      series_sort, series_index, title_search, authors_search, series_search,
+      genres_search, keywords_search, file_name, archive_name, size, lib_id, deleted,
+      ext, date, lang, keywords, lib_rate, source_id
+    ) VALUES (
+      ?, 'case lang', '', '', '', '', 'case lang', '',
+      '', 0, 'case lang', '', '',
+      '', '', ?, 'a.zip', 1, ?, 0,
+      'fb2', '', ?, '', 0, NULL
+    )
+  `);
+  insert.run('case-lower', 'case-lower.fb2', 'case-lower', 'yy');
+  insert.run('case-upper', 'case-upper.fb2', 'case-upper', 'YY');
+  try {
+    setSetting('excluded_languages', prev ? `${prev},YY` : 'YY');
+    clearEnabledContentLangCache();
+    assert.ok(listEnabledContentLangs().includes('yy'));
+    assert.deepEqual(languageFilterClause('b.lang', 'yy', []), { where: 'b.lang = ?', params: ['yy'] });
+
+    setSetting('excluded_languages', prev);
+    clearEnabledContentLangCache();
+    assert.deepEqual(languageFilterClause('b.lang', 'yy', []), { where: 'b.lang IN (?,?)', params: ['yy', 'YY'] });
+  } finally {
+    setSetting('excluded_languages', prev);
+    db.prepare('DELETE FROM books WHERE id IN (?, ?)').run('case-lower', 'case-upper');
+    clearEnabledContentLangCache();
+  }
+});
+
+test('series and genre pages offer a book language picker', () => {
+  const html = renderFacetBooks({
+    title: 'Серия', items: [], total: 0, page: 1, pageSize: 24, user: null, stats: {},
+    facetPath: '/facet/series/x', indexStatus: null, sort: 'series', breadcrumbs: [{}, { href: '/series' }],
+    facet: 'series', facetValue: 'x', lang: 'ru', langs: ['en', 'ru']
+  });
+  assert.match(html, /class="search-form sort-control lang-filter-control"/);
+  assert.match(html, /<option value="ru" selected>RU<\/option>/);
+  assert.match(html, /<option value="en">EN<\/option>/);
+  const single = renderFacetBooks({
+    title: 'Серия', items: [], total: 0, page: 1, pageSize: 24, user: null, stats: {},
+    facetPath: '/facet/series/x', indexStatus: null, sort: 'series', breadcrumbs: [{}, { href: '/series' }],
+    facet: 'series', facetValue: 'x', langs: ['ru']
+  });
+  assert.doesNotMatch(single, /lang-filter-control/);
 });
 
 test('a personal language the admin turned off does not hide books', () => {

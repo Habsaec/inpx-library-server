@@ -4,7 +4,7 @@
 import {
   escapeHtml, sanitizeHtml, csrfHiddenField, pageShell,
   renderBookGrid, renderFavoriteBookGrid, renderEntityGrid, renderCardCover,
-  renderPagination, renderSortControl, renderEmptyState,
+  renderPagination, renderSortControl, renderLangFilterControl, renderEmptyState,
   renderDownloadMenu, renderBatchDownloadToolbar, renderScopeDownloadMenu,
   renderHomeShelf, renderMiniBookList, renderDiscoveryTiles,
   renderStatsRibbon, renderBookMetaList, renderSkeletonGrid,
@@ -1088,7 +1088,7 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
 }
 
-export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '' }) {
+export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '', lang = '', langs = [] }) {
   const isGenre = facet === 'genres';
   const isLang = facet === 'languages';
   const isEntityView = (isGenre || isLang) && (view === 'authors' || view === 'series');
@@ -1110,6 +1110,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
       const params = new URLSearchParams();
       if (v !== 'books') params.set('view', v);
       if (layout === 'list' || layout === 'grid') params.set('layout', layout);
+      if (lang) params.set('lang', lang);
       // Reset sort because allowed sort values differ between views
       const qs = params.toString();
       return `${facetPath}${qs ? `?${qs}` : ''}`;
@@ -1135,7 +1136,8 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
   const sortExtraHidden = {
     ...(isEntityView ? { view } : {}),
     ...(authorFilter ? { author: authorFilter } : {}),
-    ...(!isEntityView ? { layout: bookLayout } : {})
+    ...(!isEntityView ? { layout: bookLayout } : {}),
+    ...(lang ? { lang } : {})
   };
   const paginationBaseParams = new URLSearchParams();
   if (isEntityView) {
@@ -1147,6 +1149,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
     paginationBaseParams.set('layout', bookLayout);
   }
   if (order) paginationBaseParams.set('order', order);
+  if (lang) paginationBaseParams.set('lang', lang);
   const paginationBase = `${facetPath}?${paginationBaseParams.toString()}`;
 
   // Body block: either entity grid or book grid
@@ -1170,9 +1173,18 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
       if (sort) params.set('sort', sort);
       if (order) params.set('order', order);
       if (authorFilter) params.set('author', authorFilter);
+      if (lang) params.set('lang', lang);
       params.set('layout', listView ? 'grid' : 'list');
       return renderViewToggle({ href: `${facetPath}?${params.toString()}`, isListView: listView });
     })();
+  const langControl = isLang
+    ? ''
+    : renderLangFilterControl({
+      action: facetPath,
+      lang,
+      langs,
+      extraHidden: { ...sortExtraHidden, lang: '', sort, order }
+    });
 
   const facetBatchInner = `
     <section class="page-intro page-intro-slim">
@@ -1184,6 +1196,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
         ${markSeriesReadBtn}
         ${scopeDownload}
         ${layoutToggle}
+        ${langControl}
         ${renderSortControl({
           action: facetPath,
           sort,
@@ -1232,7 +1245,9 @@ export function renderAuthorFacetPage({
   csrfToken = '',
   authorPortraitUrl = '',
   authorBioHtml = '',
-  readSeriesNames = null
+  readSeriesNames = null,
+  lang = '',
+  langs = []
 }) {
   const facetAction = user
     ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
@@ -1286,15 +1301,18 @@ export function renderAuthorFacetPage({
     const params = new URLSearchParams();
     if (sort) params.set('sort', sort);
     if (order) params.set('order', order);
+    if (lang) params.set('lang', lang);
     params.set('view', nextView);
     return `${facetPath}?${params.toString()}`;
   };
+  const authorViewValue = isListView ? 'list' : 'series';
   const controls = `
     <section class="page-intro page-intro-slim author-facet-controls">
       <div class="page-intro-actions author-facet-controls-actions">
         ${facetAction}
         ${total > 0 ? renderScopeDownloadMenu({ facet: 'authors', value: facetValue }, { user }) : ''}
         ${renderViewToggle({ href: authorViewQuery(isListView ? 'series' : 'list'), isListView })}
+        ${renderLangFilterControl({ action: facetPath, lang, langs, extraHidden: { view: authorViewValue, sort, order } })}
         ${renderSortControl({
           action: facetPath,
           sort,
@@ -1304,7 +1322,7 @@ export function renderAuthorFacetPage({
             { value: 'count', label: t('sort.byBookCountAlt') },
             { value: 'recent', label: t('sort.recentFirst') }
           ],
-          extraHidden: { view: isListView ? 'list' : 'series' }
+          extraHidden: { view: authorViewValue, ...(lang ? { lang } : {}) }
         })}
       </div>
     </section>`;
@@ -1312,7 +1330,7 @@ export function renderAuthorFacetPage({
   const anyBooks = series.some((s) => (Number(s.bookCount) || 0) > 0 || (Array.isArray(s.books) && s.books.length)) || standaloneBooks.length > 0;
   const outsideSeriesSort = sort === 'recent' ? 'recent' : 'title';
   const outsideSeriesHref = facetValue
-    ? `/facet/authors/${encodeURIComponent(facetValue)}/outside-series?sort=${encodeURIComponent(outsideSeriesSort)}`
+    ? `/facet/authors/${encodeURIComponent(facetValue)}/outside-series?sort=${encodeURIComponent(outsideSeriesSort)}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}`
     : '';
   const seriesListHtml = (series.length || standaloneBooks.length)
     ? `<section class="library-shelf library-shelf-secondary author-facet-series-block">${renderAuthorFacetSeriesList(series, standaloneBooks.length ? { href: outsideSeriesHref, label: t('authorPage.outsideSeries'), bookCount: standaloneBooks.length } : null, readSeriesNames, facetValue)}</section>`
@@ -1383,7 +1401,9 @@ export function renderAuthorOutsideSeriesPage({
   csrfToken = '',
   readBookIds = null,
   listView = false,
-  layout = ''
+  layout = '',
+  lang = '',
+  langs = []
 }) {
   const facetAction = user
     ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
@@ -1394,6 +1414,7 @@ export function renderAuthorOutsideSeriesPage({
     const params = new URLSearchParams();
     if (sort) params.set('sort', sort);
     if (order) params.set('order', order);
+    if (lang) params.set('lang', lang);
     params.set('layout', listView ? 'grid' : 'list');
     return `${facetPath}?${params.toString()}`;
   })();
@@ -1406,6 +1427,7 @@ export function renderAuthorOutsideSeriesPage({
       <div class="page-intro-actions author-facet-controls-actions">
         ${facetAction}
         ${renderViewToggle({ href: layoutHref, isListView: listView })}
+        ${renderLangFilterControl({ action: facetPath, lang, langs, extraHidden: { layout: bookLayout, sort, order } })}
         ${renderSortControl({
           action: facetPath,
           sort,
@@ -1414,7 +1436,7 @@ export function renderAuthorOutsideSeriesPage({
             { value: 'recent', label: t('sort.recentFirst') },
             { value: 'title', label: t('sort.byTitle') }
           ],
-          extraHidden: { layout: bookLayout }
+          extraHidden: { layout: bookLayout, ...(lang ? { lang } : {}) }
         })}
       </div>
     </section>`;
