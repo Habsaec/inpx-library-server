@@ -36,7 +36,7 @@ import {
   getUserByUsername, resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser
 } from '../db.js';
 import { parseNotesFilter } from '../services/reader-notes.js';
-import { isListBrowseView } from '../browse-view-prefs.js';
+import { isListBrowseView, resolveAuthorFacetView, resolveFacetBookLayout } from '../browse-view-prefs.js';
 import {
   getBookById,
   getBooksByIds,
@@ -679,6 +679,7 @@ export function registerLibraryRoutes(app, deps) {
       ];
       const p = safePage(req.query.page, 1);
       const pageSize = 48;
+      const bookLayout = resolveFacetBookLayout({ queryLayout: req.query.layout, username });
       const grouped = await getAuthorBooksGroupedCoalesced(value, sort, order, { page: p, pageSize });
       const facetPath = `/facet/authors/${encodeURIComponent(value)}/outside-series`;
       res.send(
@@ -691,6 +692,7 @@ export function registerLibraryRoutes(app, deps) {
           indexStatus: getIndexStatus(), sort, order, facetPath, breadcrumbs,
           favorite, facetValue: value, csrfToken: req.csrfToken || '',
           page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
+          listView: bookLayout === 'list', layout: bookLayout,
           readBookIds: username ? getReadBookIdSet(username) : null
         })
       );
@@ -764,7 +766,7 @@ export function registerLibraryRoutes(app, deps) {
         const facetRoot = flibSourceId != null ? getSourceRoot(flibSourceId) : '';
         const p = safePage(req.query.page, 1);
         const pageSize = 48;
-        const authorView = isListBrowseView({ username, queryView: req.query.view, scope: 'catalog' }) ? 'list' : 'series';
+        const authorView = resolveAuthorFacetView({ queryView: req.query.view, username });
 
         const [grouped, fullSummary, authorPortraitUrl, authorBioHtml] = await Promise.all([
           getAuthorBooksGroupedCoalesced(value, authorSort, order, { page: p, pageSize }),
@@ -808,6 +810,8 @@ export function registerLibraryRoutes(app, deps) {
 
       // Mode switcher for genre/language pages: ?view=authors|series groups books by entity
       // so big sub-genres (10k+ books) become navigable instead of a flat dump.
+      // Book rows vs covers use `layout`, because `view` is already that switcher.
+      const bookLayout = resolveFacetBookLayout({ queryLayout: req.query.layout, username });
       const hasEntityView = facet === 'genres' || facet === 'languages';
       const allowedViews = hasEntityView ? ['books', 'authors', 'series'] : ['books'];
       const requestedView = String(req.query.view || (hasEntityView ? 'authors' : 'books'));
@@ -839,7 +843,8 @@ export function registerLibraryRoutes(app, deps) {
           indexStatus: getIndexStatus(), sort: entitySort, order, facet, facetValue: value,
           favorite, seriesRead: false, breadcrumbs, csrfToken: req.csrfToken || '',
           readBookIds: null,
-          view, entityItems: entityResult.items
+          view, entityItems: entityResult.items,
+          listView: bookLayout === 'list', layout: bookLayout
         }));
         return;
       }
@@ -859,7 +864,8 @@ export function registerLibraryRoutes(app, deps) {
         indexStatus: getIndexStatus(), sort, order, facet, facetValue: value,
         favorite, seriesRead, breadcrumbs, csrfToken: req.csrfToken || '',
         readBookIds: username ? getReadBookIdSet(username) : null,
-        view, authorFilter
+        view, authorFilter,
+        listView: bookLayout === 'list', layout: bookLayout
       }));
     } catch (error) {
       next(error);

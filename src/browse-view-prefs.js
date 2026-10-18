@@ -28,3 +28,25 @@ export function resolveBrowseViewMode({ username = '', queryView = '', scope = '
 export function isListBrowseView(opts) {
   return resolveBrowseViewMode(opts) === 'list';
 }
+
+/**
+ * Author page: `?view=list` is the flat list, `?view=series` (or `grid`) is the
+ * series grouping. An explicit query wins over the saved catalog preference,
+ * otherwise a saved "list" preference would ignore the button that leaves it.
+ * @returns {'list'|'series'}
+ */
+export function resolveAuthorFacetView({ queryView = '', username = '' } = {}) {
+  const requested = String(queryView || '');
+  if (requested === 'list') return 'list';
+  if (requested === 'series' || requested === 'grid') return 'series';
+  return isListBrowseView({ username, queryView: '', scope: 'catalog' }) ? 'list' : 'series';
+}
+
+/**
+ * Book lists on series/genre/language pages. `layout` is separate from `view`,
+ * which those pages already use for books/authors/series tabs.
+ * @returns {'list'|'grid'}
+ */
+export function resolveFacetBookLayout({ queryLayout = '', username = '' } = {}) {
+  return isListBrowseView({ username, queryView: queryLayout, scope: 'catalog' }) ? 'list' : 'grid';
+}

@@ -101,7 +101,7 @@ function buildCatalogQueryParams({
   if (minRate >= 1) p.set('minRate', String(minRate));
   if (hasSeries === 0 || hasSeries === 1) p.set('hasSeries', String(hasSeries));
   if (genreMode === 'and') p.set('genreMode', 'and');
-  if (view === 'list') p.set('view', 'list');
+  if (view === 'list' || view === 'grid') p.set('view', view);
   for (const g of genres) {
     if (g) p.append('genre', g);
   }
@@ -272,7 +272,7 @@ function renderCatalogFilterPanel({
       <input type="hidden" name="sort" value="${escapeHtml(sort || 'title')}">
       ${order ? `<input type="hidden" name="order" value="${escapeHtml(order)}">` : ''}
       ${letter ? `<input type="hidden" name="letter" value="${escapeHtml(letter)}">` : ''}
-      ${view === 'list' ? '<input type="hidden" name="view" value="list">' : ''}
+      ${(view === 'list' || view === 'grid') ? `<input type="hidden" name="view" value="${escapeHtml(view)}">` : ''}
       <div class="catalog-filter-bar">
         <details class="catalog-filter-shell">
           <summary class="button catalog-filter-summary">
@@ -462,9 +462,10 @@ export function renderCatalog({
         { value: 'count', label: t('sort.byBookCount') },
         { value: 'name', label: t('sort.byName') }
       ];
+  const browseView = isListView ? 'list' : 'grid';
   const catalogParams = buildCatalogQueryParams({
     query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode,
-    view: isListView ? 'list' : ''
+    view: browseView
   });
   const catalogPageBase = `/catalog?${catalogParams.toString()}`;
   const genreCsv = genreList.join(',');
@@ -525,15 +526,14 @@ export function renderCatalog({
     ? (() => {
       const nextParams = buildCatalogQueryParams({
         query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode,
-        view: isListView ? '' : 'list'
+        view: isListView ? 'grid' : 'list'
       });
-      if (!isListView) nextParams.set('view', 'list');
       return renderViewToggle({ href: `/catalog?${nextParams.toString()}`, isListView });
     })()
     : '';
   const filterPanel = isBookField ? renderCatalogFilterPanel({
     query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode, langs, formats, genreOptions, genreOptionsLazy,
-    view: isListView ? 'list' : '',
+    view: browseView,
     smartShelfCsrf: user ? csrfToken : null
   }) : '';
   const content = `
@@ -560,7 +560,7 @@ export function renderCatalog({
             ...((hasSeries === 0 || hasSeries === 1) ? { hasSeries: String(hasSeries) } : {}),
             ...(genreMode === 'and' ? { genreMode: 'and' } : {}),
             ...(letter ? { letter } : {}),
-            ...(isListView ? { view: 'list' } : {})
+            view: browseView
           }
         })}
       </div>
@@ -628,9 +628,10 @@ export function renderLibraryView({
     { value: 'series', label: t('sort.bySeries') },
     { value: 'rating', label: t('sort.byRating') }
   ];
+  const browseView = isListView ? 'list' : 'grid';
   const viewParams = buildCatalogQueryParams({
     sort, order, genres: genreList, lang, format, year, minRate, hasSeries, genreMode,
-    view: isListView ? 'list' : ''
+    view: isSeries ? '' : browseView
   });
   if (type) viewParams.set('type', type);
   const filterHidden = {
@@ -641,17 +642,16 @@ export function renderLibraryView({
     ...(minRate >= 1 ? { minRate: String(minRate) } : {}),
     ...((hasSeries === 0 || hasSeries === 1) ? { hasSeries: String(hasSeries) } : {}),
     ...(genreMode === 'and' ? { genreMode: 'and' } : {}),
-    ...(isListView ? { view: 'list' } : {})
+    ...(isSeries ? {} : { view: browseView })
   };
   const viewToggle = isSeries
     ? ''
     : (() => {
       const nextParams = buildCatalogQueryParams({
         sort, order, genres: genreList, lang, format, year, minRate, hasSeries, genreMode,
-        view: isListView ? '' : 'list'
+        view: isListView ? 'grid' : 'list'
       });
       if (type) nextParams.set('type', type);
-      if (!isListView) nextParams.set('view', 'list');
       const qs = nextParams.toString();
       return renderViewToggle({ href: qs ? `${filterAction}?${qs}` : filterAction, isListView });
     })();
@@ -659,7 +659,7 @@ export function renderLibraryView({
     ? renderCatalogFilterPanel({
       sort, order, genres: genreList, lang, format, year, minRate, hasSeries, genreMode,
       langs, formats, genreOptions,
-      view: isListView ? 'list' : '',
+      view: browseView,
       action: filterAction,
       formId: `library-filters-${view}`
     })
@@ -1081,7 +1081,7 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
 }
 
-export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '' }) {
+export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '' }) {
   const isGenre = facet === 'genres';
   const isLang = facet === 'languages';
   const isEntityView = (isGenre || isLang) && (view === 'authors' || view === 'series');
@@ -1102,6 +1102,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
     const buildHref = (v) => {
       const params = new URLSearchParams();
       if (v !== 'books') params.set('view', v);
+      if (layout === 'list' || layout === 'grid') params.set('layout', layout);
       // Reset sort because allowed sort values differ between views
       const qs = params.toString();
       return `${facetPath}${qs ? `?${qs}` : ''}`;
@@ -1123,7 +1124,12 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
         { value: 'series', label: t('sort.bySeries') },
         { value: 'rating', label: t('sort.byRating') }
       ];
-  const sortExtraHidden = isEntityView ? { view } : (authorFilter ? { author: authorFilter } : {});
+  const bookLayout = layout === 'list' || layout === 'grid' ? layout : (listView ? 'list' : 'grid');
+  const sortExtraHidden = {
+    ...(isEntityView ? { view } : {}),
+    ...(authorFilter ? { author: authorFilter } : {}),
+    ...(!isEntityView ? { layout: bookLayout } : {})
+  };
   const paginationBaseParams = new URLSearchParams();
   if (isEntityView) {
     paginationBaseParams.set('view', view);
@@ -1131,6 +1137,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
   } else {
     paginationBaseParams.set('sort', sort || 'recent');
     if (authorFilter) paginationBaseParams.set('author', authorFilter);
+    paginationBaseParams.set('layout', bookLayout);
   }
   if (order) paginationBaseParams.set('order', order);
   const paginationBase = `${facetPath}?${paginationBaseParams.toString()}`;
@@ -1143,9 +1150,22 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
         : renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: facetPath, actionLabel: t('facet.viewBooks') }))
     : !items.length
       ? renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: '/', actionLabel: t('facet.toCatalog') })
-      : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds, seriesContext: facet === 'series' ? facetValue : null });
+      : (listView
+        ? renderBookFlibustaList(items, { user, batchSelect: showBatch })
+        : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds, seriesContext: facet === 'series' ? facetValue : null }));
 
   const countLabelKey = isEntityView ? (view === 'authors' ? 'author' : 'series') : 'book';
+  const layoutToggle = isEntityView
+    ? ''
+    : (() => {
+      const params = new URLSearchParams();
+      if (view && view !== 'books') params.set('view', view);
+      if (sort) params.set('sort', sort);
+      if (order) params.set('order', order);
+      if (authorFilter) params.set('author', authorFilter);
+      params.set('layout', listView ? 'grid' : 'list');
+      return renderViewToggle({ href: `${facetPath}?${params.toString()}`, isListView: listView });
+    })();
 
   const facetBatchInner = `
     <section class="page-intro page-intro-slim">
@@ -1156,6 +1176,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
         ${facetAction}
         ${markSeriesReadBtn}
         ${scopeDownload}
+        ${layoutToggle}
         ${renderSortControl({
           action: facetPath,
           sort,
@@ -1254,11 +1275,19 @@ export function renderAuthorFacetPage({
       </div>
     </section>`;
 
+  const authorViewQuery = (nextView) => {
+    const params = new URLSearchParams();
+    if (sort) params.set('sort', sort);
+    if (order) params.set('order', order);
+    params.set('view', nextView);
+    return `${facetPath}?${params.toString()}`;
+  };
   const controls = `
     <section class="page-intro page-intro-slim author-facet-controls">
       <div class="page-intro-actions author-facet-controls-actions">
         ${facetAction}
         ${total > 0 ? renderScopeDownloadMenu({ facet: 'authors', value: facetValue }, { user }) : ''}
+        ${renderViewToggle({ href: authorViewQuery(isListView ? 'series' : 'list'), isListView })}
         ${renderSortControl({
           action: facetPath,
           sort,
@@ -1267,7 +1296,8 @@ export function renderAuthorFacetPage({
             { value: 'series', label: t('sort.bySeries') },
             { value: 'count', label: t('sort.byBookCountAlt') },
             { value: 'recent', label: t('sort.recentFirst') }
-          ]
+          ],
+          extraHidden: { view: isListView ? 'list' : 'series' }
         })}
       </div>
     </section>`;
@@ -1344,12 +1374,22 @@ export function renderAuthorOutsideSeriesPage({
   favorite = false,
   facetValue = '',
   csrfToken = '',
-  readBookIds = null
+  readBookIds = null,
+  listView = false,
+  layout = ''
 }) {
   const facetAction = user
     ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
     : '';
   const outsideBatch = Boolean(books.length && canDownloadInUi(user));
+  const bookLayout = layout === 'list' || layout === 'grid' ? layout : (listView ? 'list' : 'grid');
+  const layoutHref = (() => {
+    const params = new URLSearchParams();
+    if (sort) params.set('sort', sort);
+    if (order) params.set('order', order);
+    params.set('layout', listView ? 'grid' : 'list');
+    return `${facetPath}?${params.toString()}`;
+  })();
   const controls = `
     <section class="page-intro page-intro-slim author-facet-controls">
       <div class="page-intro-copy">
@@ -1358,6 +1398,7 @@ export function renderAuthorOutsideSeriesPage({
       </div>
       <div class="page-intro-actions author-facet-controls-actions">
         ${facetAction}
+        ${renderViewToggle({ href: layoutHref, isListView: listView })}
         ${renderSortControl({
           action: facetPath,
           sort,
@@ -1365,12 +1406,15 @@ export function renderAuthorOutsideSeriesPage({
           options: [
             { value: 'recent', label: t('sort.recentFirst') },
             { value: 'title', label: t('sort.byTitle') }
-          ]
+          ],
+          extraHidden: { layout: bookLayout }
         })}
       </div>
     </section>`;
   const booksBlock = books.length
-    ? renderBookGrid(books, { isAuthenticated: Boolean(user), batchSelect: outsideBatch, user, readBookIds })
+    ? (listView
+      ? renderBookFlibustaList(books, { user, batchSelect: outsideBatch })
+      : renderBookGrid(books, { isAuthenticated: Boolean(user), batchSelect: outsideBatch, user, readBookIds }))
     : renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: `/facet/authors/${encodeURIComponent(facetValue)}`, actionLabel: t('facet.toCatalog') });
   const outsideInner = `
     ${controls}
