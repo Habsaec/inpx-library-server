@@ -59,10 +59,11 @@ async function loadHomeRecommendationsProgressively(attempt = 0) {
       return;
     }
     const listMode = section.dataset.homeView === 'list';
+    const batchSelect = Boolean(findBatchFabForScope(section.closest('.batch-select-scope')));
     const tmp = document.createElement('div');
     tmp.innerHTML = listMode
-      ? `<div class="author-flibusta-list catalog-book-list home-reveal"><section class="author-flibusta-group catalog-book-list-group"><ul class="author-flibusta-books catalog-book-list-ul">${items.map((b) => renderListRowHtml(b)).join('')}</ul></section></div>`
-      : `<div class="grid home-reveal">${items.map((b) => renderCardHtml(b)).join('')}</div>`;
+      ? `<div class="author-flibusta-list catalog-book-list home-reveal"><section class="author-flibusta-group catalog-book-list-group"><ul class="author-flibusta-books catalog-book-list-ul">${items.map((b) => renderListRowHtml(b, { batchSelect })).join('')}</ul></section></div>`
+      : `<div class="grid home-reveal">${items.map((b) => renderCardHtml(b, { batchSelect })).join('')}</div>`;
     const grid = tmp.firstElementChild;
     if (!grid) return;
     gridMount.replaceWith(grid);

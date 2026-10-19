@@ -1460,24 +1460,25 @@ export function renderMiniBookList(title, items = [], emptyText = null) {
     </section>`;
 }
 
-export function renderHomeShelf({ title, href, items, type = 'books', facetBasePath = '', isAuthenticated = false, showBatch = false, user = null, readBookIds = null, listView = false } = {}) {
+export function renderHomeShelf({ title, href, items, type = 'books', facetBasePath = '', isAuthenticated = false, showBatch = false, batchSelect = false, user = null, readBookIds = null, listView = false, actionsHtml = '' } = {}) {
   const batchToolbar = showBatch && items.length && canDownloadInUi(user)
     ? renderBatchDownloadToolbar({ adhoc: true }, { user })
     : '';
+  const withCheckboxes = Boolean(batchToolbar) || batchSelect;
   const body = type === 'books'
     ? (items.length
       ? (listView
-        ? renderBookFlibustaList(items, { user, batchSelect: Boolean(batchToolbar) })
-        : renderBookGrid(items, { isAuthenticated, batchSelect: Boolean(batchToolbar), user, readBookIds }))
+        ? renderBookFlibustaList(items, { user, batchSelect: withCheckboxes })
+        : renderBookGrid(items, { isAuthenticated, batchSelect: withCheckboxes, user, readBookIds }))
       : renderEmptyState({ title: t('home.shelfEmptyTitle'), text: t('home.shelfEmptyText') }))
     : renderEntityGrid(items, facetBasePath, t('home.entityEmpty'));
   const wrapped = batchToolbar ? `<div class="batch-select-scope">${batchToolbar}${body}</div>` : body;
   const viewAttr = type === 'books' && listView ? ' data-home-view="list"' : type === 'books' ? ' data-home-view="grid"' : '';
   return `
-    <section class="library-shelf"${viewAttr}>
+    <section class="library-shelf home-shelf"${viewAttr}>
       <div class="section-title">
         <h2>${escapeHtml(title)}</h2>
-        ${href ? `<div class="actions"><a class="shelf-link" href="${href}">${escapeHtml(t('home.showAll'))}</a></div>` : ''}
+        ${href || actionsHtml ? `<div class="actions">${actionsHtml}${href ? `<a class="shelf-link" href="${href}">${escapeHtml(t('home.showAll'))}</a>` : ''}</div>` : ''}
       </div>
       ${wrapped}
     </section>`;

@@ -2200,7 +2200,8 @@ button[data-active-favorite="true"]:hover {
 
 .sort-control .sort-control-order,
 .sort-control .sort-control-order.button,
-.page-intro a.view-toggle {
+.page-intro a.view-toggle,
+.home-shelf .section-title .view-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2215,8 +2216,14 @@ button[data-active-favorite="true"]:hover {
 }
 
 .sort-control .sort-control-order svg,
-.page-intro a.view-toggle svg {
+.page-intro a.view-toggle svg,
+.home-shelf .section-title .view-toggle svg {
   display: block;
+}
+
+.view-toggle-form {
+  display: inline-flex;
+  margin: 0;
 }
 
 .search-form label {
@@ -6208,6 +6215,41 @@ html[data-theme="light"] .page-jump::after {
 .library-shelf .section-title h2 {
   font-size: 1.125rem;
   font-weight: 620;
+}
+
+/* Home: centered shelf title, «Показать все» / view toggle stay on the right */
+.library-shelf.home-shelf .section-title {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+}
+
+.home-shelf .section-title h2 {
+  grid-column: 2;
+  text-align: center;
+}
+
+.home-shelf .section-title .actions {
+  grid-column: 3;
+  justify-self: end;
+  flex-wrap: nowrap;
+}
+
+.home-shelf .section-title .shelf-link {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .library-shelf.home-shelf .section-title {
+    grid-template-columns: 1fr;
+    row-gap: 8px;
+  }
+
+  .home-shelf .section-title h2,
+  .home-shelf .section-title .actions {
+    grid-column: 1;
+    justify-self: center;
+  }
 }
 
 .library-shelf .section-title .muted,

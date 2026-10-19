@@ -270,6 +270,12 @@ test('renderHome returns home page HTML', async () => {
   assert.ok(withContinue.includes('data-home-recommendations-grid'));
   assert.ok(withContinue.indexOf('data-home-continue') < withContinue.indexOf('data-home-recommendations'));
   assert.ok(withContinue.lastIndexOf('href="/library/recent"') < withContinue.indexOf('data-home-recommendations-grid'));
+  assert.ok(html.includes('href="/?view=list"'));
+  assert.ok(!html.includes('/profile/home-view'));
+  const loggedIn = renderHome({ user: { username: 'tester' }, stats: {}, indexStatus: {}, sections: {}, csrfToken: 'tok', listView: true });
+  assert.ok(loggedIn.includes('action="/profile/home-view"'));
+  assert.ok(loggedIn.includes('name="view" value="grid"'));
+  assert.ok(loggedIn.includes('name="_csrf" value="tok"'));
 });
 
 test('reading page cards and rows get a remove button only with removeReading', async () => {

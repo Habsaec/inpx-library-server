@@ -450,6 +450,14 @@ export function registerAuthRoutes(app, deps) {
     }
   });
 
+  app.post('/profile/home-view', requireWebAuth, (req, res) => {
+    try {
+      const { catalogView } = getUserBrowseViewPrefs(req.user.username);
+      setUserBrowseViewPrefs(req.user.username, { homeView: req.body.view, catalogView });
+    } catch { /* keep the current view */ }
+    res.redirect(303, '/');
+  });
+
   app.post('/profile/password', requireWebAuth, (req, res) => {
     const { currentPassword, newPassword, confirmPassword } = req.body;
     const renderErr = (msg) => res.status(400).send(renderSettingsPage(req, msg, req.csrfToken || '', 'account'));
