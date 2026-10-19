@@ -3469,6 +3469,11 @@ function isPageEmailSendAllowed() {
   return Boolean(document.querySelector('[data-send-to-ereader], [data-batch-email-format]'));
 }
 
+function isPageTelegramSendAllowed() {
+  if (typeof document === 'undefined') return false;
+  return Boolean(document.querySelector('[data-send-to-telegram], [data-batch-send-telegram]'));
+}
+
 const READ_BADGE_SVG = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
 const READ_BOOK_ICON_SVG = '<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
 let _readBookIdSet = null;
@@ -3570,6 +3575,28 @@ function bookLangBadgeHtml(book) {
   return `<span class="book-lang-badge" title="${escapeHtml(uiT('meta.language'))}">${escapeHtml(label)}</span>`;
 }
 
+function uiSendTargets() {
+  return [
+    isPageEmailSendAllowed() ? ['data-send-to-ereader="1"', uiT('book.toEmail')] : null,
+    isPageTelegramSendAllowed() ? ['data-send-to-telegram="1"', uiT('telegram.sendToTelegram')] : null
+  ].filter(Boolean);
+}
+
+/** «Отправить» на обложке вместо «Подробнее» (как renderCardSendMenu на сервере). */
+function renderCardCoverSecondaryAction(book, bookRefAttr) {
+  const items = uiSendTargets();
+  if (!items.length) {
+    return `<a class="button card-cover-action" href="${bookPagePath(book.id)}">${escapeHtml(uiT('card.more'))}</a>`;
+  }
+  if (items.length === 1) {
+    return `<button class="button card-cover-action" type="button" ${bookRefAttr} ${items[0][0]}>${escapeHtml(items[0][1])}</button>`;
+  }
+  return `<details class="download-menu download-menu-compact card-send-menu">
+      <summary class="button card-cover-action">${escapeHtml(uiT('book.send'))}</summary>
+      <div class="download-menu-popover">${items.map(([attr, label]) => `<button type="button" class="download-format-link" ${bookRefAttr} ${attr}>${escapeHtml(label)}</button>`).join('')}</div>
+    </details>`;
+}
+
 function renderCardHtml(book, { batchSelect = false, seriesContext = null, readActions = false } = {}) {
   const id = escapeHtml(book.id);
   const authorKey = book.authorsList?.[0] || book.authors?.split(',')[0]?.trim() || '';
@@ -3626,7 +3653,7 @@ function renderCardHtml(book, { batchSelect = false, seriesContext = null, readA
       ${getReadBookIdSet().has(book.id) ? `<span class="read-badge">${READ_BADGE_SVG}</span>` : ''}
       ${coverRating}
     </a>
-    <div class="card-cover-actions">${downloadMenu}<a class="button card-cover-action" href="${bookPagePath(book.id)}">${escapeHtml(uiT('card.more'))}</a></div>
+    <div class="card-cover-actions">${downloadMenu}${renderCardCoverSecondaryAction(book, cardAttrs)}</div>
     </div></div>
     <div class="meta">
       <h3><a href="${bookPagePath(book.id)}">${title}</a></h3>
@@ -3676,9 +3703,15 @@ function renderListRowHtml(book, { batchSelect = false } = {}) {
     ? `data-book-id-ref="${escapeHtml(cardRef)}"`
     : `data-book-id-ref="${escapeHtml(cardRef)}" data-book-id="${id}"`;
   const readBtn = `<a class="button author-flibusta-read" href="${readPagePath(book.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(uiT('book.read'))}</a>`;
-  const emailBtn = isPageEmailSendAllowed()
-    ? `<button class="button author-flibusta-email" type="button" ${bookRefAttr} data-send-to-ereader="1">${escapeHtml(uiT('book.toEmail'))}</button>`
-    : '';
+  const sendItems = uiSendTargets();
+  const emailBtn = sendItems.length === 1
+    ? `<button class="button author-flibusta-email" type="button" ${bookRefAttr} ${sendItems[0][0]}>${escapeHtml(sendItems[0][1])}</button>`
+    : sendItems.length
+      ? `<span class="author-flibusta-dl author-flibusta-send"><details class="download-menu download-menu-compact">
+      <summary class="button download-menu-trigger download-menu-trigger-compact">${escapeHtml(uiT('book.send'))}</summary>
+      <div class="download-menu-popover">${sendItems.map(([attr, label]) => `<button type="button" class="download-format-link" ${bookRefAttr} ${attr}>${escapeHtml(label)}</button>`).join('')}</div>
+    </details></span>`
+      : '';
   const actions = `<span class="author-flibusta-actions">${readBtn}${dl}${emailBtn}</span>`;
   const cardAttrs = bookRefAttr;
   return `<li class="author-flibusta-book" ${cardAttrs}>
@@ -4815,6 +4848,16 @@ function attachAddToShelfButtons() {
   }
 }
 
+const EREADER_FORMAT_KEY = 'ereader-format';
+
+function readLastEreaderFormat() {
+  try { return localStorage.getItem(EREADER_FORMAT_KEY) || ''; } catch { return ''; }
+}
+
+function rememberEreaderFormat(format) {
+  try { localStorage.setItem(EREADER_FORMAT_KEY, String(format || '')); } catch { /* private mode */ }
+}
+
 function attachSendToEreader() {
   if (attachSendToEreader._bound) return;
   attachSendToEreader._bound = true;
@@ -4870,15 +4913,23 @@ function attachSendToEreader() {
               <option value="kfx">KFX (Kindle)</option>
               <option value="azw8">AZW8 (Kindle)</option>
               <option value="fb2">FB2</option>
+              <option value="fb2zip">FB2.ZIP</option>
             </select>
           </div>
           <button type="submit" class="modal-form-submit">${escapeHtml(uiT('app.emailSendBtn'))}</button>
         </form>
       `);
 
+      const formatSelect = overlay.querySelector('select[name="format"]');
+      const lastFormat = readLastEreaderFormat();
+      if (lastFormat && [...formatSelect.options].some((o) => o.value === lastFormat)) {
+        formatSelect.value = lastFormat;
+      }
+
       overlay.querySelector('[data-ereader-form]').addEventListener('submit', async (ev) => {
         ev.preventDefault();
-        const format = overlay.querySelector('select[name="format"]').value;
+        const format = formatSelect.value;
+        rememberEreaderFormat(format);
         const submitBtn = overlay.querySelector('.modal-form-submit');
         submitBtn.disabled = true;
         submitBtn.textContent = uiT('app.emailSending');
@@ -4953,9 +5004,41 @@ function attachSendToTelegram() {
   });
 }
 
+/** Выбранные книги для меню «Отправить» панели выбора: { ctx, ids } или null. */
+function collectBatchSendSelection(menu) {
+  const fab = menu.closest('[data-batch-fab]');
+  const scope = menu.closest('.batch-select-scope')
+    || (fab?.dataset.batchScopeId
+      ? document.querySelector(`.batch-select-scope[data-batch-scope-id="${fab.dataset.batchScopeId}"]`)
+      : null);
+  if (!scope) return null;
+
+  let ctx;
+  try {
+    ctx = JSON.parse(menu.dataset.batchEreaderParams || '{}');
+  } catch {
+    return null;
+  }
+
+  const ids = [...scope.querySelectorAll('input.batch-select-cb')]
+    .filter((c) => c.checked)
+    .map((c) => (typeof resolveBatchBookIdFromElement === 'function' ? resolveBatchBookIdFromElement(c) : (c.getAttribute('data-batch-book-id') || c.closest('.card')?.dataset.bookId)))
+    .filter(Boolean);
+  return { ctx, ids };
+}
+
 function attachSendBatchToEreader() {
   if (attachSendBatchToEreader._bound) return;
   attachSendBatchToEreader._bound = true;
+
+  document.addEventListener('toggle', (e) => {
+    const menu = e.target;
+    if (!(menu instanceof HTMLDetailsElement) || !menu.open || !menu.classList.contains('batch-email-menu')) return;
+    const last = readLastEreaderFormat();
+    for (const btn of menu.querySelectorAll('[data-batch-email-format]')) {
+      btn.classList.toggle('is-last-used', btn.getAttribute('data-batch-email-format') === last);
+    }
+  }, true);
 
   document.addEventListener('click', async (e) => {
     const fmtBtn = e.target.closest('[data-batch-email-format]');
@@ -4966,28 +5049,14 @@ function attachSendBatchToEreader() {
     const format = fmtBtn.getAttribute('data-batch-email-format') || 'epub2';
     e.preventDefault();
 
-    const fab = menu.closest('[data-batch-fab]');
-    const scope = menu.closest('.batch-select-scope')
-      || (fab?.dataset.batchScopeId
-        ? document.querySelector(`.batch-select-scope[data-batch-scope-id="${fab.dataset.batchScopeId}"]`)
-        : null);
-    if (!scope) return;
-
-    let ctx;
-    try {
-      ctx = JSON.parse(menu.dataset.batchEreaderParams || '{}');
-    } catch {
-      return;
-    }
-
-    const ids = [...scope.querySelectorAll('input.batch-select-cb')]
-      .filter((c) => c.checked)
-      .map((c) => (typeof resolveBatchBookIdFromElement === 'function' ? resolveBatchBookIdFromElement(c) : (c.getAttribute('data-batch-book-id') || c.closest('.card')?.dataset.bookId)))
-      .filter(Boolean);
+    const selection = collectBatchSendSelection(menu);
+    if (!selection) return;
+    const { ctx, ids } = selection;
     if (!ids.length) {
       showToast(uiT('app.batchSelectAtLeastOne'), 'error');
       return;
     }
+    rememberEreaderFormat(format);
     const zipMax = getBatchZipMax();
     if (ids.length > zipMax) {
       showToast(uiTp('app.batchEmailMax', { n: zipMax }), 'error');
@@ -5050,6 +5119,69 @@ function attachSendBatchToEreader() {
       }
     } catch {
       showToast(uiT('app.networkError'), 'error');
+    }
+  });
+}
+
+function attachSendBatchToTelegram() {
+  if (attachSendBatchToTelegram._bound) return;
+  attachSendBatchToTelegram._bound = true;
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-batch-send-telegram]') : null;
+    if (!btn || btn.disabled) return;
+    const menu = btn.closest('details.batch-email-menu');
+    if (!menu) return;
+    e.preventDefault();
+
+    const selection = collectBatchSendSelection(menu);
+    if (!selection) return;
+    const { ids } = selection;
+    if (!ids.length) {
+      showToast(uiT('app.batchSelectAtLeastOne'), 'error');
+      return;
+    }
+    const max = Number(btn.getAttribute('data-batch-send-telegram')) || 20;
+    if (ids.length > max) {
+      showToast(uiTp('telegram.batchMax', { n: max }), 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    menu.removeAttribute('open');
+    showToast(uiT('telegram.sending'), 'info');
+    try {
+      const res = await fetch('/api/send-to-telegram/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ ids })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        let msg = data.message || uiT('telegram.sentOk');
+        if (data.partial && data.skipped > 0) {
+          msg += ' ' + uiTp('telegram.batchSkipped', { skipped: data.skipped, requested: data.requested });
+        }
+        showToast(msg, 'success');
+      } else if (data.code === 'TELEGRAM_NOT_LINKED') {
+        openModal(`
+          <div class="modal-header">
+            <span>${escapeHtml(uiT('telegram.sendToTelegram'))}</span>
+            <button type="button" class="modal-close">&times;</button>
+          </div>
+          <div class="modal-form">
+            <p>${escapeHtml(uiT('telegram.linkPrompt'))}</p>
+            <p style="margin-top:8px;"><a href="${escapeHtml(data.linkUrl || '/profile#settings')}" style="color:var(--accent);">${escapeHtml(uiT('telegram.linkBtn'))}</a></p>
+          </div>
+        `);
+      } else {
+        showToast(data.error || uiT('telegram.sendFailed'), 'error');
+      }
+    } catch {
+      showToast(uiT('app.networkError'), 'error');
+    } finally {
+      btn.disabled = false;
     }
   });
 }
@@ -7499,6 +7631,7 @@ attachAddToShelfButtons();
 attachSendToEreader();
 attachSendToTelegram();
 attachSendBatchToEreader();
+attachSendBatchToTelegram();
 attachUpdateUpload();
 attachUsersImport();
 attachAdminCollapsePersistence();

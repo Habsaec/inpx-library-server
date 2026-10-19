@@ -510,12 +510,13 @@ export function renderCatalog({
     ? renderCatalogSearchHints(searchHints, query)
     : '';
   const searchNavBlock = query ? renderSearchNav(searchNav, { query, field }) : '';
-  const listBatch = Boolean(isListView && canDownloadInUi(user) && items.length);
-  const booksMarkup = isListView
-    ? (listBatch
-      ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderBookFlibustaList(items, { user, batchSelect: true })}</div>`
-      : renderBookFlibustaList(items, { user, batchSelect: false }))
-    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: false, user, readBookIds });
+  const showBatch = Boolean(canDownloadInUi(user) && items.length);
+  const booksList = isListView
+    ? renderBookFlibustaList(items, { user, batchSelect: showBatch })
+    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds });
+  const booksMarkup = showBatch
+    ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${booksList}</div>`
+    : booksList;
   const resultsMarkup = items.length
     ? isBookField
       ? `${catalogHintBlock}${recoveryHints}${booksMarkup}`
@@ -673,13 +674,14 @@ export function renderLibraryView({
       options: sortOptions,
       extraHidden: filterHidden
     });
-  const listBatch = Boolean(isListView && canDownloadInUi(user) && items.length);
+  const showBatch = Boolean(canDownloadInUi(user) && items.length);
   const removeReading = Boolean(view === 'continue' && user);
-  const booksMarkup = isListView
-    ? (listBatch
-      ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderBookFlibustaList(items, { user, batchSelect: true, removeReading })}</div>`
-      : renderBookFlibustaList(items, { user, batchSelect: false, removeReading }))
-    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: false, user, readBookIds, removeReading });
+  const booksList = isListView
+    ? renderBookFlibustaList(items, { user, batchSelect: showBatch, removeReading })
+    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds, removeReading });
+  const booksMarkup = showBatch
+    ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${booksList}</div>`
+    : booksList;
   const currentPathQs = viewParams.toString();
   const currentPath = currentPathQs ? `${filterAction}?${currentPathQs}` : filterAction;
   const pageIntro = `
@@ -1588,7 +1590,7 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
         ${uniqueBooks.map((book) => `
           <article class="card" ${bookCardDataAttrs(book.id)}>
             ${shelfBatch ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} ${batchBookIdDataAttr(book.id)} aria-label="${escapeHtml(t('batch.selectAria'))}"></label>` : ''}
-            ${renderCardCover(book, { readBookIds, downloadHtml: renderDownloadMenu(book, { compact: true, user }) })}
+            ${renderCardCover(book, { readBookIds, downloadHtml: renderDownloadMenu(book, { compact: true, user }), user })}
             <div class="meta">
               <h3><a href="${bookPagePath(book.id)}">${escapeHtml(book.title)}</a></h3>
               <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `shelf-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>

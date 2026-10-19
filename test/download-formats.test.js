@@ -35,6 +35,17 @@ test('isDownloadFormatEnabled ignores unknown format codes', () => {
   setDisabledDownloadFormats([]);
 });
 
+test('fb2zip is offered for fb2 books without a converter and can be disabled', () => {
+  setDisabledDownloadFormats([]);
+  assert.ok(getAvailableDownloadFormats({ ext: 'fb2' }).includes('fb2zip'));
+  assert.ok(getConfiguredDownloadFormats().includes('fb2zip'));
+  assert.deepStrictEqual(getAvailableDownloadFormats({ ext: 'epub' }), ['epub']);
+  setDisabledDownloadFormats(['fb2zip']);
+  assert.ok(!getAvailableDownloadFormats({ ext: 'fb2' }).includes('fb2zip'));
+  assert.ok(getAvailableDownloadFormats({ ext: 'fb2' }).includes('fb2'));
+  setDisabledDownloadFormats([]);
+});
+
 test('ZIP batch limit is high enough for a full author or series', async () => {
   const { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX } = await import('../src/constants.js');
   assert.ok(BATCH_ZIP_MAX >= 2000);

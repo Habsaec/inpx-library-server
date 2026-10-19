@@ -28,7 +28,7 @@ import { invalidateUserPageCaches } from '../services/cache.js';
 import { invalidateRecommendationsCache } from '../services/recommendations.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { formatAuthorLabel } from '../genre-map.js';
-import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX } from '../constants.js';
+import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { normalizeBatchIdsParam, resolveAdhocBookIdsFromClientList, resolveBatchScopeBookIds } from './download.js';
 import { decodeBookRef } from '../utils/book-ref.js';
 
@@ -530,6 +530,74 @@ export function registerUserApiRoutes(app, deps) {
         msg = t('api.email.err.smtpRejected');
       }
       res.status(500).json({ ok: false, code: ApiErrorCode.SMTP_ERROR, error: msg });
+    }
+  });
+
+  /** «Отправить → В Telegram» для выбранных книг: по карточке на книгу, как с одной книгой. */
+  app.post('/api/send-to-telegram/batch', requireApiAuth, async (req, res) => {
+    try {
+      const tgCfg = resolveTelegramRuntimeConfig();
+      if (!tgCfg.enabled || !tgCfg.token) {
+        return apiFail(res, 400, ApiErrorCode.TELEGRAM_DISABLED, t('telegram.botDisabled'));
+      }
+      const fullUser = getUserByUsername(req.user.username);
+      if (!isTelegramBotAllowedForUser(fullUser)) {
+        return apiFail(res, 403, ApiErrorCode.TELEGRAM_DENIED, t('profile.telegram.accessDenied'));
+      }
+      if (!fullUser.telegramId) {
+        return apiFail(res, 400, ApiErrorCode.TELEGRAM_NOT_LINKED, t('telegram.notLinked'), { linkUrl: '/profile#settings' });
+      }
+
+      const body = req.body || {};
+      const rawIds = Array.isArray(body.ids)
+        ? body.ids.map((x) => String(x).trim()).filter(Boolean)
+        : normalizeBatchIdsParam(body.ids);
+      if (!rawIds || !rawIds.length) {
+        return apiFail(res, 400, ApiErrorCode.BATCH_NO_BOOKS, t('api.batch.noBooks'));
+      }
+      if (rawIds.length > TELEGRAM_BATCH_MAX) {
+        return apiFail(res, 400, ApiErrorCode.BATCH_MAX_SEND, tp('telegram.batchMax', { n: TELEGRAM_BATCH_MAX }));
+      }
+      const bookIds = resolveAdhocBookIdsFromClientList(rawIds);
+      if (!bookIds.length) {
+        return apiFail(res, 400, ApiErrorCode.BATCH_NO_MATCHING, t('api.batch.noMatchingBooks'));
+      }
+
+      const lockKey = `tg:${req.user.username}`;
+      if (batchEmailLocks.has(lockKey)) {
+        return apiFail(res, 429, ApiErrorCode.SEND_IN_PROGRESS, t('api.send.inProgress'));
+      }
+      batchEmailLocks.add(lockKey);
+      try {
+        const { sendBookCardToChat } = await import('../services/telegram-bot.js');
+        let sent = 0;
+        for (const bookId of bookIds) {
+          try {
+            await sendBookCardToChat(fullUser.telegramId, bookId);
+            sent++;
+          } catch {
+            // skip books the bot could not send; reported as `skipped`
+          }
+        }
+        const requested = rawIds.length;
+        if (!sent) {
+          return apiFail(res, 500, ApiErrorCode.TELEGRAM_SEND_FAILED, t('telegram.sendFailed'));
+        }
+        logSystemEvent('info', 'telegram-bot', 'book cards sent from web', { user: req.user.username, count: sent, requested });
+        res.json({
+          ok: true,
+          message: tp('telegram.batchSent', { count: sent }),
+          requested,
+          sent,
+          skipped: requested - sent,
+          partial: sent < requested
+        });
+      } finally {
+        batchEmailLocks.delete(lockKey);
+      }
+    } catch (error) {
+      console.error('Batch send to telegram error:', error);
+      apiFail(res, 500, ApiErrorCode.TELEGRAM_SEND_FAILED, t('telegram.sendFailed'));
     }
   });
 

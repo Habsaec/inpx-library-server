@@ -107,7 +107,7 @@ function sanitizeZipEntryName(value, fallback = 'book.bin') {
     .trim()
     .replace(/[. ]+$/g, '');
   if (!safe) return fallback;
-  const ext = path.extname(safe);
+  const ext = /\.(fb2\.zip|kepub\.epub)$/i.exec(safe)?.[0] || path.extname(safe);
   const base = safe.slice(0, safe.length - ext.length) || 'book';
   const maxBase = 80;
   const clippedBase = base.slice(0, maxBase).trim() || 'book';
@@ -201,7 +201,7 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
 
     let cursor = 0;
     const normalizedFormat = String(format || '').toLowerCase();
-    const isConversionBatch = normalizedFormat && normalizedFormat !== 'fb2';
+    const isConversionBatch = normalizedFormat && normalizedFormat !== 'fb2' && normalizedFormat !== 'fb2zip';
     const defaultWorkers = isConversionBatch ? 4 : 12;
     const envWorkerRaw = isConversionBatch
       ? Number(process.env.BATCH_CONVERT_WORKERS || defaultWorkers)
@@ -235,7 +235,7 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
           fileName = uniqueNameInFolder(usedNames, folder, fileName);
           const entryName = `${folder}/${fileName}`;
 
-          if (perBookZip) {
+          if (perBookZip && download.format !== 'fb2zip') {
             const tRead = Date.now();
             let content;
             if (download.filePath) {

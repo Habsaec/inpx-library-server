@@ -4277,7 +4277,8 @@ button.download-format-link {
   opacity: 0;
   pointer-events: none;
   transition: transform 0.22s ease, opacity 0.18s ease;
-  width: min(520px, calc(100vw - 24px));
+  width: max-content;
+  min-width: min(520px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
 }
@@ -4329,6 +4330,7 @@ body:has(.bottom-nav) .batch-fab {
   min-height: 40px;
   height: 40px;
   padding: 0 14px;
+  font-family: inherit;
   font-size: 0.8125rem;
   font-weight: 600;
   line-height: 1;
@@ -4374,6 +4376,22 @@ body:has(.bottom-nav) .batch-fab {
   left: auto;
   right: 0;
   transform: none;
+}
+
+.batch-send-group-label {
+  padding: 6px 10px 2px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.batch-email-menu .batch-send-group-label ~ .batch-send-telegram-btn {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+}
+
+.batch-email-menu .download-format-link.is-last-used {
+  font-weight: 700;
 }
 
 .batch-per-book-zip-option {
@@ -7086,6 +7104,18 @@ html[data-theme="light"] .page-jump::after {
   font-weight: 600;
   line-height: 1;
   border-radius: var(--radius-button, var(--radius));
+}
+
+/* «Отправить» popover items are buttons — keep them menu rows, not chips */
+.author-flibusta-actions .download-menu-popover button.download-format-link {
+  justify-content: flex-start;
+  width: 100%;
+  height: auto;
+  min-height: 38px;
+  padding: 0 10px;
+  font-size: 0.8125rem;
+  font-weight: inherit;
+  border-radius: 8px;
 }
 
 .author-facet-standalone-books {

@@ -46,6 +46,8 @@ export const BROWSE_PRUNE_INTERVAL_MS = 2 * 60 * 1000;  // prune stale records e
 export const BATCH_DOWNLOAD_MAX = 20;
 /** ZIP и отправка на email. Страховка для NAS/Pi, не «все книги на экране». */
 export const BATCH_ZIP_MAX = 2000;
+/** Карточек в Telegram за одну пакетную отправку: каждая — отдельное сообщение бота. */
+export const TELEGRAM_BATCH_MAX = 20;
 
 /** Единый лимит распаковки одной записи из zip/7z (archives.js, seven-zip.js). */
 export const ARCHIVE_MAX_ENTRY_BYTES = 100 * 1024 * 1024;

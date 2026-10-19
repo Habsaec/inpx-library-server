@@ -7,9 +7,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, parseGenreCodes } from '../genre-map.js';
-import { getAvailableDownloadFormats, FORMAT_LABELS, isDownloadFormatEnabled } from '../conversion.js';
+import { getAvailableDownloadFormats, getConfiguredDownloadFormats, FORMAT_LABELS, isDownloadFormatEnabled } from '../conversion.js';
+import { resolveTelegramRuntimeConfig } from '../db.js';
 import { config } from '../config.js';
-import { BATCH_ZIP_MAX } from '../constants.js';
+import { BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath, encodeBookRef, bookIdNeedsSafeUrl } from '../utils/book-ref.js';
 import { formatSingleAuthorName, splitAuthorValues } from '../inpx.js';
 import {
@@ -190,13 +191,14 @@ export function renderCover(book, { readBookIds = null } = {}) {
     </a>`;
 }
 
-function renderCardCoverActions(book, downloadHtml = '') {
-  const more = `<a class="button card-cover-action" href="${bookPagePath(book.id)}">${escapeHtml(t('card.more'))}</a>`;
+function renderCardCoverActions(book, downloadHtml = '', sendHtml = '') {
+  const more = sendHtml || `<a class="button card-cover-action" href="${bookPagePath(book.id)}">${escapeHtml(t('card.more'))}</a>`;
   return `<div class="card-cover-actions">${downloadHtml || ''}${more}</div>`;
 }
 
-export function renderCardCover(book, { readBookIds = null, downloadHtml = '' } = {}) {
-  return `<div class="card-cover-hit"><div class="card-cover">${renderCover(book, { readBookIds })}${renderCardCoverActions(book, downloadHtml)}</div></div>`;
+export function renderCardCover(book, { readBookIds = null, downloadHtml = '', user = null } = {}) {
+  const sendHtml = user ? renderCardSendMenu(book, user) : '';
+  return `<div class="card-cover-hit"><div class="card-cover">${renderCover(book, { readBookIds })}${renderCardCoverActions(book, downloadHtml, sendHtml)}</div></div>`;
 }
 
 export function browseEntityPluralType(path) {
@@ -250,6 +252,25 @@ export function canDownloadInUi(user) {
 
 export function canSendToEmailInUi(user) {
   return Boolean(user?.username) && user.ereaderEmailAllowed !== false;
+}
+
+/** Bot settings are read (token decrypt) at most every 5 s — list rows ask once per book. */
+let _telegramSendCheck = { at: 0, ok: false };
+function isTelegramSendConfigured() {
+  const now = Date.now();
+  if (now - _telegramSendCheck.at > 5000) {
+    let ok = false;
+    try {
+      const cfg = resolveTelegramRuntimeConfig();
+      ok = Boolean(cfg.enabled && cfg.token);
+    } catch { /* settings unreadable → hide Telegram send */ }
+    _telegramSendCheck = { at: now, ok };
+  }
+  return _telegramSendCheck.ok;
+}
+
+export function canSendToTelegramInUi(user) {
+  return Boolean(user?.username) && user.telegramBotAllowed !== false && isTelegramSendConfigured();
 }
 
 /** Удаляет символы, запрещённые в XML 1.0 (кроме tab/LF/CR). */
@@ -684,28 +705,35 @@ export function renderDownloadMenu(book, { compact = false, accent = false, user
     </details>`;
 }
 
-/** Меню форматов для пакетной отправки на email; тот же batchContext, что и для скачивания (в т.ч. { adhoc: true }) */
-function renderBatchEmailMenu(params) {
+/** «Отправить» для выбранных книг: форматы email + «В Telegram»; тот же batchContext, что и для скачивания (в т.ч. { adhoc: true }) */
+function renderBatchSendMenu(params, { email = false, telegram = false } = {}) {
+  if (!email && !telegram) return '';
   const paramsJson = escapeHtml(JSON.stringify(params));
-  const formats = batchZipFormatPairs();
-  const links = formats
-    .map(
-      ([format, label]) =>
-        `<button type="button" class="download-format-link batch-email-format-btn" data-batch-email-format="${escapeHtml(format)}">${escapeHtml(label)}</button>`
-    )
-    .join('');
+  const links = email
+    ? batchZipFormatPairs()
+      .map(
+        ([format, label]) =>
+          `<button type="button" class="download-format-link batch-email-format-btn" data-batch-email-format="${escapeHtml(format)}">${escapeHtml(label)}</button>`
+      )
+      .join('')
+    : '';
+  const emailHtml = links
+    ? `<div class="batch-send-group-label">${escapeHtml(t('book.toEmail'))}</div>${links}`
+    : '';
+  const telegramHtml = telegram
+    ? `<button type="button" class="download-format-link batch-send-telegram-btn" data-batch-send-telegram="${TELEGRAM_BATCH_MAX}">${escapeHtml(t('telegram.sendToTelegram'))}</button>`
+    : '';
   return `
     <details class="download-menu batch-email-menu" data-batch-ereader-params="${paramsJson}">
-      <summary class="button download-menu-trigger batch-fab-btn">${escapeHtml(t('email.toEreader'))}</summary>
-      <div class="download-menu-popover">${links}</div>
+      <summary class="button download-menu-trigger batch-fab-btn">${escapeHtml(t('book.send'))}</summary>
+      <div class="download-menu-popover">${emailHtml}${telegramHtml}</div>
     </details>`;
 }
 
 function batchZipFormatPairs() {
-  const pairs = config.fb2cngPath
-    ? [['fb2', 'FB2'], ['epub2', 'EPUB'], ['epub3', 'EPUB3'], ['kepub', 'KEPUB'], ['kfx', 'KFX'], ['azw8', 'AZW8']]
-    : [['fb2', 'FB2']];
-  return pairs.filter(([format]) => isDownloadFormatEnabled(format));
+  return getConfiguredDownloadFormats()
+    .filter((format) => isDownloadFormatEnabled(format))
+    .map((format) => [format, FORMAT_LABELS[format] || format.toUpperCase()]);
 }
 
 /** batchContext: { facet, value } | { shelf } | { adhoc: true } — для чекбоксов и POST выбранных книг */
@@ -731,7 +759,10 @@ export function renderBatchDownloadToolbar(batchContext, { extraActions = '', us
         `<button type="button" class="download-format-link batch-selected-format-btn" data-batch-download-selected-format="${escapeHtml(format)}">${escapeHtml(label)}</button>`
     )
     .join('');
-  const emailHtml = user && canSendToEmailInUi(user) ? renderBatchEmailMenu(batchContext) : '';
+  const emailHtml = renderBatchSendMenu(batchContext, {
+    email: canSendToEmailInUi(user),
+    telegram: canSendToTelegramInUi(user)
+  });
   /* Floating dock — shown via JS when at least one book is checked. */
   return `
     <div class="batch-fab" data-batch-fab hidden>
@@ -968,7 +999,9 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
   const canDl = canDownloadInUi(user);
   // Flags string encodes rendering-affecting state for cache key
   /* a3: per-card download stays visible alongside batch checkboxes (series / outside-series). */
-  const flags = `${getLocale()}|${effectiveBatch ? '1' : '0'}${hideDownloads ? '1' : '0'}${canDl ? '1' : '0'}${seriesContext ? 's' : ''}a5`;
+  const coverUser = hideDownloads ? null : user;
+  const sendKey = `${canSendToEmailInUi(coverUser) ? 'e' : ''}${canSendToTelegramInUi(coverUser) ? 't' : ''}`;
+  const flags = `${getLocale()}|${effectiveBatch ? '1' : '0'}${hideDownloads ? '1' : '0'}${canDl ? '1' : '0'}${seriesContext ? 's' : ''}|${sendKey}a5`;
   const batchCb = (book) =>
     effectiveBatch
       ? `<label class="batch-select-hit" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} ${batchBookIdDataAttr(book.id)} aria-label="${escapeHtml(t('batch.selectAria'))}"></label>`
@@ -994,7 +1027,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
     const html = `
         <article class="card" ${bookCardDataAttrs(book.id)}>
           ${batchCb(book)}
-          ${renderCardCover(book, { readBookIds, downloadHtml: cardDl })}
+          ${renderCardCover(book, { readBookIds, downloadHtml: cardDl, user: coverUser })}
           <div class="meta">
             <h3><a href="${bookPagePath(book.id)}">${titlePrefix}${escapeHtml(book.title)}</a></h3>
             <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `card-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
@@ -1027,7 +1060,7 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
     return `
         <article class="card" ${bookCardDataAttrs(book.id)}>
           ${batchCb(book)}
-          ${renderCardCover(book, { readBookIds, downloadHtml: renderDownloadMenu(book, { compact: true, user }) })}
+          ${renderCardCover(book, { readBookIds, downloadHtml: renderDownloadMenu(book, { compact: true, user }), user })}
           <div class="meta">
             <h3><a href="${bookPagePath(book.id)}">${titlePrefix}${escapeHtml(book.title)}</a></h3>
             <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 1, bookAuthors: book.authors, popoverId: `fav-a-${book.id}` }) : escapeHtml(t('book.authorUnknown'))}</div>
@@ -1175,6 +1208,49 @@ function renderAuthorListRating(book) {
   return `<span class="author-flibusta-rating" title="${escapeHtml(String(r))}">${'★'.repeat(r)}</span>`;
 }
 
+/** «Отправить» в строке списка (как на странице книги); при одном доступном способе — сразу кнопка. */
+function sendTargetsInUi(user) {
+  return [
+    canSendToEmailInUi(user) ? ['data-send-to-ereader="1"', t('book.toEmail')] : null,
+    canSendToTelegramInUi(user) ? ['data-send-to-telegram="1"', t('telegram.sendToTelegram')] : null
+  ].filter(Boolean);
+}
+
+/** «Отправить» на обложке карточки (вместо «Подробнее»); '' — если отправлять некуда. */
+function renderCardSendMenu(book, user) {
+  const items = sendTargetsInUi(user);
+  if (!items.length) return '';
+  const idAttr = bookIdDataAttr(book.id);
+  if (items.length === 1) {
+    const [attr, label] = items[0];
+    return `<button class="button card-cover-action" type="button" ${idAttr} ${attr}>${escapeHtml(label)}</button>`;
+  }
+  const links = items
+    .map(([attr, label]) => `<button type="button" class="download-format-link" ${idAttr} ${attr}>${escapeHtml(label)}</button>`)
+    .join('');
+  return `<details class="download-menu download-menu-compact card-send-menu">
+    <summary class="button card-cover-action">${escapeHtml(t('book.send'))}</summary>
+    <div class="download-menu-popover">${links}</div>
+  </details>`;
+}
+
+function renderListSendMenu(book, user) {
+  const items = sendTargetsInUi(user);
+  if (!items.length) return '';
+  const idAttr = bookIdDataAttr(book.id);
+  if (items.length === 1) {
+    const [attr, label] = items[0];
+    return `<button class="button author-flibusta-email" type="button" ${idAttr} ${attr}>${escapeHtml(label)}</button>`;
+  }
+  const links = items
+    .map(([attr, label]) => `<button type="button" class="download-format-link" ${idAttr} ${attr}>${escapeHtml(label)}</button>`)
+    .join('');
+  return `<span class="author-flibusta-dl author-flibusta-send"><details class="download-menu download-menu-compact">
+    <summary class="button download-menu-trigger download-menu-trigger-compact">${escapeHtml(t('book.send'))}</summary>
+    <div class="download-menu-popover">${links}</div>
+  </details></span>`;
+}
+
 function renderAuthorFlibustaBookRow(book, {
   user = null, showSeriesNo = true, batchSelect = false, showAuthor = false, removeReading = false
 } = {}) {
@@ -1196,9 +1272,7 @@ function renderAuthorFlibustaBookRow(book, {
   const dl = canDownloadInUi(user)
     ? `<span class="author-flibusta-dl">${renderDownloadMenu(book, { compact: true, user })}</span>`
     : '';
-  const emailBtn = canSendToEmailInUi(user)
-    ? `<button class="button author-flibusta-email" type="button" ${bookIdDataAttr(book.id)} data-send-to-ereader="1">${escapeHtml(t('book.toEmail'))}</button>`
-    : '';
+  const emailBtn = renderListSendMenu(book, user);
   const removeBtn = removeReading ? renderReadingRemoveButton(book, 'author-flibusta-remove-reading') : '';
   const actions = `<span class="author-flibusta-actions">${readBtn}${dl}${emailBtn}${removeBtn}</span>`;
   const deletedHtml = Number(book.deleted)

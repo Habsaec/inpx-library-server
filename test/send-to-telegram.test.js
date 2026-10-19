@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { initDb, db, createUser, setSetting, setUserTelegramBotAllowed } from '../src/db.js';
+import { initDb, db, createUser, setSetting, setUserTelegramBotAllowed, setUserTelegramId } from '../src/db.js';
 import { registerUserApiRoutes } from '../src/routes/user-api.js';
 import { enrichBookRow, parseLine } from '../src/inpx.js';
 import { config } from '../src/config.js';
@@ -128,13 +128,86 @@ test('sendBookCardToChat sends the bot card with a button for every format', asy
     assert.equal(card.body.chat_id, '555');
     assert.match(card.body.text, /Telegram Book/);
     const buttons = card.body.reply_markup.inline_keyboard.flat();
-    assert.deepEqual(buttons.map((b) => b.text), ['📥 FB2', '📥 EPUB', '📥 EPUB3', '📥 KEPUB', '📥 KFX', '📥 AZW8']);
+    assert.deepEqual(buttons.map((b) => b.text), ['📥 FB2', '📥 FB2.ZIP', '📥 EPUB', '📥 EPUB3', '📥 KEPUB', '📥 KFX', '📥 AZW8']);
     assert.ok(buttons.every((b) => /^dl:\d+$/.test(b.callback_data)));
     assert.ok(card.body.reply_markup.inline_keyboard.every((row) => row.length <= 3));
   } finally {
     globalThis.fetch = realFetch;
     config.fb2cngPath = prevFb2cng;
   }
+});
+
+test('send-to-telegram/batch sends a card per selected book and reports skipped ones', async () => {
+  setSetting('telegram_bot_token', '123456:test-token');
+  setSetting('telegram_enabled', '1');
+  setSetting('telegram_configured', '1');
+  setUserTelegramBotAllowed(USER, true);
+  const sendBatch = (ids) => fetch(`${baseUrl}/api/send-to-telegram/batch`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ ids })
+  });
+
+  setUserTelegramId(USER, '');
+  const notLinked = await sendBatch([bookId]);
+  assert.equal(notLinked.status, 400);
+  assert.equal((await notLinked.json()).code, 'TELEGRAM_NOT_LINKED');
+
+  setUserTelegramId(USER, '424242');
+  assert.equal((await sendBatch([])).status, 400);
+  const tooMany = await sendBatch(Array.from({ length: 21 }, (_, i) => `id-${i}`));
+  assert.equal(tooMany.status, 400);
+
+  const realFetch = globalThis.fetch;
+  const chats = [];
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).startsWith('https://api.telegram.org/')) return realFetch(url, init);
+    chats.push(JSON.parse(init.body).chat_id);
+    return { json: async () => ({ ok: true, result: { message_id: 1 } }) };
+  };
+  try {
+    const res = await sendBatch([bookId, 'no-such-book']);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.sent, 1);
+    assert.equal(body.requested, 2);
+    assert.equal(body.skipped, 1);
+    assert.equal(body.partial, true);
+    assert.deepEqual(chats, ['424242']);
+  } finally {
+    globalThis.fetch = realFetch;
+    setUserTelegramId(USER, '');
+  }
+});
+
+test('list rows and the selection toolbar merge email and Telegram into one «Отправить» menu', async () => {
+  setSetting('telegram_bot_token', '123456:test-token');
+  setSetting('telegram_enabled', '1');
+  setSetting('telegram_configured', '1');
+  const { renderAuthorFlibustaList, renderBatchDownloadToolbar } = await import('../src/templates/shared.js');
+  const user = { username: USER, telegramBotAllowed: true, ereaderEmailAllowed: true };
+  const row = renderAuthorFlibustaList({ standaloneBooks: [{ id: '1', title: 'Книга', ext: 'fb2' }], user });
+  assert.match(row, /author-flibusta-send/);
+  assert.match(row, /data-send-to-ereader="1"/);
+  assert.match(row, /data-send-to-telegram="1"/);
+
+  const emailOnly = renderAuthorFlibustaList({
+    standaloneBooks: [{ id: '1', title: 'Книга', ext: 'fb2' }],
+    user: { ...user, telegramBotAllowed: false }
+  });
+  assert.doesNotMatch(emailOnly, /author-flibusta-send|data-send-to-telegram/);
+  assert.match(emailOnly, /class="button author-flibusta-email"[^>]*data-send-to-ereader="1"/);
+
+  const { renderBookGrid } = await import('../src/templates/shared.js');
+  const card = { id: '77', title: 'Обложка', ext: 'fb2' };
+  const grid = renderBookGrid([card], { isAuthenticated: true, batchSelect: true, user });
+  assert.match(grid, /card-send-menu/);
+  assert.match(grid, /class="batch-select-cb"/);
+  assert.doesNotMatch(grid, /card-cover-action" href=/, '«Подробнее» is replaced by «Отправить»');
+  const anonGrid = renderBookGrid([card], { batchSelect: false, user: null });
+  assert.match(anonGrid, /card-cover-action" href=/, 'without send targets the card keeps «Подробнее»');
+
+  const toolbar = renderBatchDownloadToolbar({ adhoc: true }, { user });
+  assert.match(toolbar, /data-batch-email-format="fb2zip"/);
+  assert.match(toolbar, /data-batch-send-telegram="20"/);
 });
 
 test('sendBookCardToChat reports SEND_FAILED when Telegram rejects the message', async () => {

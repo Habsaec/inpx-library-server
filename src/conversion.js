@@ -6,8 +6,10 @@ import { spawn } from 'node:child_process';
 import { config } from './config.js';
 import { logSystemEvent } from './services/system-events.js';
 import { readBookBuffer, readBookBufferForDelivery } from './fb2.js';
+import archiver from 'archiver';
 import {
   DOWNLOAD_FORMATS,
+  FB2_ZIP_FORMAT,
   FORMAT_LABELS,
   getAvailableDownloadFormats
 } from './download-formats.js';
@@ -15,6 +17,7 @@ import { buildDownloadBaseName } from './download-filename.js';
 import { getFb2WebpMode, convertFb2WebpBinariesToPng } from './fb2-webp-images.js';
 const MIME_TYPES = {
   fb2: 'application/octet-stream',
+  fb2zip: 'application/zip',
   epub: 'application/epub+zip',
   epub2: 'application/epub+zip',
   epub3: 'application/epub+zip',
@@ -26,6 +29,7 @@ const MIME_TYPES = {
 };
 const FILE_EXTENSIONS = {
   fb2: 'fb2',
+  fb2zip: 'fb2.zip',
   epub: 'epub',
   epub2: 'epub',
   epub3: 'epub',
@@ -182,6 +186,18 @@ function getFormatMimeType(format) {
 
 function getBookFormatFileName(book, format) {
   return `${buildDownloadBaseName(book)}.${getFormatExtension(format)}`;
+}
+
+function zipSingleFile(content, entryName) {
+  return new Promise((resolve, reject) => {
+    const archive = archiver('zip', { zlib: { level: 6 }, forceLocalTime: true });
+    const chunks = [];
+    archive.on('data', (chunk) => chunks.push(chunk));
+    archive.on('end', () => resolve(Buffer.concat(chunks)));
+    archive.on('error', reject);
+    archive.append(content, { name: entryName });
+    archive.finalize().catch(reject);
+  });
 }
 
 function ensureDir(dirPath) {
@@ -376,17 +392,18 @@ export async function resolveDownload(book, requestedFormat, options = {}) {
       content
     };
   }
-  if (format === 'fb2') {
+  if (format === 'fb2' || format === FB2_ZIP_FORMAT) {
     const content = await applyFb2WebpMode(
       skipFb2DeliveryProcessing
         ? await readBookBuffer(book)
         : await readBookBufferForDelivery(book)
     );
+    const fb2Name = getBookFormatFileName(book, 'fb2');
     return {
       format,
-      fileName: getBookFormatFileName(book, 'fb2'),
-      mimeType: getFormatMimeType('fb2'),
-      content
+      fileName: getBookFormatFileName(book, format),
+      mimeType: getFormatMimeType(format),
+      content: format === FB2_ZIP_FORMAT ? await zipSingleFile(content, fb2Name) : content
     };
   }
   if (!config.fb2cngPath) {
