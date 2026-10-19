@@ -312,12 +312,15 @@ export function fontSizeToCssVars(basePx = DEFAULT_FONT_SIZE_PX, headingScale = 
   const base = Math.min(MAX_FONT_SIZE_PX, Math.max(MIN_FONT_SIZE_PX, Math.round(Number(basePx) || DEFAULT_FONT_SIZE_PX)));
   const scale = Math.min(MAX_HEADING_SCALE, Math.max(MIN_HEADING_SCALE, Math.round(Number(headingScale) || DEFAULT_HEADING_SCALE))) / 100;
   const toRem = (px) => `${Math.round((px / 16) * 100000) / 100000}rem`;
+  const fontScale = Math.round((base / DEFAULT_FONT_SIZE_PX) * 1000) / 1000;
   return [
     `--font-size-sm:${toRem(Math.round(base * FONT_SIZE_RATIOS.sm))}`,
     `--font-size-base:${toRem(base)}`,
     `--font-size-lg:${toRem(Math.round(base * FONT_SIZE_RATIOS.lg))}`,
     `--font-size-xl:${toRem(Math.round(base * FONT_SIZE_RATIOS.xl * scale))}`,
     `--font-size-2xl:${toRem(Math.round(base * FONT_SIZE_RATIOS['2xl'] * scale))}`,
+    `--ui-font-scale:${fontScale}`,
+    `--ui-heading-scale:${scale}`,
   ];
 }
 
@@ -385,9 +388,15 @@ export function resolveFontFamilyStack(preset, customFontName = 'Custom Font') {
   return FONT_FAMILY_STACKS[preset] || FONT_FAMILY_STACKS.inter;
 }
 
-/** CSS custom properties for UI font family preset */
+/** CSS custom properties for UI font family preset.
+ * Headings use `--display-font`. A chosen face replaces that serif too;
+ * the default preset leaves the serif headings alone.
+ */
 export function fontFamilyToCssVars(preset, customFontName = 'Custom Font') {
-  return [`--ui-font-family:${resolveFontFamilyStack(preset, customFontName)}`];
+  const stack = resolveFontFamilyStack(preset, customFontName);
+  const vars = [`--ui-font-family:${stack}`];
+  if (preset !== 'inter') vars.push(`--display-font:${stack}`);
+  return vars;
 }
 
 export const UI_RADIUS_PRESETS = ['sharp', 'rounded', 'pill', 'custom'];

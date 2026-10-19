@@ -39,6 +39,17 @@ test('list view toggle links to grid, and facet pages expose the switch', () => 
   });
   assert.match(grid, /view=list/);
 
+  const signedIn = renderCatalog({
+    items: [], total: 0, page: 1, pageSize: 24,
+    query: 'пушкин', field: 'books', sort: 'author', view: 'list',
+    user: { username: USER }, stats: {}, indexStatus: {}, csrfToken: 'tok'
+  });
+  assert.match(signedIn, /action="\/profile\/catalog-view"/);
+  assert.match(signedIn, /name="view" value="grid"/);
+  assert.match(signedIn, /name="_csrf" value="tok"/);
+  assert.match(signedIn, /name="next" value="\/catalog\?field=books&amp;sort=author&amp;q=/);
+  assert.doesNotMatch(signedIn, /action="\/profile\/home-view"/);
+
   const author = renderAuthorFacetPage({
     title: 'Author', displayName: 'Author', series: [], standaloneBooks: [], total: 0,
     user: null, stats: {}, facetPath: '/facet/authors/test', indexStatus: {},

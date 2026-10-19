@@ -1460,11 +1460,11 @@ export function renderMiniBookList(title, items = [], emptyText = null) {
     </section>`;
 }
 
-export function renderHomeShelf({ title, href, items, type = 'books', facetBasePath = '', isAuthenticated = false, showBatch = false, batchSelect = false, user = null, readBookIds = null, listView = false, actionsHtml = '' } = {}) {
+export function renderHomeShelf({ title, href, items, type = 'books', facetBasePath = '', isAuthenticated = false, showBatch = false, batchSelect = false, user = null, readBookIds = null, listView = false, extraActions = '' } = {}) {
   const batchToolbar = showBatch && items.length && canDownloadInUi(user)
     ? renderBatchDownloadToolbar({ adhoc: true }, { user })
     : '';
-  const withCheckboxes = Boolean(batchToolbar) || batchSelect;
+  const withCheckboxes = Boolean(batchToolbar) || (batchSelect && canDownloadInUi(user));
   const body = type === 'books'
     ? (items.length
       ? (listView
@@ -1475,10 +1475,10 @@ export function renderHomeShelf({ title, href, items, type = 'books', facetBaseP
   const wrapped = batchToolbar ? `<div class="batch-select-scope">${batchToolbar}${body}</div>` : body;
   const viewAttr = type === 'books' && listView ? ' data-home-view="list"' : type === 'books' ? ' data-home-view="grid"' : '';
   return `
-    <section class="library-shelf home-shelf"${viewAttr}>
+    <section class="library-shelf"${viewAttr}>
       <div class="section-title">
         <h2>${escapeHtml(title)}</h2>
-        ${href || actionsHtml ? `<div class="actions">${actionsHtml}${href ? `<a class="shelf-link" href="${href}">${escapeHtml(t('home.showAll'))}</a>` : ''}</div>` : ''}
+        ${href || extraActions ? `<div class="actions">${extraActions}${href ? `<a class="shelf-link" href="${href}">${escapeHtml(t('home.showAll'))}</a>` : ''}</div>` : ''}
       </div>
       ${wrapped}
     </section>`;

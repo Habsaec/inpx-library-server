@@ -428,6 +428,8 @@ test('getThemeCssVars injects typography vars when font size or density is custo
   assert.equal(hasUiThemeTypographyConfigured(), true);
   const vars = getThemeCssVars();
   assert.ok(vars.some((v) => v.startsWith('--font-size-base:1rem')));
+  assert.ok(vars.some((v) => v.startsWith('--ui-font-scale:1.143')));
+  assert.ok(vars.some((v) => v.startsWith('--ui-heading-scale:1')));
   assert.ok(vars.some((v) => v.startsWith('--space-md:8px')));
 });
 
@@ -455,6 +457,7 @@ test('saveUiTypographySettings persists font family preset', () => {
   assert.equal(getUiCustomization().fontFamily, 'georgia');
   const vars = getThemeCssVars();
   assert.ok(vars.some((v) => v.startsWith('--ui-font-family:') && v.includes('Georgia')));
+  assert.ok(vars.some((v) => v.startsWith('--display-font:') && v.includes('Georgia')));
 });
 
 test('saveUiTypographySettings custom requires uploaded font', () => {

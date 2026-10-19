@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Маршруты аутентификации: login, logout, register, profile.
  */
 import { config } from '../config.js';
@@ -30,6 +30,22 @@ import { isOidcConfigured } from '../services/oidc.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolvePublicBaseUrl, sendPasswordResetEmail } from '../services/password-reset.js';
 import { createKosyncPassword, hasKosyncPassword, revokeKosyncPassword } from '../kosync.js';
+
+/** Only the current catalog URL, without a view override, so the saved preference applies. */
+function safeCatalogViewReturn(value) {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('/catalog') || raw.startsWith('//') || raw.includes('\\') || /[\r\n]/.test(raw)) return '/catalog';
+  let url;
+  try {
+    url = new URL(raw, 'http://local');
+  } catch {
+    return '/catalog';
+  }
+  if (url.pathname !== '/catalog') return '/catalog';
+  url.searchParams.delete('view');
+  const qs = url.searchParams.toString();
+  return qs ? `/catalog?${qs}` : '/catalog';
+}
 
 /** Secure-cookie на голом HTTP по LAN браузер молча выбрасывает: вход в журнале есть, сессии нет. */
 function sessionCookieOptions(req) {
@@ -438,6 +454,20 @@ export function registerAuthRoutes(app, deps) {
     }
   });
 
+  app.post('/profile/home-view', requireWebAuth, (req, res) => {
+    const prefs = getUserBrowseViewPrefs(req.user.username);
+    const next = String(req.body?.view || '').toLowerCase() === 'list' ? 'list' : 'grid';
+    setUserBrowseViewPrefs(req.user.username, { homeView: next, catalogView: prefs.catalogView });
+    res.redirect('/');
+  });
+
+  app.post('/profile/catalog-view', requireWebAuth, (req, res) => {
+    const prefs = getUserBrowseViewPrefs(req.user.username);
+    const next = String(req.body?.view || '').toLowerCase() === 'list' ? 'list' : 'grid';
+    setUserBrowseViewPrefs(req.user.username, { homeView: prefs.homeView, catalogView: next });
+    res.redirect(safeCatalogViewReturn(req.body?.next));
+  });
+
   app.post('/profile/view', requireWebAuth, (req, res) => {
     try {
       setUserBrowseViewPrefs(req.user.username, {
@@ -448,14 +478,6 @@ export function registerAuthRoutes(app, deps) {
     } catch (error) {
       res.status(500).send(renderSettingsPage(req, translateKnownErrorMessage(error.message), req.csrfToken || '', 'view'));
     }
-  });
-
-  app.post('/profile/home-view', requireWebAuth, (req, res) => {
-    try {
-      const { catalogView } = getUserBrowseViewPrefs(req.user.username);
-      setUserBrowseViewPrefs(req.user.username, { homeView: req.body.view, catalogView });
-    } catch { /* keep the current view */ }
-    res.redirect(303, '/');
   });
 
   app.post('/profile/password', requireWebAuth, (req, res) => {

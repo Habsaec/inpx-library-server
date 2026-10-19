@@ -2200,8 +2200,8 @@ button[data-active-favorite="true"]:hover {
 
 .sort-control .sort-control-order,
 .sort-control .sort-control-order.button,
-.page-intro a.view-toggle,
-.home-shelf .section-title .view-toggle {
+.page-intro .view-toggle,
+.library-shelf .view-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2216,14 +2216,9 @@ button[data-active-favorite="true"]:hover {
 }
 
 .sort-control .sort-control-order svg,
-.page-intro a.view-toggle svg,
-.home-shelf .section-title .view-toggle svg {
+.page-intro .view-toggle svg,
+.library-shelf .view-toggle svg {
   display: block;
-}
-
-.view-toggle-form {
-  display: inline-flex;
-  margin: 0;
 }
 
 .search-form label {
@@ -6209,7 +6204,7 @@ html[data-theme="light"] .page-jump::after {
 
 .library-shelf .section-title {
   align-items: baseline;
-  margin-bottom: 10px;
+  margin-bottom: 24px;
 }
 
 .library-shelf .section-title h2 {
@@ -6217,39 +6212,15 @@ html[data-theme="light"] .page-jump::after {
   font-weight: 620;
 }
 
-/* Home: centered shelf title, «Показать все» / view toggle stay on the right */
-.library-shelf.home-shelf .section-title {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+.library-shelf .section-title .actions:has(.view-toggle) {
   align-items: center;
+  gap: 10px;
 }
 
-.home-shelf .section-title h2 {
-  grid-column: 2;
-  text-align: center;
-}
-
-.home-shelf .section-title .actions {
-  grid-column: 3;
-  justify-self: end;
-  flex-wrap: nowrap;
-}
-
-.home-shelf .section-title .shelf-link {
-  white-space: nowrap;
-}
-
-@media (max-width: 640px) {
-  .library-shelf.home-shelf .section-title {
-    grid-template-columns: 1fr;
-    row-gap: 8px;
-  }
-
-  .home-shelf .section-title h2,
-  .home-shelf .section-title .actions {
-    grid-column: 1;
-    justify-self: center;
-  }
+.page-intro form.home-view-toggle,
+.library-shelf form.home-view-toggle {
+  display: inline-flex;
+  margin: 0;
 }
 
 .library-shelf .section-title .muted,
@@ -10768,6 +10739,35 @@ html[data-ui-typography="1"] .shell :is(.admin-card-title, .sidebar .brand h1, .
 
 html[data-ui-typography="1"] .shell :is(.welcome-hero-banner h1, .premium-hero-card .hero-card-title) {
   font-size: var(--font-size-xl);
+}
+
+/* Заголовки с собственным размером в rem: базовый размер и масштаб заголовков. */
+html[data-ui-typography="1"] .shell .section-title h1,
+html[data-ui-typography="1"] .shell .section-title h2 {
+  font-size: calc(1.5rem * var(--ui-font-scale, 1) * var(--ui-heading-scale, 1));
+}
+
+html[data-ui-typography="1"] .shell .library-shelf .section-title h2 {
+  font-size: calc(1.125rem * var(--ui-font-scale, 1) * var(--ui-heading-scale, 1));
+}
+
+/* Эти заголовки уже крупные. Масштаб из настроек добавляет только треть прироста,
+   иначе при увеличении полок на главной каталог и название книги раздуваются. */
+html[data-ui-typography="1"] .shell .page-intro-copy h1 {
+  font-size: calc(clamp(1.75rem, 3vw, 2.125rem) * var(--ui-font-scale, 1) * (1 + (var(--ui-heading-scale, 1) - 1) * 0.3));
+}
+
+html[data-ui-typography="1"] .shell .book-detail-title {
+  font-size: calc(clamp(1.625rem, 2.8vw, 2.125rem) * var(--ui-font-scale, 1) * (1 + (var(--ui-heading-scale, 1) - 1) * 0.3));
+}
+
+html[data-ui-typography="1"] .shell .author-facet-shared-heading,
+html[data-ui-typography="1"] .shell .author-flibusta-series-title {
+  font-size: calc(1.08rem * var(--ui-font-scale, 1) * var(--ui-heading-scale, 1));
+}
+
+html[data-ui-typography="1"] .shell .welcome-hero-author {
+  font-size: calc(0.9375rem * var(--ui-font-scale, 1) * var(--ui-heading-scale, 1));
 }
 
 html[data-ui-typography="1"] .shell .admin-card {

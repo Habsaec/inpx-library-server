@@ -41,19 +41,15 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
   }))).replace(/</g, '\\u003c');
   const subtitleText = homeSubtitle === '-' ? '' : (homeSubtitle || t('home.subtitle'));
   const homeViewAttr = listView ? 'list' : 'grid';
-  const homeBatchToolbar = renderBatchDownloadToolbar({ adhoc: true }, { user });
-  const batchSelect = Boolean(homeBatchToolbar);
-  const viewToggle = renderViewToggle({
-    href: listView ? '/?view=grid' : '/?view=list',
-    isListView: listView,
-    postAction: isAuthenticated && csrfToken ? '/profile/home-view' : '',
-    csrfToken
-  });
+  const homeBatch = canDownloadInUi(user);
+  const viewToggle = user
+    ? renderViewToggle({ isListView: listView, formAction: '/profile/home-view', csrfToken })
+    : renderViewToggle({ href: listView ? '/?view=grid' : '/?view=list', isListView: listView });
   const recommendationsShelf = isAuthenticated
     ? (recommendations.length
-        ? renderHomeShelf({ title: t('home.shelfRecommended'), href: '/library/recommended', items: recommendations, type: 'books', isAuthenticated, batchSelect, user, readBookIds, listView })
+        ? renderHomeShelf({ title: t('home.shelfRecommended'), href: '/library/recommended', items: recommendations, type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView })
         : `
-    <section class="library-shelf home-shelf" data-home-recommendations data-home-view="${homeViewAttr}" data-loaded="0">
+    <section class="library-shelf" data-home-recommendations data-home-view="${homeViewAttr}" data-loaded="0">
       <div class="section-title">
         <h2>${escapeHtml(t('home.shelfRecommended'))}</h2>
         <div class="actions"><a class="shelf-link" href="/library/recommended">${escapeHtml(t('home.showAll'))}</a></div>
@@ -86,12 +82,11 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
       <script type="application/json" data-home-quotes>${welcomeQuotesJson}</script>
     </section>
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}
-    <div class="batch-select-scope home-batch-scope">
-    ${homeBatchToolbar}
-    ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, batchSelect, user, readBookIds, listView, actionsHtml: viewToggle })}
+    ${homeBatch ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}` : ''}
+    ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView, extraActions: viewToggle })}
     ${recommendationsShelf}
-    ${isAuthenticated ? homeShelves.map((shelf) => renderHomeShelf({ title: shelf.title, href: escapeHtml(shelf.href), items: shelf.items, type: 'books', isAuthenticated, batchSelect, user, readBookIds, listView })).join('') : ''}
-    </div>
+    ${isAuthenticated ? homeShelves.map((shelf) => renderHomeShelf({ title: shelf.title, href: escapeHtml(shelf.href), items: shelf.items, type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView })).join('') : ''}
+    ${homeBatch ? '</div>' : ''}
     `;
   return pageShell({ title: t('home.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home') }], currentPath: '/', csrfToken, readBookIds });
 }
@@ -133,14 +128,17 @@ function catalogChipHref(baseParams, removeKey, removeValue = null, action = '/c
   return qs ? `${action}?${qs}` : action;
 }
 
-function renderViewToggle({ href, isListView, postAction = '', csrfToken = '' }) {
+function renderViewToggle({ href, isListView, formAction = '', csrfToken = '', returnTo = '' }) {
   const gridIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
   const listIcon = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>';
   const label = isListView ? t('browse.viewGrid') : t('browse.viewList');
-  if (postAction) {
-    return `<form class="view-toggle-form" method="post" action="${escapeHtml(postAction)}">${csrfHiddenField(csrfToken)}<input type="hidden" name="view" value="${isListView ? 'grid' : 'list'}"><button type="submit" class="button view-toggle" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${isListView ? gridIcon : listIcon}</button></form>`;
+  const icon = isListView ? gridIcon : listIcon;
+  if (formAction) {
+    const next = isListView ? 'grid' : 'list';
+    const back = returnTo ? `<input type="hidden" name="next" value="${escapeHtml(returnTo)}">` : '';
+    return `<form class="home-view-toggle" method="post" action="${escapeHtml(formAction)}">${csrfHiddenField(csrfToken)}${back}<input type="hidden" name="view" value="${next}"><button type="submit" class="button view-toggle" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</button></form>`;
   }
-  return `<a class="button view-toggle" href="${escapeHtml(href)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${isListView ? gridIcon : listIcon}</a>`;
+  return `<a class="button view-toggle" href="${escapeHtml(href)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</a>`;
 }
 
 function renderCatalogSearchHints(searchHints, query = '') {
@@ -543,7 +541,17 @@ export function renderCatalog({
         query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode,
         view: isListView ? 'grid' : 'list'
       });
-      return renderViewToggle({ href: `/catalog?${nextParams.toString()}`, isListView });
+      if (!user) return renderViewToggle({ href: `/catalog?${nextParams.toString()}`, isListView });
+      const returnParams = buildCatalogQueryParams({
+        query, field, sort, order, genres: genreList, letter, lang, format, year, minRate, hasSeries, genreMode
+      });
+      const returnTo = returnParams.toString() ? `/catalog?${returnParams.toString()}` : '/catalog';
+      return renderViewToggle({
+        isListView,
+        formAction: '/profile/catalog-view',
+        csrfToken,
+        returnTo
+      });
     })()
     : '';
   const filterPanel = isBookField ? renderCatalogFilterPanel({
