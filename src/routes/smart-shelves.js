@@ -15,7 +15,7 @@ const PAGE_SIZE = 24;
 /** @param {import('express').Application} app */
 export function registerSmartShelfRoutes(app) {
   app.get('/api/smart-shelves', requireApiAuth, (req, res) => {
-    res.json(listSmartShelves(req.user.username));
+    res.json(listSmartShelves(req.user.username, { withPreview: req.query.preview === '1' }));
   });
 
   app.post('/api/smart-shelves', requireApiAuth, (req, res) => {

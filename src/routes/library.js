@@ -19,7 +19,7 @@ import {
 import { config } from '../config.js';
 import { t, tp, getLocale } from '../i18n.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
-import { requireBrowseAuth, requireBrowseOrOpds, requireWebAuth, requireAdminWeb } from '../middleware/auth.js';
+import { requireApiAuth, requireBrowseAuth, requireBrowseOrOpds, requireWebAuth, requireAdminWeb } from '../middleware/auth.js';
 import { getCachedPageData, getStaleOrSchedule, clearPageDataCache, invalidateUserPageCaches } from '../services/cache.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { getRecommendedLibraryView, getHomeRecommendations, buildSimilarBooks, listRecommendedSectionGenres } from '../services/recommendations.js';
@@ -277,17 +277,17 @@ function getHomeNewestDisplayCount() {
 const HOME_SHELVES_MAX = 8;
 
 /** Полки (обычные и умные), закреплённые пользователем на главной; пустые не показываем. */
-function getPinnedHomeShelves(username, limit) {
+export function getPinnedHomeShelves(username, limit) {
   const result = [];
   const contentLangs = effectiveContentLangs(username);
   for (const shelf of getUserShelves(username)) {
     if (!shelf.onHome) continue;
-    result.push({ title: shelf.name, href: `/shelves/${shelf.id}`, items: getShelfBooks(shelf.id, username).slice(0, limit) });
+    result.push({ id: shelf.id, kind: 'shelf', title: shelf.name, href: `/shelves/${shelf.id}`, items: getShelfBooks(shelf.id, username).slice(0, limit) });
   }
   for (const shelf of listSmartShelves(username)) {
     if (!shelf.onHome) continue;
     try {
-      result.push({ title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfBooks(shelf, { page: 1, pageSize: limit, langs: contentLangs }).items });
+      result.push({ id: shelf.id, kind: 'smart', title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfBooks(shelf, { page: 1, pageSize: limit, langs: contentLangs }).items });
     } catch { /* битый фильтр не должен ломать главную */ }
   }
   return result.filter((shelf) => shelf.items.length).slice(0, HOME_SHELVES_MAX);
@@ -364,6 +364,10 @@ export function registerLibraryRoutes(app, deps) {
     if (username) {
       setImmediate(() => { try { getReadBookIdSet(username); } catch { } });
     }
+  });
+
+  app.get('/api/home/shelves', requireApiAuth, (req, res) => {
+    res.json({ items: getPinnedHomeShelves(req.user.username, getHomeNewestDisplayCount()) });
   });
 
   // --- Catalog search ---

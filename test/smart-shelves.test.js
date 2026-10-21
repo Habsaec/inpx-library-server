@@ -9,6 +9,7 @@ import {
 import { registerSmartShelfRoutes } from '../src/routes/smart-shelves.js';
 import { registerOpdsRoutes } from '../src/routes/opds.js';
 import { renderShelves, renderCatalog, renderHome } from '../src/templates/library.js';
+import { getPinnedHomeShelves } from '../src/routes/library.js';
 
 const SOURCE_ID = 9301;
 const USER = 'smart_shelf_user';
@@ -130,6 +131,11 @@ test('smart shelves API: auth, create, list, books, update, delete', async () =>
   const list = await (await fetch(`${baseUrl}/api/smart-shelves`, { headers: auth(USER) })).json();
   assert.equal(list.length, 1);
   assert.equal(list[0].query, 'genre=smartdet&sort=title');
+  assert.equal(list[0].bookCount, undefined);
+
+  const preview = await (await fetch(`${baseUrl}/api/smart-shelves?preview=1`, { headers: auth(USER) })).json();
+  assert.equal(preview[0].bookCount, 1);
+  assert.deepEqual(preview[0].previewBookIds, [IDS[2]]);
 
   const books = await (await fetch(`${baseUrl}/api/smart-shelves/${created.id}/books`, { headers: auth(USER) })).json();
   assert.deepEqual(books.items.map((b) => b.id), [IDS[2]]);
@@ -234,4 +240,19 @@ test('smart shelves show cover previews like regular shelves and can be pinned t
   assert.ok(home.includes('href="/catalog?a=1&amp;b=2"'));
   assert.ok(!renderHome({ user: null, stats: {}, indexStatus: {}, sections: { newest: [] }, homeShelves }).includes('Pinned shelf title'));
   deleteSmartShelf(id, USER);
+});
+
+test('pinned home shelves (web home and /api/home/shelves) keep only pinned non-empty shelves', () => {
+  const pinned = createSmartShelf(USER, 'Home pinned', { genre: 'smartsf' });
+  const empty = createSmartShelf(USER, 'Home empty', { q: 'no-such-book-zzz' });
+  createSmartShelf(USER, 'Home unpinned', { genre: 'smartdet' });
+  setSmartShelfOnHome(pinned, USER, true);
+  setSmartShelfOnHome(empty, USER, true);
+
+  const shelves = getPinnedHomeShelves(USER, 1);
+  assert.deepEqual(shelves.map((s) => [s.kind, s.id, s.title]), [['smart', pinned, 'Home pinned']]);
+  assert.equal(shelves[0].items.length, 1, 'limit applies per shelf');
+  assert.deepEqual(getPinnedHomeShelves(OTHER, 8), []);
+
+  for (const shelf of listSmartShelves(USER)) deleteSmartShelf(shelf.id, USER);
 });
