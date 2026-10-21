@@ -1561,9 +1561,9 @@ export function renderShelves({ shelves = [], smartShelves = [], user, stats, in
       <div class="section-title">
         <h2>${escapeHtml(t('shelves.listTitle'))}</h2>
       </div>
-      <form data-shelf-create class="shelf-create-form">
-        <input type="text" name="name" placeholder="${escapeHtml(t('shelves.newPlaceholder'))}" required>
-        <button type="submit" class="button-primary">${escapeHtml(t('shelves.create'))}</button>
+      <form data-shelf-create>
+        <button type="button" class="shelf-create-toggle" data-shelf-create-toggle aria-expanded="false" aria-label="${escapeHtml(t('shelves.create'))}" title="${escapeHtml(t('shelves.create'))}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+        <input type="text" name="name" placeholder="${escapeHtml(t('shelves.newPlaceholder'))}" aria-label="${escapeHtml(t('shelves.newPlaceholder'))}" maxlength="80" autocomplete="off" tabindex="-1" aria-hidden="true">
       </form>
       ${shelves.length ? `
         <div class="table-list entity-list">

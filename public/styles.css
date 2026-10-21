@@ -8922,16 +8922,7 @@ html[data-theme="light"] .sidebar-overlay {
     flex-basis: 100%;
   }
 
-  /* ?? Shelves ?? */
-  .shelf-create-form {
-    flex-direction: column;
-    align-items: stretch;
-    max-width: none;
-  }
-
-  .shelf-create-form button {
-    width: 100%;
-  }
+  /* Shelves: keep «+ Создать» a button, not a full-width row. */
 
   .shelf-covers-preview {
     flex-wrap: wrap;
@@ -9490,13 +9481,16 @@ html[data-theme="light"] .sidebar-overlay {
 /* Shelves page: create form */
 .shelf-create-form {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
-  max-width: 500px;
   margin-bottom: 20px;
 }
 
 .shelf-create-form input {
-  flex: 1;
+  flex: 0 1 16rem;
+  width: 16rem;
+  max-width: 100%;
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -9511,7 +9505,96 @@ html[data-theme="light"] .sidebar-overlay {
 }
 
 .shelf-create-form button {
-  padding: 8px 18px;
+  width: auto;
+  padding: 8px 14px;
+}
+
+/* Создание полки: кружок «+» раскрывается в поле, как поиск в шапке. */
+form[data-shelf-create] {
+  --gs-h: 36px;
+  --gs-ease: cubic-bezier(0.32, 1.25, 0.5, 1);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: var(--gs-h);
+  height: var(--gs-h);
+  margin: 0 0 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button, 999px);
+  background: var(--field-bg);
+  overflow: hidden;
+  vertical-align: middle;
+  transition: width 0.6s var(--gs-ease), border-color 0.22s var(--ease-premium);
+}
+
+form[data-shelf-create].is-open {
+  width: min(18rem, 100%);
+}
+
+form[data-shelf-create]:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+form[data-shelf-create] .shelf-create-toggle {
+  flex: 0 0 var(--gs-h);
+  width: var(--gs-h);
+  height: var(--gs-h);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-button, 999px);
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  cursor: pointer;
+  transform: none;
+}
+
+form[data-shelf-create] .shelf-create-toggle:hover,
+form[data-shelf-create] .shelf-create-toggle:active,
+form[data-shelf-create].is-open .shelf-create-toggle {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  transform: none;
+}
+
+form[data-shelf-create] input,
+form[data-shelf-create] input:focus {
+  flex: 1 1 auto;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 0.875rem;
+  opacity: 0;
+  pointer-events: none;
+}
+
+form[data-shelf-create].is-open input,
+form[data-shelf-create].is-open input:focus {
+  opacity: 1;
+  pointer-events: auto;
+  padding: 0 12px 0 2px;
+  cursor: text;
+  transition: opacity 0.2s var(--ease-premium);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  form[data-shelf-create],
+  form[data-shelf-create].is-open input,
+  form[data-shelf-create].is-open input:focus {
+    transition: none;
+  }
 }
 
 /* Shelf cover previews */

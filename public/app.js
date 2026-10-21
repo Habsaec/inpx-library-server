@@ -4204,11 +4204,51 @@ function attachScrollToTop() {
 function attachShelfActions() {
   const createForm = document.querySelector('[data-shelf-create]');
   if (createForm) {
+    const input = createForm.querySelector('input[name="name"]');
+    const toggle = createForm.querySelector('[data-shelf-create-toggle]');
+    const setOpen = (open) => {
+      createForm.classList.toggle('is-open', open);
+      toggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (input) {
+        input.tabIndex = open ? 0 : -1;
+        input.setAttribute('aria-hidden', open ? 'false' : 'true');
+      }
+      if (open) requestAnimationFrame(() => input?.focus());
+    };
+    toggle?.addEventListener('click', () => {
+      if (!createForm.classList.contains('is-open')) {
+        setOpen(true);
+        return;
+      }
+      if (!(input?.value || '').trim()) {
+        setOpen(false);
+        return;
+      }
+      if (typeof createForm.requestSubmit === 'function') createForm.requestSubmit();
+      else createForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!createForm.classList.contains('is-open')) return;
+      if (event.target instanceof Node && createForm.contains(event.target)) return;
+      setOpen(false);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && createForm.classList.contains('is-open')) {
+        setOpen(false);
+        toggle?.focus();
+      }
+    });
     createForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const input = createForm.querySelector('input[name="name"]');
+      if (!createForm.classList.contains('is-open')) {
+        setOpen(true);
+        return;
+      }
       const name = (input?.value || '').trim();
-      if (!name) return;
+      if (!name) {
+        input?.focus();
+        return;
+      }
       try {
         const res = await fetch('/api/shelves', {
           method: 'POST',
