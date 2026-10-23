@@ -58,7 +58,7 @@ import { startTelegramBot, stopTelegramBot, restartTelegramBot, isTelegramBotRun
 import {
   STATS_CACHE_TTL_MS, HOME_SECTIONS_CACHE_TTL_MS
 } from './constants.js';
-import { db, getUserByUsername, hasAdminUser, initDb, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, isDbBreakdownFresh, storeDbBreakdownFromStatRows, markDbBreakdownUnsupported, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus, tryIdleWalTruncate, getLibraryStatsSnapshot } from './db.js';
+import { db, getUserByUsername, hasAdminUser, initDb, applyDbMemorySettings, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, isDbBreakdownFresh, storeDbBreakdownFromStatRows, markDbBreakdownUnsupported, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus, tryIdleWalTruncate, getLibraryStatsSnapshot } from './db.js';
 import { runDbMaintenance, stopDbMaintenance, shouldRunDbMaintenanceInThisProcess } from './services/db-maintenance.js';
 import {
   backfillCatalogSearchFields,
@@ -1237,6 +1237,12 @@ app.use((err, req, res, next) => {
 
 async function bootstrap() {
   initDb();
+  try {
+    const mem = applyDbMemorySettings();
+    console.log(`[perf] SQLite memory: cache ${mem.cacheMb} MB, mmap ${mem.mmapMb} MB`);
+  } catch (err) {
+    console.warn('[perf] SQLite memory settings not applied:', err.message);
+  }
   onIndexComplete(({ newBooksCount }) => {
     if (newBooksCount <= 0) return;
     if (!shouldRunTelegramBotInThisProcess()) return;

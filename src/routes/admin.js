@@ -53,7 +53,8 @@ import {
   getUserByUsername, upsertUser, updateUser, deleteUser, blockUser, unblockUser, getUserByTelegramId, normalizeTelegramId, setUserTelegramId, setUserTelegramBotAllowed, setUserEreaderEmailAllowed, setUserEreaderEmail, getEreaderEmail, setUserAccountEmail, assertAccountEmailAvailable,
   db, getDistinctLanguages, getDistinctGenres, rebuildActiveBooksView, refreshCatalogBookCounts,
   getSuppressedBooks, unsuppressBook, unsuppressAll, getScheduleLog, adjustCatalogCountsForBook, isBookInActiveView,
-  setMeta, getMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache
+  setMeta, getMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache,
+  getDbMemoryInfo, saveDbMemorySettings
 } from '../db.js';
 import {
   getBookById, getIndexStatus, getConfiguredInpxFile, setConfiguredInpxFile, findInpxFiles,
@@ -658,8 +659,25 @@ export function registerAdminRoutes(app, deps) {
       user: req.user, stats, indexStatus: getIndexStatus(),
       operations: getOperationsSnapshot(), flash: String(req.query.flash || ''),
       defaultLocale: getSetting('default_locale') || 'auto',
+      dbMemory: getDbMemoryInfo(),
       csrfToken: req.csrfToken || ''
     }));
+  });
+
+  /* SQLite page cache + mmap. Applied to this process at once; other cluster workers pick it up on restart. */
+  app.post('/admin/settings/db-memory', requireAdminWeb, (req, res) => {
+    try {
+      const action = String([].concat(req.body.action ?? 'save').pop() || 'save');
+      let input;
+      if (action === 'reset') input = { cacheMb: '', mmapMb: '' };
+      else if (action === 'recommended') input = getDbMemoryInfo().recommended;
+      else input = { cacheMb: String(req.body.cacheMb ?? '').trim(), mmapMb: String(req.body.mmapMb ?? '').trim() };
+      const applied = saveDbMemorySettings(input);
+      logSystemEvent('info', 'admin', 'db memory settings updated', { admin: req.user.username, action, ...applied });
+      res.redirect('/admin?flash=' + encodeURIComponent(tp('admin.dbMemory.flashSaved', { cache: applied.cacheMb, mmap: applied.mmapMb })));
+    } catch (error) {
+      res.redirect('/admin?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
+    }
   });
 
   app.get('/admin/users', requireAdminWeb, (req, res) => {

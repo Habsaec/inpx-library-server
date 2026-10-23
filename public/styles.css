@@ -955,6 +955,87 @@ html[data-theme="light"] .topbar-admin {
   margin-top: 2px;
 }
 
+/* Admin → Dashboard → «Память базы данных»: now / recommended / new value */
+.db-memory-table {
+  width: 100%;
+  max-width: 760px;
+  margin: 12px 0 8px;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.db-memory-table th,
+.db-memory-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-memory-table thead th {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.db-memory-table tbody th {
+  font-weight: 600;
+  width: 45%;
+}
+
+.db-memory-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.db-memory-now,
+.db-memory-rec {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.db-memory-rec {
+  color: var(--link);
+}
+
+.db-memory-rec.is-match {
+  color: #4ac694;
+}
+
+.db-memory-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.db-memory-input input {
+  width: 96px;
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .db-memory-table tbody th {
+    width: auto;
+  }
+
+  .db-memory-table th,
+  .db-memory-table td {
+    padding: 6px 4px;
+  }
+
+  .db-memory-input input {
+    width: 72px;
+  }
+}
+
 .monitor-grid {
   margin-top: 10px;
   display: grid;

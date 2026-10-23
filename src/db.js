@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Worker } from 'node:worker_threads';
@@ -74,8 +75,10 @@ if (appliedTimeout !== 30000) {
 db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = ON');
 db.pragma('wal_autocheckpoint = 1000');
-const _cacheSizeKb = config.sqliteCacheSizeMb * 1024;
-const _mmapSize = config.sqliteMmapSizeMb * 1024 * 1024;
+/* Startup values from env / perf profile; Admin → Dashboard can override them at runtime
+   (applyDbMemorySettings). Code that temporarily drops mmap restores _mmapSize. */
+let _cacheSizeKb = config.sqliteCacheSizeMb * 1024;
+let _mmapSize = config.sqliteMmapSizeMb * 1024 * 1024;
 db.pragma(`cache_size = -${_cacheSizeKb}`);        // configurable page cache
 db.pragma(`mmap_size = ${_mmapSize}`);              // configurable memory-mapped I/O
 db.pragma('temp_store = MEMORY');       // temp tables in RAM
@@ -3238,6 +3241,72 @@ export function setSetting(key, value) {
   _stmtSetSetting ??= db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
   _stmtSetSetting.run(key, String(value ?? ''));
   _settingCache.delete(key);
+}
+
+/* ── SQLite memory (page cache + mmap), editable in Admin → Dashboard ── */
+export const DB_MEMORY_LIMITS = { cacheMinMb: 8, cacheMaxMb: 2048, mmapMinMb: 0, mmapMaxMb: 2048 };
+
+function clampInt(value, min, max) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) return null;
+  return Math.max(min, Math.min(max, n));
+}
+
+/**
+ * Recommended sizes: mmap covers the whole DB file when RAM allows (cold pages are then
+ * read straight from the OS file cache), but cache + mmap stay within ~25% of RAM.
+ * Low-memory boxes (≤ 2 GB, Raspberry Pi / NAS) keep the small embedded profile.
+ */
+export function recommendDbMemory({ totalMemMb, dbSizeMb }) {
+  const ram = Math.max(0, Number(totalMemMb) || 0);
+  const dbMb = Math.max(0, Number(dbSizeMb) || 0);
+  if (ram <= 2048) return { cacheMb: 64, mmapMb: 0 };
+  const cacheMb = ram >= 8192 ? 512 : ram >= 4096 ? 256 : 128;
+  const budget = Math.floor(ram * 0.25) - cacheMb;
+  const wanted = Math.ceil((dbMb * 1.1) / 64) * 64;
+  const mmapMb = Math.max(0, Math.min(DB_MEMORY_LIMITS.mmapMaxMb, wanted, Math.floor(budget / 64) * 64));
+  return { cacheMb, mmapMb };
+}
+
+/** Read admin overrides (empty = env / auto profile) and apply them to this process's connection. */
+export function applyDbMemorySettings() {
+  const L = DB_MEMORY_LIMITS;
+  const cacheMb = clampInt(getSetting('db_cache_mb') || NaN, L.cacheMinMb, L.cacheMaxMb) ?? config.sqliteCacheSizeMb;
+  const mmapMb = clampInt(getSetting('db_mmap_mb') || NaN, L.mmapMinMb, L.mmapMaxMb) ?? config.sqliteMmapSizeMb;
+  _cacheSizeKb = cacheMb * 1024;
+  _mmapSize = mmapMb * 1024 * 1024;
+  db.pragma(`cache_size = -${_cacheSizeKb}`);
+  db.pragma(`mmap_size = ${_mmapSize}`);
+  return { cacheMb, mmapMb };
+}
+
+/** Save admin values ('' / null = back to env / auto) and apply them right away. */
+export function saveDbMemorySettings({ cacheMb, mmapMb }) {
+  const L = DB_MEMORY_LIMITS;
+  const c = cacheMb === '' || cacheMb == null ? null : clampInt(cacheMb, L.cacheMinMb, L.cacheMaxMb);
+  const m = mmapMb === '' || mmapMb == null ? null : clampInt(mmapMb, L.mmapMinMb, L.mmapMaxMb);
+  setSetting('db_cache_mb', c == null ? '' : String(c));
+  setSetting('db_mmap_mb', m == null ? '' : String(m));
+  return applyDbMemorySettings();
+}
+
+/** Current values, where they come from, and the recommendation for the admin card. */
+export function getDbMemoryInfo() {
+  const totalMemMb = Math.round(os.totalmem() / (1024 * 1024));
+  let dbSizeMb = 0;
+  try { dbSizeMb = Math.round(fs.statSync(config.dbPath).size / (1024 * 1024)); } catch { /* ignore */ }
+  const custom = getSetting('db_cache_mb') !== '' || getSetting('db_mmap_mb') !== '';
+  return {
+    totalMemMb,
+    dbSizeMb,
+    cacheMb: Math.round(_cacheSizeKb / 1024),
+    mmapMb: Math.round(_mmapSize / (1024 * 1024)),
+    defaultCacheMb: config.sqliteCacheSizeMb,
+    defaultMmapMb: config.sqliteMmapSizeMb,
+    custom,
+    recommended: recommendDbMemory({ totalMemMb, dbSizeMb }),
+    limits: DB_MEMORY_LIMITS
+  };
 }
 
 /**

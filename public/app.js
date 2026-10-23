@@ -2588,8 +2588,11 @@ async function pollOperationsDashboard() {
         lastRepairAt: `${uiT('app.lastRepair')} ${operations.lastRepairAt || uiT('common.dash')}`,
         lastRepairError: operations.lastRepairError || '',
         cacheCountInline: `${uiCountLabel('record', operations.cacheCount)} · ${mb.toLocaleString(loc, { maximumFractionDigits: 1, minimumFractionDigits: 1 })} ${uiT('app.unitMb')}`,
-        /* CPU: % от одного ядра — совпадает с полоской загрузки. */
-        monitorCpu: `${Number.isFinite(cpuSingle) ? cpuSingle.toLocaleString(loc, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : uiT('common.dash')}%`,
+        /* CPU: «% всей машины · % на ядро», как в серверном рендере; полоска и график — % одного ядра. */
+        monitorCpu: (() => {
+          const fmt = (n) => (Number.isFinite(n) ? n.toLocaleString(loc, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : uiT('common.dash'));
+          return `${fmt(cpuAll)}% · ${fmt(cpuSingle)}% ${uiT('admin.monitor.cpuSingleSuffix')}`;
+        })(),
         /* RSS как для тайла «Память приложения». Авто-единицы + «из X ГБ». */
         monitorMem: (() => {
           if (!Number.isFinite(rssMb)) return uiT('common.dash');

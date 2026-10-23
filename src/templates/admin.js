@@ -50,7 +50,7 @@ import {
 } from '../telegram-bot-defaults.js';
 import { buildGlassPanelBackground, adjustLightTextForGlassOpacity, DEFAULT_GLASS_LIGHT, DEFAULT_GLASS_DARK, MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX, MIN_HEADING_SCALE, MAX_HEADING_SCALE, MIN_RADIUS_SCALE, MAX_RADIUS_SCALE, THEME_PRESETS } from '../services/theme-engine.js';
 import { COVER_TITLE_FONTS, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK, MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_TEXT, DEFAULT_MANUSCRIPT_FONT } from '../services/ui-customization.js';
-export function renderOperations({ user, stats = {}, indexStatus = {}, operations = {}, defaultLocale = 'auto', csrfToken = '' }) {
+export function renderOperations({ user, stats = {}, indexStatus = {}, operations = {}, defaultLocale = 'auto', flash = '', dbMemory = null, csrfToken = '' }) {
   /* Сплошной цвет по тому же градиенту (для одиночных элементов — donut, иконки и т.п.).
      0-70% → зелёный → жёлтый; 70-100% → жёлтый → красный. */
   const monitorSeverityColor = (value) => {
@@ -107,7 +107,8 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
   const cpuAllPct = Number(operations.cpuAll ?? operations.cpuPercent);
   const cpuSinglePct = Number(operations.cpuSingle);
   const fmtPct = (n) => Number.isFinite(n) ? n.toLocaleString(loc, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : t('common.dash');
-  const cpuStr = `${fmtPct(cpuAllPct)}%`;
+  /* Same text as the client poll: «% всей машины · % на ядро» (bar and graph = one core). */
+  const cpuStr = `${fmtPct(cpuAllPct)}% · ${fmtPct(cpuSinglePct)}% ${escapeHtml(t('admin.monitor.cpuSingleSuffix'))}`;
   /* «Память приложения»: RSS (Resident Set Size) — то, что показывает ОС в htop.
      Раньше я показывал V8 heap, но это лишь ~5% от реальной памяти процесса —
      SQLite page cache живёт в нативной C++-памяти и в heap не видна. Админу нужна
@@ -216,6 +217,7 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
     : t('admin.statsLastIndexEmpty');
   const content = `
     <div data-operations-dashboard>
+      ${flash ? renderAlert('success', flash) : ''}
 
       <div class="admin-status-bar">
         <span class="admin-chip"><strong data-operations-field="statsBooks">${escapeHtml(countLabel('book', Number(operations.totalBooks ?? stats.totalBooks) || 0))}</strong></span>
@@ -328,6 +330,7 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
 
       <div class="admin-card">
         <div class="admin-card-title">${escapeHtml(t('admin.maintenance.title'))}</div>
+        ${renderDbMemoryForm({ dbMemory, csrfToken })}
         <div class="admin-action-item">
           <div class="admin-action-item-info">
             <strong>${escapeHtml(t('admin.ftsRebuild'))}</strong>
@@ -364,6 +367,55 @@ export function renderOperations({ user, stats = {}, indexStatus = {}, operation
     </div>
   `;
   return pageShell({ title: t('admin.ops.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('admin.ops.title') }], mode: 'admin', currentPath: '/admin', csrfToken });
+}
+
+/** «Память базы данных»: table «сейчас / рекомендуется / новое значение» for SQLite page cache + mmap. */
+function renderDbMemoryForm({ dbMemory, csrfToken }) {
+  if (!dbMemory) return '';
+  const mb = (v) => {
+    const n = Math.max(0, Number(v) || 0);
+    return n >= 1024
+      ? `${(n / 1024).toLocaleString(getLocale() === 'en' ? 'en-US' : 'ru-RU', { maximumFractionDigits: 1 })} ${t('common.unitGB')}`
+      : `${n} ${t('common.unitMB')}`;
+  };
+  const { totalMemMb, dbSizeMb, cacheMb, mmapMb, recommended, custom, limits } = dbMemory;
+  const isRecommended = cacheMb === recommended.cacheMb && mmapMb === recommended.mmapMb;
+  const source = custom ? t('admin.dbMemory.sourceCustom') : t('admin.dbMemory.sourceAuto');
+  const row = ({ id, name, label, hint, now, rec, min, max, step }) => `
+                <tr>
+                  <th scope="row"><label for="${id}">${escapeHtml(label)}</label><span class="db-memory-hint">${escapeHtml(hint)}</span></th>
+                  <td class="db-memory-now">${escapeHtml(mb(now))}</td>
+                  <td class="db-memory-rec${now === rec ? ' is-match' : ''}">${escapeHtml(mb(rec))}</td>
+                  <td><span class="db-memory-input"><input id="${id}" type="number" name="${name}" value="${now}" min="${min}" max="${max}" step="${step}"><span class="muted">${escapeHtml(t('common.unitMB'))}</span></span></td>
+                </tr>`;
+  return `
+        <form action="/admin/settings/db-memory" method="post" data-track-dirty>
+          ${csrfHiddenField(csrfToken)}
+          <div class="admin-action-item admin-action-item--stack">
+            <div class="admin-action-item-info">
+              <strong>${escapeHtml(t('admin.dbMemory.title'))}</strong>
+              <div class="muted">${escapeHtml(t('admin.dbMemory.hint'))}</div>
+              <div class="muted">${escapeHtml(tp('admin.dbMemory.context', { ram: mb(totalMemMb), db: mb(dbSizeMb) }))}</div>
+              <table class="db-memory-table">
+                <thead><tr>
+                  <th scope="col"></th>
+                  <th scope="col">${escapeHtml(t('admin.dbMemory.colNow'))}<span class="db-memory-hint">${escapeHtml(source)}</span></th>
+                  <th scope="col">${escapeHtml(t('admin.dbMemory.colRecommended'))}</th>
+                  <th scope="col">${escapeHtml(t('admin.dbMemory.colNew'))}</th>
+                </tr></thead>
+                <tbody>${row({ id: 'db-cache-mb', name: 'cacheMb', label: t('admin.dbMemory.cacheLabel'), hint: t('admin.dbMemory.cacheHint'), now: cacheMb, rec: recommended.cacheMb, min: limits.cacheMinMb, max: limits.cacheMaxMb, step: 8 })}${row({ id: 'db-mmap-mb', name: 'mmapMb', label: t('admin.dbMemory.mmapLabel'), hint: tp('admin.dbMemory.mmapHint', { max: mb(limits.mmapMaxMb) }), now: mmapMb, rec: recommended.mmapMb, min: limits.mmapMinMb, max: limits.mmapMaxMb, step: 64 })}
+                </tbody>
+              </table>
+              <div class="muted">${escapeHtml(isRecommended ? t('admin.dbMemory.isRecommended') : t('admin.dbMemory.notRecommended'))} ${escapeHtml(t('admin.dbMemory.applyNote'))}</div>
+            </div>
+            <div class="admin-actions-row">
+              ${isRecommended ? '' : `<button type="submit" name="action" value="recommended" class="button-primary">${escapeHtml(t('admin.dbMemory.applyRecommended'))}</button>`}
+              <button type="submit" name="action" value="save"${isRecommended ? ' class="button-primary"' : ''}>${escapeHtml(t('admin.dbMemory.saveCustom'))}</button>
+              ${custom ? `<button type="submit" name="action" value="reset">${escapeHtml(t('admin.dbMemory.reset'))}</button>` : ''}
+            </div>
+          </div>
+        </form>
+        <hr class="admin-divider">`;
 }
 
 export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '' }) {
