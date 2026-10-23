@@ -7189,10 +7189,6 @@ html[data-theme="light"] .page-jump::after {
   opacity: 0.92;
 }
 
-/* «FB2 · 335 КБ · добавлена …» right under the series / language / genres line */
-.book-detail-summary.book-detail-file-line {
-  margin-top: 2px;
-}
 
 .book-detail-summary a {
   color: var(--link);

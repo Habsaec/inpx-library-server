@@ -767,27 +767,6 @@ export function renderLibraryView({
 }
 
 
-/** Size from the INPX index: whole KB below 1 MB, one decimal above. */
-function formatBookFileSize(bytes) {
-  const n = Number(bytes) || 0;
-  if (n <= 0) return '';
-  const loc = getLocale() === 'en' ? 'en-US' : 'ru-RU';
-  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024)).toLocaleString(loc)} ${t('common.unitKB')}`;
-  return `${(n / 1024 / 1024).toLocaleString(loc, { maximumFractionDigits: 1 })} ${t('common.unitMB')}`;
-}
-
-/** One muted line from the index (no file parsing): «FB2 · 335 КБ · добавлена 20 января 2025 г.» */
-function renderBookFileLine(book) {
-  const date = String(book.date || '');
-  const bits = [
-    book.ext ? String(book.ext).toUpperCase() : '',
-    formatBookFileSize(book.size),
-    /^\d{4}-\d{2}-\d{2}/.test(date) ? tp('book.fileAdded', { date: formatLocaleDateLong(date.slice(0, 10)) }) : ''
-  ].filter(Boolean);
-  if (!bits.length) return '';
-  return `<div class="book-detail-summary book-detail-file-line">${bits.map((b) => escapeHtml(b)).join('<span class="book-detail-sep">·</span>')}</div>`;
-}
-
 export function renderBook({
   book,
   details,
@@ -822,6 +801,9 @@ export function renderBook({
   const summaryBits = [
     seriesSummaryHtml,
     (book.lang || 'unknown') ? `<a href="/facet/languages/${encodeURIComponent(book.lang || 'unknown')}">${escapeHtml(formatLanguageLabel(book.lang || 'unknown'))}</a>` : '',
+    // Source format only: INPX SIZE matches neither the archive entry nor the delivered
+    // file (Flibusta sidecar images are merged back into FB2/EPUB on download).
+    book.ext ? escapeHtml(String(book.ext).toUpperCase()) : '',
     genreSummaryHtml
   ].filter(Boolean);
   const parentLibraryHref = primarySeries ? `/facet/series/${encodeURIComponent(primarySeries.name)}${seriesAuthorParam}` : primaryAuthor ? `/facet/authors/${encodeURIComponent(primaryAuthor)}` : '/library/recent';
@@ -858,7 +840,6 @@ export function renderBook({
           ${Number(book.deleted) ? `<p class="muted book-deleted-note">${escapeHtml(t('book.deletedHint'))}</p>` : ''}
           <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 3, bookAuthors: book.authors, inlineExpand: true }) : escapeHtml(t('book.authorUnknown'))}</div>
           ${summaryBits.length ? `<div class="book-detail-summary">${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
-          ${renderBookFileLine(book)}
           ${
             details.annotationIsHtml && String(details.annotation || '').trim()
               ? `<div class="book-detail-annotation book-detail-annotation--html">${sanitizeHtml(details.annotation)}</div>`
