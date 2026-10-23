@@ -11942,36 +11942,8 @@ html[data-theme="light"] .card-cover-actions .download-menu-trigger:hover {
     opacity: 1;
   }
 
-  /* Always visible on touch: one compact row and a short shade, so most of the cover stays visible */
-  .card-cover::after {
-    height: 30%;
-  }
-
   .card-cover-actions {
     pointer-events: auto;
-    flex-direction: row;
-    left: 6px;
-    right: 6px;
-    bottom: 6px;
-    gap: 4px;
-  }
-
-  .card-cover-actions > * {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .card-cover-actions .download-menu-trigger,
-  .card-cover-actions .card-cover-action {
-    min-height: 28px;
-    padding: 0 6px;
-    gap: 4px;
-    font-size: 0.625rem;
-  }
-
-  .card-cover-actions .download-menu-trigger::before {
-    width: 11px;
-    height: 11px;
   }
 }
 
