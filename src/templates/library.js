@@ -484,7 +484,7 @@ export function renderCatalog({
     ...genreList.map((g) => formatGenreLabel(g)),
     lang ? lang.toUpperCase() : '',
     format ? format.toUpperCase() : '',
-    year ? String(year) : '',
+    year ? tp('catalog.filter.year', { value: String(year) }) : '',
     minRate >= 1 ? tp('catalog.filter.minRate', { value: String(minRate) }) : '',
     hasSeries === 1 ? t('catalog.filtersSeriesYes') : '',
     hasSeries === 0 ? t('catalog.filtersSeriesNo') : ''
