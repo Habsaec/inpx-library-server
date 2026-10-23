@@ -369,14 +369,27 @@ function clampInt(value, min, max, fallback) {
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
+/* getUiCustomization() runs several times per page; stat-ing 7 asset files each time was
+   ~17% of page CPU. Writers call invalidateUiCustomizationCache(); the short TTL covers
+   files replaced by hand (or by another cluster worker). */
+const UI_FILE_URL_TTL_MS = 10_000;
+const _uiFileUrlCache = new Map(); // fileName -> { url, at }
+let _uiDirReady = false;
+
 function fileMtimeUrl(basePath, fileName) {
+  const now = Date.now();
+  const cached = _uiFileUrlCache.get(fileName);
+  if (cached && now - cached.at < UI_FILE_URL_TTL_MS) return cached.url;
   const full = path.join(UI_DIR, fileName);
+  let url = null;
   try {
     const st = fs.statSync(full);
-    return `${basePath}?v=${Math.trunc(st.mtimeMs)}`;
+    url = `${basePath}?v=${Math.trunc(st.mtimeMs)}`;
   } catch {
-    return null;
+    url = null;
   }
+  _uiFileUrlCache.set(fileName, { url, at: now });
+  return url;
 }
 
 function sanitizeFontFamilyName(name) {
@@ -510,7 +523,9 @@ function hasCustomFontFile() {
 }
 
 /** Совместимость: раньше был in-process кэш, теперь читаем файлы с диска каждый раз. */
-export function invalidateUiCustomizationCache() {}
+export function invalidateUiCustomizationCache() {
+  _uiFileUrlCache.clear();
+}
 
 function readSurfaceOpacity() {
   const unifiedRaw = getSetting('ui_surface_opacity');
@@ -728,7 +743,10 @@ export function resetUiThemeTypography() {
 }
 
 export function getUiCustomization() {
-  ensureUiDir();
+  if (!_uiDirReady) {
+    ensureUiDir();
+    _uiDirReady = true;
+  }
   const blurRaw = getSetting('ui_bg_blur');
   const overlayRaw = getSetting('ui_bg_overlay');
   const blur = blurRaw === '' ? 0 : clampInt(blurRaw, 0, 24, 0);

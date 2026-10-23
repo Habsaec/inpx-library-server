@@ -202,12 +202,39 @@ function renderCatalogSearchHints(searchHints, query = '') {
     </div>`;
 }
 
+/* One collator instead of localeCompare(…, options) per comparison (same order, far cheaper). */
+const GENRE_COLLATOR = new Intl.Collator('ru', { sensitivity: 'base' });
+
 function sortGenreOptionsAlpha(options = []) {
   return [...(Array.isArray(options) ? options : [])].sort((a, b) => {
     const la = String(a?.displayName || a?.name || '').trim();
     const lb = String(b?.displayName || b?.name || '').trim();
-    return la.localeCompare(lb, 'ru', { sensitivity: 'base' });
+    return GENRE_COLLATOR.compare(la, lb);
   });
+}
+
+/*
+ * The genre option list (hundreds of labels) is identical for every catalog page that
+ * reuses the same cached genreOptions array, so its HTML is memoized per array
+ * (WeakMap: dropped with the cached array) and per locale / form / selected genres.
+ */
+const _genreChecksHtmlMemo = new WeakMap();
+const GENRE_CHECKS_MEMO_MAX = 32;
+
+function memoGenreChecksHtml(genreOptions, key, build) {
+  if (!Array.isArray(genreOptions) || !genreOptions.length) return build();
+  let perArray = _genreChecksHtmlMemo.get(genreOptions);
+  if (!perArray) {
+    perArray = new Map();
+    _genreChecksHtmlMemo.set(genreOptions, perArray);
+  }
+  let html = perArray.get(key);
+  if (html === undefined) {
+    html = build();
+    if (perArray.size >= GENRE_CHECKS_MEMO_MAX) perArray.delete(perArray.keys().next().value);
+    perArray.set(key, html);
+  }
+  return html;
 }
 
 function renderCatalogFilterPanel({
@@ -236,13 +263,13 @@ function renderCatalogFilterPanel({
   if (hasSeries === 1) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('hasSeries'))}"><span>${escapeHtml(t('catalog.filter.hasSeries'))}</span><span aria-hidden="true">×</span></a>`);
   if (hasSeries === 0) chips.push(`<a class="catalog-filter-chip" href="${escapeHtml(chipHref('hasSeries'))}"><span>${escapeHtml(t('catalog.filter.noSeries'))}</span><span aria-hidden="true">×</span></a>`);
 
-  const sortedGenreOptions = sortGenreOptionsAlpha(genreOptions);
   const selectedGenreChecks = genres.map((name) => {
     const label = formatGenreLabel(name);
     const search = `${name} ${label}`.toLowerCase();
     return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(search)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}" form="${escapeHtml(formId)}" checked><span class="catalog-genre-label">${escapeHtml(label)}</span></label>`;
   }).join('');
-  const genreChecks = sortedGenreOptions.map((g) => {
+  const genreChecksKey = `${getLocale()}|${formId}|${[...selected].sort().join(',')}`;
+  const genreChecks = memoGenreChecksHtml(genreOptions, genreChecksKey, () => sortGenreOptionsAlpha(genreOptions).map((g) => {
     const name = g.name || '';
     if (selected.has(name)) return '';
     const label = g.displayName || formatGenreLabel(name);
@@ -252,7 +279,7 @@ function renderCatalogFilterPanel({
       ? `<span class="catalog-genre-count muted">${escapeHtml(String(count))}</span>`
       : '';
     return `<label class="catalog-genre-option" data-genre-search="${escapeHtml(search)}"><input type="checkbox" name="genre" value="${escapeHtml(name)}" form="${escapeHtml(formId)}"><span class="catalog-genre-label">${escapeHtml(label)}</span>${countHtml}</label>`;
-  }).join('');
+  }).join(''));
   const lazyAttrs = genreOptionsLazy
     ? ` data-catalog-genres-lazy="1" data-genres-q="${escapeHtml(query || '')}" data-genres-lang="${escapeHtml(lang || '')}" data-genres-format="${escapeHtml(format || '')}" data-genres-year="${escapeHtml(year ? String(year) : '')}" data-genres-min-rate="${escapeHtml(minRate >= 1 ? String(minRate) : '')}" data-genres-has-series="${escapeHtml(hasSeries === 0 || hasSeries === 1 ? String(hasSeries) : '')}"`
     : '';

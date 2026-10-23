@@ -103,7 +103,23 @@ function shiftLightness(hex, deltaL) {
  * @param {string} [textHex] - empty = auto from surface luminance
  * @param {string} [accentHex] - empty = auto-derived accent from surface hue
  */
+/* Pure function of its three inputs, computed several times per page (~6% of page CPU).
+   Callers tweak the returned palette, so the memo hands out a shallow copy (all fields are strings/booleans). */
+const _paletteMemo = new Map();
+const PALETTE_MEMO_MAX = 64;
+
 export function buildThemePalette(surfaceHex, textHex = '', accentHex = '') {
+  const memoKey = `${surfaceHex}|${textHex}|${accentHex}`;
+  let palette = _paletteMemo.get(memoKey);
+  if (!palette) {
+    palette = computeThemePalette(surfaceHex, textHex, accentHex);
+    if (_paletteMemo.size >= PALETTE_MEMO_MAX) _paletteMemo.delete(_paletteMemo.keys().next().value);
+    _paletteMemo.set(memoKey, palette);
+  }
+  return { ...palette };
+}
+
+function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
   const surface = normalizeHexColor(surfaceHex, DEFAULT_GLASS_DARK);
   const textOverride = String(textHex || '').trim();
   const text = textOverride ? normalizeHexColor(textOverride, pickAutoText(surface)) : pickAutoText(surface);

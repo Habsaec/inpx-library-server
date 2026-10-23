@@ -12,8 +12,16 @@ import { runMigrations } from './services/migrations.js';
 import { resolveIndexImportMode } from './index-import-mode.js';
 import { IDLE_MS, sessionStatusFromActivityAt } from '../public/position-sync.js';
 
+/* scrypt is deliberately slow (~25 ms); the secret is fixed per process, so derive once.
+   Uncached, the Telegram token decrypt on every signed-in book page was ~40% of CPU. */
+let _encKey = null;
+let _encKeySecret = null;
 function deriveEncKey() {
-  return crypto.scryptSync(config.sessionSecret, 'smtp-enc-salt', 32);
+  if (!_encKey || _encKeySecret !== config.sessionSecret) {
+    _encKeySecret = config.sessionSecret;
+    _encKey = crypto.scryptSync(config.sessionSecret, 'smtp-enc-salt', 32);
+  }
+  return _encKey;
 }
 
 export function encryptValue(plaintext) {
