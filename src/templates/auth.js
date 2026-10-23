@@ -16,6 +16,7 @@ export function renderLogin(error = '', {
   if (registrationEnabled) {
     footerLinks.push(`<a href="/register" class="login-footer-link">${escapeHtml(t('login.register'))}</a>`);
   }
+  footerLinks.push(`<a href="/" class="login-footer-link">${escapeHtml(t('login.browseCatalog'))}</a>`);
   const ssoBlock = oidcEnabled
     ? `<div class="login-sso-block">
         <a class="button login-sso-button" href="/auth/oidc/start">${escapeHtml(t('login.sso'))}</a>

@@ -331,11 +331,18 @@ a.table-row-link:active {
   min-height: 0;
   overflow-y: auto;
   padding: 12px 0;
-  scrollbar-width: none;
+  /* Thin visible scrollbar: on short windows the last items (Заметки) sit below the QR footer */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 22%, transparent) transparent;
 }
 
 .sidebar-user-scroll::-webkit-scrollbar {
-  display: none;
+  width: 6px;
+}
+
+.sidebar-user-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 22%, transparent);
 }
 
 /* Шапка справа: бренд сайдбара той же высоты, меню начинается у панели поиска */
@@ -4480,6 +4487,12 @@ body:has(.bottom-nav) .batch-fab {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+
+/* Top-right on covers: the top-left corner holds the rating ribbon and the «Удалена» badge */
+.card .batch-select-hit {
+  left: auto;
+  right: 8px;
 }
 
 @media (hover: none),
@@ -10253,6 +10266,27 @@ html[data-ui-header="1"][data-ui-header-fit="cover"] .site-header-banner img {
   object-fit: cover;
 }
 
+/* Narrow screens: cap the banner (must follow the base rule above, same specificity) */
+@media (max-width: 900px) {
+  html[data-ui-header="1"][data-ui-header-fit="cover"] .site-header-banner {
+    height: min(160px, var(--ui-header-height, 180px));
+  }
+
+  html[data-ui-header="1"]:not([data-ui-header-fit="cover"]) .site-header-banner img {
+    max-height: min(160px, var(--ui-header-height, 180px));
+  }
+}
+
+@media (max-width: 600px) {
+  html[data-ui-header="1"][data-ui-header-fit="cover"] .site-header-banner {
+    height: min(110px, var(--ui-header-height, 180px));
+  }
+
+  html[data-ui-header="1"]:not([data-ui-header-fit="cover"]) .site-header-banner img {
+    max-height: min(110px, var(--ui-header-height, 180px));
+  }
+}
+
 /* ?? UI customization (admin appearance) ?? */
 html[data-ui-bg="1"] {
   --shell-bg: transparent;
@@ -11908,8 +11942,36 @@ html[data-theme="light"] .card-cover-actions .download-menu-trigger:hover {
     opacity: 1;
   }
 
+  /* Always visible on touch: one compact row and a short shade, so most of the cover stays visible */
+  .card-cover::after {
+    height: 30%;
+  }
+
   .card-cover-actions {
     pointer-events: auto;
+    flex-direction: row;
+    left: 6px;
+    right: 6px;
+    bottom: 6px;
+    gap: 4px;
+  }
+
+  .card-cover-actions > * {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .card-cover-actions .download-menu-trigger,
+  .card-cover-actions .card-cover-action {
+    min-height: 28px;
+    padding: 0 6px;
+    gap: 4px;
+    font-size: 0.625rem;
+  }
+
+  .card-cover-actions .download-menu-trigger::before {
+    width: 11px;
+    height: 11px;
   }
 }
 
@@ -12271,13 +12333,13 @@ html[data-ui-typography="1"] .shell .welcome-hero-quote {
 .welcome-hero-banner.home-reveal .welcome-hero-quote,
 .welcome-hero-banner.home-reveal .welcome-hero-author {
   opacity: 0;
-  filter: blur(10px);
-  transform: translateY(10px);
-  transition: opacity 0.9s var(--ease-out-expo), filter 0.9s var(--ease-out-expo), transform 0.9s var(--ease-out-expo);
+  filter: blur(6px);
+  transform: translateY(8px);
+  transition: opacity 0.5s var(--ease-out-expo), filter 0.5s var(--ease-out-expo), transform 0.5s var(--ease-out-expo);
 }
 
 .welcome-hero-banner.home-reveal .welcome-hero-author {
-  transition-delay: 0.28s;
+  transition-delay: 0.12s;
 }
 
 .welcome-hero-banner.home-reveal-active .welcome-hero-quote,

@@ -693,8 +693,10 @@ export function renderDownloadMenu(book, { compact = false, accent = false, user
     compact ? 'download-menu-trigger-compact' : ''
   ].filter(Boolean).join(' ');
   if (formats.length === 1) {
-    const [format] = formats[0];
-    return `<a class="${triggerClass} download-direct-link" href="${downloadBookPath(book.id, `format=${encodeURIComponent(format)}`)}">${escapeHtml(t('download.label'))}</a>`;
+    const [format, label] = formats[0];
+    // Single format: name it, so the button says what file arrives (cards stay short).
+    const text = compact ? t('download.label') : `${t('download.label')} ${label}`;
+    return `<a class="${triggerClass} download-direct-link" href="${downloadBookPath(book.id, `format=${encodeURIComponent(format)}`)}" title="${escapeHtml(`${t('download.label')} ${label}`)}">${escapeHtml(text)}</a>`;
   }
   return `
     <details class="download-menu ${compact ? 'download-menu-compact' : ''}">

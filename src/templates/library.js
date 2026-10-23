@@ -311,14 +311,14 @@ function renderCatalogFilterPanel({
       </details>
       <div class="catalog-filter-row catalog-filter-row-inline">
         ${showLang ? `<label class="catalog-filter-field">
-          <span class="muted">${escapeHtml(t('catalog.allLanguages'))}</span>
+          <span class="muted">${escapeHtml(t('catalog.filtersLang'))}</span>
           <select name="lang" form="${filterFormId}" onchange="this.form.submit()">
             <option value="">${escapeHtml(t('catalog.allLanguages'))}</option>
             ${langs.map((l) => `<option value="${escapeHtml(l)}"${l === lang ? ' selected' : ''}>${escapeHtml(l.toUpperCase())}</option>`).join('')}
           </select>
         </label>` : ''}
         <label class="catalog-filter-field">
-          <span class="muted">${escapeHtml(t('catalog.allFormats'))}</span>
+          <span class="muted">${escapeHtml(t('catalog.filtersFormat'))}</span>
           <select name="format" form="${filterFormId}" onchange="this.form.submit()">
             <option value="">${escapeHtml(t('catalog.allFormats'))}</option>
             ${formats.map((f) => `<option value="${escapeHtml(f)}"${f === format ? ' selected' : ''}>${escapeHtml(f.toUpperCase())}</option>`).join('')}
@@ -459,7 +459,6 @@ export function renderCatalog({
     series: t('catalog.inSeries')
   };
   const hasFilterDims = Boolean(genreList.length || lang || format || year || minRate >= 1 || hasSeries === 0 || hasSeries === 1);
-  const hasQueryContext = Boolean(query || letter || hasFilterDims);
   const isBookField = ['books', 'title', 'book-authors', 'book-series', 'genres', 'keywords'].includes(field);
   const isListView = isBookField && view === 'list';
   const sortOptions = isBookField
@@ -486,7 +485,7 @@ export function renderCatalog({
     lang ? lang.toUpperCase() : '',
     format ? format.toUpperCase() : '',
     year ? String(year) : '',
-    minRate >= 1 ? `≥${minRate}` : '',
+    minRate >= 1 ? tp('catalog.filter.minRate', { value: String(minRate) }) : '',
     hasSeries === 1 ? t('catalog.filtersSeriesYes') : '',
     hasSeries === 0 ? t('catalog.filtersSeriesNo') : ''
   ].filter(Boolean).join(' · ');
@@ -534,7 +533,7 @@ export function renderCatalog({
       ? `${catalogHintBlock}${recoveryHints}${booksMarkup}`
       : `${catalogHintBlock}${recoveryHints}${renderEntityGrid(items, field === 'authors' ? '/facet/authors' : '/facet/series', t('browse.empty'))}`
     : `${catalogHintBlock}${catalogEmpty}${recoveryHints}`;
-  const pageHeading = hasQueryContext ? t('catalog.resultsTitle') : t('catalog.title');
+  const pageHeading = query ? t('catalog.resultsTitle') : t('catalog.title');
   const viewToggle = isBookField
     ? (() => {
       const nextParams = buildCatalogQueryParams({
@@ -667,7 +666,9 @@ export function renderLibraryView({
     ...(genreMode === 'and' ? { genreMode: 'and' } : {}),
     ...(isSeries ? {} : { view: browseView })
   };
-  const viewToggle = isSeries
+  // Empty personal section (no filters to blame): nothing to sort or re-layout.
+  const hideListControls = totalN === 0 && !showFilters;
+  const viewToggle = isSeries || hideListControls
     ? ''
     : (() => {
       const nextParams = buildCatalogQueryParams({
@@ -687,7 +688,7 @@ export function renderLibraryView({
       formId: `library-filters-${view}`
     })
     : '';
-  const sortControl = isSeries
+  const sortControl = isSeries || hideListControls
     ? ''
     : renderSortControl({
       action: filterAction,
@@ -969,7 +970,7 @@ export function renderFavorites({
     <section class="library-shelf library-shelf-secondary favorites-section favorites-section-books">
       <div class="section-title">
         <h2>${escapeHtml(t('favorites.books'))}</h2>
-        <div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: bookSortOptions, extraHidden: { view: 'books' } })}</div>
+        ${books.length ? `<div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: bookSortOptions, extraHidden: { view: 'books' } })}</div>` : ''}
       </div>
       ${pageHint}
       ${books.length ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderFavoriteBookGrid(books, { batchSelect: true, user, readBookIds })}</div>${booksPagination}` : renderEmptyState({ title: t('favorites.emptyBooksTitle'), text: t('favorites.emptyBooksText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog'), secondaryHref: '/library/recent', secondaryLabel: t('library.openRecent') })}
@@ -978,7 +979,7 @@ export function renderFavorites({
     <section class="library-shelf library-shelf-secondary favorites-section favorites-section-books">
       <div class="section-title">
         <h2>${escapeHtml(t('favorites.read'))}</h2>
-        <div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: bookSortOptions, extraHidden: { view: 'read' } })}</div>
+        ${readBooks.length ? `<div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: bookSortOptions, extraHidden: { view: 'read' } })}</div>` : ''}
       </div>
       ${pageHint}
       ${readBooks.length ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderFavoriteBookGrid(readBooks, { batchSelect: true, user, readBookIds })}</div>${readPagination}` : renderEmptyState({ title: t('favorites.emptyReadTitle'), text: t('favorites.emptyReadText'), actionHref: '/library/continue', actionLabel: t('favorites.emptyReadAction'), secondaryHref: '/catalog', secondaryLabel: t('favorites.toCatalog') })}
@@ -987,7 +988,7 @@ export function renderFavorites({
     <section class="library-shelf library-shelf-secondary favorites-section">
       <div class="section-title">
         <h2>${escapeHtml(t('favorites.authors'))}</h2>
-        <div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: entitySortOptions, extraHidden: { view: 'authors' } })}</div>
+        ${authors.length ? `<div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: entitySortOptions, extraHidden: { view: 'authors' } })}</div>` : ''}
       </div>
       <div class="table-list entity-list favorites-list">
         ${authors.map((item) => {
@@ -1021,7 +1022,7 @@ export function renderFavorites({
     <section class="library-shelf library-shelf-secondary favorites-section">
       <div class="section-title">
         <h2>${escapeHtml(t('favorites.series'))}</h2>
-        <div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: entitySortOptions, extraHidden: { view: 'series' } })}</div>
+        ${series.length ? `<div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: entitySortOptions, extraHidden: { view: 'series' } })}</div>` : ''}
       </div>
       <div class="table-list entity-list favorites-list">
         ${series.map((item) => {
