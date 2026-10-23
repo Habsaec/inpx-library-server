@@ -61,6 +61,21 @@ function parseBoolean(value, defaultValue = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
 }
 
+/**
+ * TRUST_PROXY → Express 'trust proxy'. true/yes/on = trust every hop (old behaviour; a client
+ * reaching the server directly can then fake X-Forwarded-For). A number = how many proxies
+ * stand in front ("1" for a single nginx/Caddy — the safe choice). Anything else is passed
+ * through as an address list, e.g. "loopback" or "loopback, 10.0.0.0/8".
+ */
+export function parseTrustProxy(value) {
+  const raw = String(value ?? '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw || ['0', 'false', 'no', 'off'].includes(lower)) return false;
+  if (['true', 'yes', 'on'].includes(lower)) return true;
+  if (/^\d+$/.test(raw)) return Math.min(Number(raw), 10);
+  return raw;
+}
+
 /** Целое из env: NaN, ±Infinity и вне диапазона → default с предупреждением в лог. */
 function parseEnvInt(envName, raw, defaultValue, { min, max } = {}) {
   if (raw === undefined || raw === null || String(raw).trim() === '') {
@@ -121,7 +136,7 @@ export const config = {
     min: 1,
     max: 1_000_000
   }),
-  trustProxy: parseBoolean(process.env.TRUST_PROXY, false),
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   smtpHost: process.env.SMTP_HOST || '',
   smtpPort: parseEnvInt('SMTP_PORT', process.env.SMTP_PORT, 587, { min: 1, max: 65535 }),
   smtpSecure: parseBoolean(process.env.SMTP_SECURE, false),

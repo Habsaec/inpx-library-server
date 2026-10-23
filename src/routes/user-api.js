@@ -27,6 +27,7 @@ import { createSmtpTransport } from '../services/email.js';
 import { invalidateUserPageCaches } from '../services/cache.js';
 import { invalidateRecommendationsCache } from '../services/recommendations.js';
 import { logSystemEvent } from '../services/system-events.js';
+import { isServerBusyError } from '../services/heavy-task-limiter.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { normalizeBatchIdsParam, resolveAdhocBookIdsFromClientList, resolveBatchScopeBookIds } from './download.js';
@@ -404,6 +405,7 @@ export function registerUserApiRoutes(app, deps) {
       try {
         const attachments = [];
         const usedNames = new Map();
+        let busySkipped = false;
         const requested = bookIds.length;
         const booksMap = getBooksByIds(bookIds);
         for (const bookId of bookIds) {
@@ -426,11 +428,16 @@ export function registerUserApiRoutes(app, deps) {
             } else {
               attachments.push({ filename: fileName, content: download.content, contentType: download.mimeType });
             }
-          } catch {
+          } catch (err) {
             // skip books that fail to resolve
+            if (isServerBusyError(err)) busySkipped = true;
           }
         }
 
+        if (!attachments.length && busySkipped) {
+          res.setHeader('Retry-After', '15');
+          return apiFail(res, 503, ApiErrorCode.SERVICE_UNAVAILABLE, t('errors.serverBusy'));
+        }
         if (!attachments.length) {
           return apiFail(res, 404, ApiErrorCode.SEND_NO_ATTACHMENTS, t('api.send.noAttachments'));
         }
@@ -522,6 +529,10 @@ export function registerUserApiRoutes(app, deps) {
         batchEmailLocks.delete(lockKey);
       }
     } catch (error) {
+      if (isServerBusyError(error)) {
+        res.setHeader('Retry-After', '15');
+        return apiFail(res, 503, ApiErrorCode.SERVICE_UNAVAILABLE, t('errors.serverBusy'));
+      }
       console.error('Send to ereader error:', error);
       let msg = translateKnownErrorMessage(error.message) || t('api.error.unknown');
       if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {

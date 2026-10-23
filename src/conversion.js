@@ -15,6 +15,7 @@ import {
 } from './download-formats.js';
 import { buildDownloadBaseName } from './download-filename.js';
 import { getFb2WebpMode, convertFb2WebpBinariesToPng } from './fb2-webp-images.js';
+import { downloadLimiter } from './services/heavy-task-limiter.js';
 const MIME_TYPES = {
   fb2: 'application/octet-stream',
   fb2zip: 'application/zip',
@@ -379,7 +380,12 @@ export {
   getDisabledDownloadFormats
 } from './download-formats.js';
 
-export async function resolveDownload(book, requestedFormat, options = {}) {
+/** Every delivery path (download, batch ZIP, e-mail, Telegram) goes through the download limiter. */
+export function resolveDownload(book, requestedFormat, options = {}) {
+  return downloadLimiter.run(() => resolveDownloadNow(book, requestedFormat, options));
+}
+
+async function resolveDownloadNow(book, requestedFormat, options = {}) {
   const skipFb2DeliveryProcessing = options?.skipFb2DeliveryProcessing === true;
   const sourceFormat = String(book?.ext || 'fb2').toLowerCase();
   const format = normalizeDownloadFormat(book, requestedFormat);

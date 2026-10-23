@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import sevenBin from '7zip-bin';
 import { ARCHIVE_MAX_ENTRY_BYTES } from './constants.js';
+import { serverBusyError } from './services/heavy-task-limiter.js';
 
 const MAX_SLT_OUTPUT = 64 * 1024 * 1024;
 const MAX_BOOK_SIZE = ARCHIVE_MAX_ENTRY_BYTES;
@@ -26,14 +27,14 @@ function tryGrant7zSlot() {
 function acquire7zSlot() {
   return new Promise((resolve, reject) => {
     if (queue7z.length >= SEVEN_Z_MAX_QUEUE) {
-      reject(new Error('Очередь 7z переполнена, попробуйте позже'));
+      reject(serverBusyError('Очередь 7z переполнена, попробуйте позже'));
       return;
     }
     const entry = { resolve, reject, timer: null };
     entry.timer = setTimeout(() => {
       const idx = queue7z.indexOf(entry);
       if (idx !== -1) queue7z.splice(idx, 1);
-      reject(new Error('7z queue timeout: waited too long for available slot'));
+      reject(serverBusyError('7z queue timeout: waited too long for available slot'));
     }, SEVEN_Z_QUEUE_TIMEOUT_MS);
     queue7z.push(entry);
     tryGrant7zSlot();

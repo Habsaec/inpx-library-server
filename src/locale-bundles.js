@@ -571,6 +571,7 @@ const ru = {
   'validation.userNotFound': 'Пользователь не найден',
   'common.notFound': 'Не найдено',
   'errors.internal': 'Внутренняя ошибка сервера',
+  'errors.serverBusy': 'Сервер сейчас готовит другие книги. Повторите через несколько секунд.',
   'settings.exportNote':
     'Пароли, SMTP-пароль и секрет reCAPTCHA в файл не попадают. Импорт автоматически не поддерживается — используйте как шпаргалку при переносе или ручном восстановлении.',
   'admin.flash.anonymousSaved': 'Настройки анонимного доступа сохранены',
@@ -2532,6 +2533,7 @@ const en = {
   'validation.userNotFound': 'User not found',
   'common.notFound': 'Not found',
   'errors.internal': 'Internal server error',
+  'errors.serverBusy': 'The server is busy preparing other books. Please retry in a few seconds.',
   'settings.exportNote':
     'Passwords, SMTP password, and the reCAPTCHA secret are not included in this file. Automatic import is not supported — use as a reference when migrating or restoring by hand.',
   'admin.flash.anonymousSaved': 'Anonymous access settings saved',

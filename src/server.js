@@ -5,6 +5,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { brotliCompress, constants as zlibConstants } from 'node:zlib';
 import { precompressedStatic, warmPrecompressedStatic } from './services/static-precompress.js';
+import { isServerBusyError } from './services/heavy-task-limiter.js';
 import { STATIC_ASSET_VERSION } from './templates/shared.js';
 import { getClientI18nScript } from './i18n.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
@@ -1140,6 +1141,23 @@ registerDownloadRoutes(app);
 registerOpdsRoutes(app, { baseUrl });
 registerOpdsV2Routes(app, { baseUrl });
 registerKosyncRoutes(app);
+
+/* Download / 7z queues full: an expected overload, not a server fault — 503 + Retry-After. */
+let _busyLoggedAt = 0;
+app.use((error, req, res, next) => {
+  if (!isServerBusyError(error)) return next(error);
+  const now = Date.now();
+  if (now - _busyLoggedAt > 60_000) {
+    _busyLoggedAt = now;
+    logSystemEvent('warn', 'server', 'heavy task queue full, answered 503', { message: error.message, path: req.path });
+  }
+  if (res.headersSent) return res.end();
+  res.setHeader('Retry-After', '15');
+  if (req.path.startsWith('/api/')) {
+    return res.status(503).json({ ok: false, code: ApiErrorCode.SERVICE_UNAVAILABLE, error: t('errors.serverBusy') });
+  }
+  return res.status(503).type('text/plain').send(t('errors.serverBusy'));
+});
 
 app.use((error, req, res, next) => {
   console.error(error);

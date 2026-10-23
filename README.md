@@ -195,7 +195,7 @@ docker compose up -d
 5. SMTP для отправки на ридер — админка → почта / SMTP.
 6. Бэкап БД — админка → Операции → «Скачать бэкап» (или файл `data/library.db`).
 
-**Продакшен за HTTPS / reverse proxy:** задайте `TRUST_PROXY=true` и `SESSION_SECURE_COOKIE=true` (см. `.env.example`).
+**Продакшен за HTTPS / reverse proxy:** задайте `TRUST_PROXY=1` (один nginx/Caddy перед сервером) и `SESSION_SECURE_COOKIE=true` (см. `.env.example`).
 
 ---
 
@@ -228,7 +228,7 @@ docker compose up -d
 | `SESSION_MAX_AGE_MS` | `1209600000` | TTL сессии (14 дней) |
 | `LOGIN_WINDOW_MS` | `900000` | Окно rate limit входа |
 | `LOGIN_MAX_ATTEMPTS` | `10` | Макс. неудачных попыток |
-| `TRUST_PROXY` | `false` | `true` за nginx / Caddy |
+| `TRUST_PROXY` | `false` | Прокси перед сервером: `1` — один nginx / Caddy, `loopback` или список подсетей; `true` — доверять любому (IP можно подделать) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` | — | SMTP для отправки на ридер |
 | `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | — | Учётные данные SMTP |
 | `FB2CNG_PATH` | `./converter/fbc` | Бинарник fb2cng |
@@ -245,6 +245,9 @@ docker compose up -d
 | `EVENTS_STDOUT` | `true` | События в stdout (`docker logs`) |
 | `HEALTH_MINIMAL` | `false` | Минимальный `/health` |
 | `CLUSTER_WORKERS` | `0` | Воркеры кластера (0 = один процесс) |
+| `DOWNLOAD_MAX_CONCURRENT` | `4` | Сколько книг одновременно готовится к скачиванию / отправке |
+| `DOWNLOAD_MAX_QUEUE` | `100` | Сколько скачиваний может ждать; сверх — ответ 503 «сервер занят» |
+| `DOWNLOAD_QUEUE_TIMEOUT_MS` | `120000` | Сколько скачивание ждёт в очереди до 503 |
 | `TELEGRAM_BOT_TOKEN` | — | Токен бота (или настройка в админке) |
 | `PERF_PROFILE` | авто | `default` / `embedded` для NAS / мало RAM |
 

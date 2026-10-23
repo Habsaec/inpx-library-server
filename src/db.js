@@ -1127,6 +1127,22 @@ export function deleteUser(username) {
     db.prepare(`DELETE FROM kosync_keys WHERE username = ?`).run(normalizedUsername);
     db.prepare(`DELETE FROM kosync_progress WHERE username = ?`).run(normalizedUsername);
     db.prepare(`DELETE FROM smart_shelves WHERE username = ?`).run(normalizedUsername);
+    /* Per-user tables without ON DELETE CASCADE that were left behind (read marks, ratings,
+       reader notes, sync revisions). Some are created lazily, so skip a table an old DB lacks. */
+    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions']) {
+      const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table);
+      if (exists) db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(normalizedUsername);
+    }
+    /* Android device tokens live in meta; a user re-created with the same name must not inherit them. */
+    const tokenPrefix = `device_token:${normalizedUsername}:`;
+    const tokenRows = db.prepare(`SELECT key, value FROM meta WHERE substr(key, 1, length(?)) = ?`).all(tokenPrefix, tokenPrefix);
+    for (const row of tokenRows) {
+      try {
+        const hash = JSON.parse(row.value || '{}').tokenHash;
+        if (hash) db.prepare(`DELETE FROM meta WHERE key = ?`).run(`device_token_hash:${hash}`);
+      } catch { /* malformed entry: still drop the token row below */ }
+      db.prepare(`DELETE FROM meta WHERE key = ?`).run(row.key);
+    }
     return db.prepare(`DELETE FROM users WHERE username = ?`).run(normalizedUsername).changes;
   })();
 }
