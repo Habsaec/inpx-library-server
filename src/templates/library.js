@@ -767,6 +767,27 @@ export function renderLibraryView({
 }
 
 
+/** Size from the INPX index: whole KB below 1 MB, one decimal above. */
+function formatBookFileSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n <= 0) return '';
+  const loc = getLocale() === 'en' ? 'en-US' : 'ru-RU';
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024)).toLocaleString(loc)} ${t('common.unitKB')}`;
+  return `${(n / 1024 / 1024).toLocaleString(loc, { maximumFractionDigits: 1 })} ${t('common.unitMB')}`;
+}
+
+/** One muted line from the index (no file parsing): «FB2 · 335 КБ · добавлена 20 января 2025 г.» */
+function renderBookFileLine(book) {
+  const date = String(book.date || '');
+  const bits = [
+    book.ext ? String(book.ext).toUpperCase() : '',
+    formatBookFileSize(book.size),
+    /^\d{4}-\d{2}-\d{2}/.test(date) ? tp('book.fileAdded', { date: formatLocaleDateLong(date.slice(0, 10)) }) : ''
+  ].filter(Boolean);
+  if (!bits.length) return '';
+  return `<div class="book-detail-summary book-detail-file-line">${bits.map((b) => escapeHtml(b)).join('<span class="book-detail-sep">·</span>')}</div>`;
+}
+
 export function renderBook({
   book,
   details,
@@ -837,10 +858,13 @@ export function renderBook({
           ${Number(book.deleted) ? `<p class="muted book-deleted-note">${escapeHtml(t('book.deletedHint'))}</p>` : ''}
           <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 3, bookAuthors: book.authors, inlineExpand: true }) : escapeHtml(t('book.authorUnknown'))}</div>
           ${summaryBits.length ? `<div class="book-detail-summary">${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
+          ${renderBookFileLine(book)}
           ${
             details.annotationIsHtml && String(details.annotation || '').trim()
               ? `<div class="book-detail-annotation book-detail-annotation--html">${sanitizeHtml(details.annotation)}</div>`
-              : `<p class="book-detail-annotation">${escapeHtml(details.annotation || t('book.noAnnotation'))}</p>`
+              : String(details.annotation || '').trim()
+                ? `<p class="book-detail-annotation">${escapeHtml(details.annotation)}</p>`
+                : ''
           }
           <div class="book-detail-review-mount" data-book-review-mount data-book-review-for="${encodeURIComponent(String(book.id))}" data-review-heading="${escapeHtml(t('book.review'))}" hidden aria-hidden="true"></div>
           ${

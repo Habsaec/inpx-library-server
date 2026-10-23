@@ -7189,6 +7189,11 @@ html[data-theme="light"] .page-jump::after {
   opacity: 0.92;
 }
 
+/* «FB2 · 335 КБ · добавлена …» right under the series / language / genres line */
+.book-detail-summary.book-detail-file-line {
+  margin-top: 2px;
+}
+
 .book-detail-summary a {
   color: var(--link);
   text-decoration: none;
@@ -7351,6 +7356,46 @@ html[data-theme="light"] .page-jump::after {
 
 .book-detail-read-action.is-active svg {
   stroke-width: 2.2;
+}
+
+/* Book page corner icons (✓ ♡ полка): link-colour icons on a soft round tint so they read as buttons */
+.book-detail-corner-actions {
+  gap: 8px;
+}
+
+.book-detail-corner-actions .book-detail-icon-action {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: var(--link);
+  background: color-mix(in srgb, var(--link) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--link) 22%, transparent);
+}
+
+.book-detail-corner-actions .book-detail-icon-action svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.9;
+}
+
+.book-detail-corner-actions .book-detail-icon-action:hover,
+.book-detail-corner-actions .book-detail-icon-action:focus-visible {
+  color: var(--link);
+  background: color-mix(in srgb, var(--link) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--link) 40%, transparent);
+}
+
+.book-detail-corner-actions .book-detail-read-action.is-active {
+  color: #4ac694;
+  background: color-mix(in srgb, #4ac694 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #4ac694 40%, transparent);
+}
+
+.book-detail-corner-actions .book-detail-bookmark-action.is-active,
+.book-detail-corner-actions .book-detail-bookmark-action[data-active-favorite="true"] {
+  color: #e0606e;
+  background: color-mix(in srgb, #e0606e 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #e0606e 40%, transparent);
 }
 
 

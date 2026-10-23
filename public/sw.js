@@ -3,7 +3,7 @@
  */
 // IMPORTANT: Bump this version when deploying new assets to invalidate browser caches
 const CACHE_VERSION = 4;
-const CACHE_NAME = `inpx-v1-c061e33e`;
+const CACHE_NAME = `inpx-v1-c2e48f1a`;
 const COVER_CACHE_NAME = 'inpx-covers-v1';
 const MAX_COVER_CACHE_ENTRIES = 500;
 
