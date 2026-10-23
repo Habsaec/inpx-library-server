@@ -18,7 +18,7 @@ import {
   bookPagePath, readPagePath, apiBookPath, liteBookPagePath, liteReadPagePath,
   renderCoverFallbackImage,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
-  formatLocaleDateLong, serializeClientI18n,
+  formatLocaleDateLong, clientI18nScriptUrl,
   formatAuthorLabel, formatLanguageLabel,
   formatGenreLabel, parseGenreCodes
 } from './shared.js';
@@ -1675,7 +1675,7 @@ ${renderFaviconLinks()}
 <script>${themeBoot}</script>
 </head>
 <body class="chrome-hidden${lite ? ' reader-lite' : ''}">
-<script type="application/json" id="ui-i18n-json">${serializeClientI18n()}</script>
+<script src="${clientI18nScriptUrl()}" defer></script>
 
 <div class="reader-toolbar reader-chrome" id="toolbar">
   <div class="tb-left">

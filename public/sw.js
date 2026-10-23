@@ -3,7 +3,7 @@
  */
 // IMPORTANT: Bump this version when deploying new assets to invalidate browser caches
 const CACHE_VERSION = 4;
-const CACHE_NAME = `inpx-v1-cbb34e9e`;
+const CACHE_NAME = `inpx-v1-cf8271f4`;
 const COVER_CACHE_NAME = 'inpx-covers-v1';
 const MAX_COVER_CACHE_ENTRIES = 500;
 
@@ -18,6 +18,8 @@ const STATIC_ASSETS = [
   '/reader-shared/position-revision.js',
   '/reader-shared/reader-position.js',
   '/reader-shared/suppression-counter.js',
+  '/i18n/ru.js',
+  '/i18n/en.js',
   '/logo.png',
   '/favicon.png',
   '/favicon-192.png',
@@ -72,7 +74,10 @@ self.addEventListener('fetch', (event) => {
   if (STATIC_ASSETS.some((a) => url.pathname === a)) {
     event.respondWith((async () => {
       try {
-        const resp = await fetch(new Request(event.request, { cache: 'no-cache' }));
+        // `?v=` = content hash (app/styles/reader/i18n): the URL changes with the file, so the
+        // HTTP cache may answer. Unversioned modules (position-sync.js, reader-shared/*) revalidate.
+        const cacheMode = url.searchParams.has('v') ? 'default' : 'no-cache';
+        const resp = await fetch(new Request(event.request, { cache: cacheMode }));
         if (resp.ok) {
           const clone = resp.clone();
           const normalizedUrl = new URL(event.request.url);

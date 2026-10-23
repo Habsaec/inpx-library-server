@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import crypto from 'node:crypto';
 import { LOCALE_BUNDLES } from './locale-bundles.js';
 
 const localeStore = new AsyncLocalStorage();
@@ -208,7 +209,38 @@ function clientStringsForLocale(locale) {
 
 /** JSON для встраивания в HTML (безопасно внутри <script type="application/json">). */
 export function serializeClientI18n() {
-  const locale = getLocale();
-  const strings = clientStringsForLocale(locale);
-  return JSON.stringify({ locale, strings }).replace(/</g, '\\u003c');
+  return clientI18nAsset(getLocale()).json;
+}
+
+/*
+ * Client dictionary as a separate long-cached script: ~105 KB that used to be embedded
+ * (and re-serialized, ~1.7 ms) in every HTML page. Bundles are static per process,
+ * so the JSON and its content hash are built once per locale.
+ */
+const _clientI18nAssets = new Map();
+
+function clientI18nAsset(locale) {
+  const key = locale === 'en' ? 'en' : 'ru';
+  let asset = _clientI18nAssets.get(key);
+  if (!asset) {
+    const json = JSON.stringify({ locale: key, strings: clientStringsForLocale(key) }).replace(/</g, '\\u003c');
+    const script = `window.__UI_I18N__=${json};\n`;
+    const version = crypto.createHash('md5').update(script).digest('hex').slice(0, 8);
+    asset = { json, script, version };
+    _clientI18nAssets.set(key, asset);
+  }
+  return asset;
+}
+
+/** `/i18n/<locale>.js?v=<hash>` for the current request locale (served by server.js). */
+export function clientI18nScriptUrl() {
+  const locale = getLocale() === 'en' ? 'en' : 'ru';
+  return `/i18n/${locale}.js?v=${clientI18nAsset(locale).version}`;
+}
+
+/** Script body and version for `GET /i18n/:locale.js`; null for an unknown locale. */
+export function getClientI18nScript(locale) {
+  if (locale !== 'ru' && locale !== 'en') return null;
+  const { script, version } = clientI18nAsset(locale);
+  return { script, version };
 }

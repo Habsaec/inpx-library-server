@@ -23,14 +23,15 @@ import {
   formatLocaleDateShort,
   formatLocaleDateTimeShort,
   formatLocaleDateLong,
-  serializeClientI18n
+  serializeClientI18n,
+  clientI18nScriptUrl
 } from '../i18n.js';
 import { resolveIndexStageLine } from '../index-stage-i18n.js';
 import { getUiCustomization, getThemeCssVars, coverFallbackToCssVars, manuscriptToCssVars, hasUiThemeColorsConfigured, usesPanelGlass, hasUiThemeShapeConfigured, hasUiThemeTypographyConfigured, FONT_FAMILY_WEBFONT, DISPLAY_FONT_WEBFONT, COVER_TITLE_FONTS, bundledCoverUrl } from '../services/ui-customization.js';
 import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarkup } from '../html-sanitize.js';
 import { APP_DOWNLOAD_URL, appDownloadQrSvg } from '../app-download-qr.js';
 
-export { t, tp, getLocale, plural, countLabel, formatLocaleInt, formatLocaleDateShort, formatLocaleDateTimeShort, formatLocaleDateLong, serializeClientI18n };
+export { t, tp, getLocale, plural, countLabel, formatLocaleInt, formatLocaleDateShort, formatLocaleDateTimeShort, formatLocaleDateLong, serializeClientI18n, clientI18nScriptUrl };
 export { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, parseGenreCodes };
 export { getAvailableDownloadFormats, FORMAT_LABELS };
 export { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath };
@@ -72,6 +73,7 @@ const LITE_CSS_PATH = path.join(config.publicDir, 'lite.css');
 const READER_JS_PATH = path.join(config.publicDir, 'reader.js');
 const READER_CSS_PATH = path.join(config.publicDir, 'reader.css');
 const TAP_ZONES_PATH = path.join(config.publicDir, 'tap-zones.js');
+const BOOK_REF_PATH = path.join(config.publicDir, 'book-ref.js');
 const POSITION_SYNC_PATH = path.join(config.publicDir, 'position-sync.js');
 const READER_SHARED_DIR = path.join(config.publicDir, 'reader-shared');
 const FOLIATE_DIR = path.join(config.publicDir, 'foliate');
@@ -93,7 +95,9 @@ function isMinifiedFresh(minPath, srcPath) {
   }
 }
 
-const _isProdEnv = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+/* Minified bundles by default (Windows launchers never set NODE_ENV); NODE_ENV=development
+   keeps the readable sources. A stale .min (older than its source) is never served. */
+const _isProdEnv = String(process.env.NODE_ENV || '').toLowerCase() !== 'development';
 const _hasMinifiedFiles = fs.existsSync(APP_MIN_PATH) && fs.existsSync(CSS_MIN_PATH);
 const _minifiedFresh =
   _hasMinifiedFiles &&
@@ -132,9 +136,9 @@ function listReaderSharedAssetPaths() {
 function computeStaticAssetVersion() {
   const readerShared = listReaderSharedAssetPaths();
   const files = USE_MINIFIED_ASSETS
-    ? [APP_MIN_PATH, CSS_MIN_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH,
+    ? [APP_MIN_PATH, CSS_MIN_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH,
       ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH]
-    : [APP_SRC_PATH, CSS_SRC_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH,
+    : [APP_SRC_PATH, CSS_SRC_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH,
       ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH];
   const hash = crypto.createHash('md5');
   for (const p of files) {
@@ -145,6 +149,8 @@ function computeStaticAssetVersion() {
   return hash.digest('hex').slice(0, 8);
 }
 
+/* Content hash of every file linked with `?v=${STATIC_ASSET_VERSION}`; server.js serves exactly that
+   query with a one-year immutable cache, so any such file must be listed above. */
 export const STATIC_ASSET_VERSION = computeStaticAssetVersion();
 
 export const READ_CHECK_SVG = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -1761,7 +1767,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
 <body data-download-allowed="${canDownloadInUi(user) ? '1' : '0'}" data-batch-zip-max="${BATCH_ZIP_MAX}">
   <div class="nav-progress" id="nav-progress"></div>
   <script>!function(){var b=document.getElementById('nav-progress');if(!b)return;function done(){b.classList.remove('active')}done();window.addEventListener('pageshow',done);window.addEventListener('popstate',done);document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.charAt(0)==='#'||a.target==='_blank'||e.ctrlKey||e.metaKey||e.shiftKey)return;b.classList.add('active')});document.addEventListener('submit',function(){b.classList.add('active')})}()</script>
-  <script type="application/json" id="ui-i18n-json">${serializeClientI18n()}</script>
+  <script src="${clientI18nScriptUrl()}" defer></script>
   ${readBookIds && readBookIds.size ? `<script type="application/json" id="ui-read-ids">${JSON.stringify([...readBookIds])}</script>` : ''}
   <a class="skip-to-content" href="#main-content">${escapeHtml(t('skipToContent'))}</a>
   <div class="shell">

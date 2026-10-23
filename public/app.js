@@ -604,6 +604,11 @@ function safeDomIdPart(value) {
 }
 
 (() => {
+  // Dictionary comes from the cached /i18n/<locale>.js (window.__UI_I18N__); the inline JSON is a fallback.
+  if (window.__UI_I18N__ && window.__UI_I18N__.strings) {
+    window.__I18N = window.__UI_I18N__;
+    return;
+  }
   const el = document.getElementById('ui-i18n-json');
   try {
     window.__I18N = el && el.textContent ? JSON.parse(el.textContent) : { locale: 'ru', strings: {} };

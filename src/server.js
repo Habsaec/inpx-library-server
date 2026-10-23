@@ -4,6 +4,9 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { brotliCompress, constants as zlibConstants } from 'node:zlib';
+import { precompressedStatic, warmPrecompressedStatic } from './services/static-precompress.js';
+import { STATIC_ASSET_VERSION } from './templates/shared.js';
+import { getClientI18nScript } from './i18n.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -797,6 +800,33 @@ app.get('/api/settings/ui', (req, res) => {
   res.json(getPublicUiSettingsJson());
 });
 
+/* `?v=<STATIC_ASSET_VERSION>` is a content hash (templates/shared.js), so those URLs can be
+   cached for a year; files without it (foliate modules, position-sync.js) keep revalidating. */
+const ONE_YEAR_IMMUTABLE = 'public, max-age=31536000, immutable';
+function isContentHashedAsset(req) {
+  return String(req?.query?.v || '') === STATIC_ASSET_VERSION;
+}
+
+/* Client dictionary (was ~105 KB inline JSON in every page); URL carries its own content hash. */
+app.get('/i18n/:locale.js', (req, res) => {
+  const asset = getClientI18nScript(String(req.params.locale || ''));
+  if (!asset) return res.status(404).end();
+  res.type('application/javascript');
+  res.setHeader('Cache-Control', String(req.query.v || '') === asset.version ? ONE_YEAR_IMMUTABLE : 'no-cache');
+  res.setHeader('ETag', `"i18n-${asset.version}"`);
+  if (req.headers['if-none-match'] === `"i18n-${asset.version}"`) return res.status(304).end();
+  res.send(asset.script);
+});
+
+app.use(precompressedStatic({
+  publicDir: config.publicDir,
+  cacheControl: (req) => (isContentHashedAsset(req) ? ONE_YEAR_IMMUTABLE : 'no-cache')
+}));
+warmPrecompressedStatic(config.publicDir, [
+  'app.js', 'app.min.js', 'styles.css', 'styles.min.css', 'book-ref.js',
+  'reader.js', 'reader.css', 'lite.css', 'position-sync.js', 'tap-zones.js'
+]);
+
 app.use(express.static(config.publicDir, {
   maxAge: '365d',
   immutable: true,
@@ -807,6 +837,7 @@ app.use(express.static(config.publicDir, {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       return;
     }
+    if (isContentHashedAsset(res.req)) return;
     // JS/CSS-модули (reader.js, position-sync.js, foliate/*.js …) импортируются по
     // относительным путям БЕЗ кэш-бастера `?v=`. С `immutable, max-age=365d` браузер
     // держал бы устаревшие копии год — после обновления foliate/position-sync читалка

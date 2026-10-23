@@ -70,8 +70,12 @@ import {
 
   let _readerI18n = { locale: 'ru', strings: {} };
   try {
-    const el = document.getElementById('ui-i18n-json');
-    if (el && el.textContent) _readerI18n = JSON.parse(el.textContent);
+    // Cached /i18n/<locale>.js sets window.__UI_I18N__; the inline JSON is a fallback.
+    if (window.__UI_I18N__ && window.__UI_I18N__.strings) _readerI18n = window.__UI_I18N__;
+    else {
+      const el = document.getElementById('ui-i18n-json');
+      if (el && el.textContent) _readerI18n = JSON.parse(el.textContent);
+    }
   } catch { /* */ }
   function rt(key) {
     const s = _readerI18n.strings;
