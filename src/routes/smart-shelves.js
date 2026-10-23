@@ -48,8 +48,13 @@ export function registerSmartShelfRoutes(app) {
     const shelf = getSmartShelf(req.params.id, req.user.username);
     if (!shelf) return apiFail(res, 404, ApiErrorCode.SHELF_NOT_FOUND, t('shelf.notFound'));
     const page = safePage(req.query.page);
-    const result = getSmartShelfBooks(shelf, { page, pageSize: PAGE_SIZE });
-    res.json({ items: result.items, total: result.total, page, pageSize: PAGE_SIZE });
+    // Optional, additive: the Android app asks for whole cover rows (e.g. 20 in 5 columns).
+    const pageSizeRaw = Number(req.query.pageSize);
+    const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 && pageSizeRaw <= PAGE_SIZE
+      ? Math.floor(pageSizeRaw)
+      : PAGE_SIZE;
+    const result = getSmartShelfBooks(shelf, { page, pageSize });
+    res.json({ items: result.items, total: result.total, page, pageSize });
   });
 
   app.post('/shelves/smart', requireWebAuth, (req, res) => {

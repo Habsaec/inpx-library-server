@@ -141,6 +141,12 @@ test('smart shelves API: auth, create, list, books, update, delete', async () =>
   assert.deepEqual(books.items.map((b) => b.id), [IDS[2]]);
   assert.equal(books.total, 1);
   assert.equal(books.page, 1);
+  assert.equal(books.pageSize, 24);
+
+  const rows = await (await fetch(`${baseUrl}/api/smart-shelves/${created.id}/books?pageSize=20`, { headers: auth(USER) })).json();
+  assert.equal(rows.pageSize, 20);
+  const capped = await (await fetch(`${baseUrl}/api/smart-shelves/${created.id}/books?pageSize=500`, { headers: auth(USER) })).json();
+  assert.equal(capped.pageSize, 24);
 
   assert.equal((await fetch(`${baseUrl}/api/smart-shelves/${created.id}/books`, { headers: auth(OTHER) })).status, 404);
 
