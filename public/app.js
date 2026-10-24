@@ -1348,6 +1348,13 @@ function attachReadBookActions() {
         const read = Boolean(payload.read);
         btn.classList.toggle('is-active', read);
         setBookActionCaption(btn, read ? uiT('book.markedRead') : uiT('book.markRead'));
+        // The server drops a read book from «Хочу прочитать».
+        if (read) {
+          document.querySelectorAll('[data-want-button].is-active').forEach((w) => {
+            w.classList.remove('is-active');
+            setBookActionCaption(w, uiT('book.addWant'));
+          });
+        }
         pulseUi(btn);
         toggleReadBadgesForBook(bookId, read);
         pulseReadProgressForBook(bookId);
@@ -1644,6 +1651,53 @@ function attachMarkSeriesReadActions() {
       }
     });
   });
+}
+
+/* «Хочу прочитать»: toggle on the book page; on /library/want a removed card disappears with undo. */
+function attachWantActions() {
+  const onWantPage = window.location.pathname === '/library/want';
+  for (const button of document.querySelectorAll('[data-want-button]')) {
+    button.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const bookId = typeof resolveBookIdFromElement === 'function' ? resolveBookIdFromElement(button) : null;
+      if (!bookId) return;
+      const post = async () => {
+        const response = await fetch(apiWantPath(bookId), { method: 'POST', credentials: 'same-origin' });
+        if (await handleAuthRequired(response)) return null;
+        if (!response.ok) {
+          showToast(uiT('app.wantError'), 'error');
+          return null;
+        }
+        return response.json();
+      };
+      try {
+        const payload = await post();
+        if (!payload) return;
+        const want = Boolean(payload.want);
+        button.classList.toggle('is-active', want);
+        setBookActionCaption(button, want ? uiT('book.inWant') : uiT('book.addWant'));
+        pulseUi(button);
+        const item = onWantPage && !want ? (button.closest('.card') || button.closest('.author-flibusta-book') || button.closest('.table-row')) : null;
+        if (item) item.style.display = 'none';
+        showToast(want ? uiT('app.wantAdded') : uiT('app.wantRemoved'), 'success', {
+          actionLabel: uiT('app.undo'),
+          duration: 5000,
+          onAction: () => {
+            void (async () => {
+              const again = await post();
+              if (!again) return;
+              button.classList.toggle('is-active', Boolean(again.want));
+              setBookActionCaption(button, again.want ? uiT('book.inWant') : uiT('book.addWant'));
+              if (item) item.style.display = '';
+            })();
+          }
+        });
+      } catch (err) {
+        console.error('Want-to-read toggle error', err);
+      }
+    });
+  }
 }
 
 async function attachBookmarkActions() {
@@ -7642,6 +7696,7 @@ attachCoverErrorFallback(document);
 loadCardDetails();
 loadBookPageReview();
 attachBookmarkActions();
+attachWantActions();
 attachReadBookActions();
 
 /* Кнопка «Отмена» в редакторе метаданных книги: откатывает поля формы

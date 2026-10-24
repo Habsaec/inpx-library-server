@@ -59,6 +59,12 @@ import {
   updateBookMetadata,
   isBookmarked,
   isBookRead,
+  isWantToRead,
+  markFollowingSeen,
+  getFollowingNewCount,
+  getFollowingNewBooks,
+  getSeriesReadingProgress,
+  getSeriesReadCounts,
   isSeriesFullyRead,
   isFavoriteAuthor,
   isFavoriteSeries,
@@ -356,6 +362,21 @@ export function registerLibraryRoutes(app, deps) {
     const csrfToken = req.csrfToken || '';
     const homeSubtitle = getSetting('home_subtitle') || '';
     const homeShelves = username ? getPinnedHomeShelves(username, DISPLAY_COUNT) : [];
+    // «Новое у любимых» as the first shelf (web only; /api/home/shelves keeps its two kinds).
+    if (username) {
+      try {
+        const following = getCachedPageData(
+          `library:following:${username}:home:${contentLangCacheKey(contentLangs)}:${DISPLAY_COUNT}`,
+          () => getFollowingNewBooks(username, { page: 1, pageSize: DISPLAY_COUNT, langs: contentLangs.length ? contentLangs : null }),
+          PAGE_CACHE_TTL_MS
+        );
+        if (following.items.length) {
+          homeShelves.unshift({ id: 'following', kind: 'following', title: t('home.followingShelf'), href: '/library/following', items: following.items });
+        }
+      } catch (err) {
+        console.warn('[home] following shelf failed:', err.message);
+      }
+    }
     const html = canUseAnonymousHomeHtmlCache
       ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken: '', hasContinueData: false, listView: false }), 1000 * 60 * 2)
       : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData, readBookIds, listView, homeShelves });
@@ -514,7 +535,7 @@ export function registerLibraryRoutes(app, deps) {
   });
 
   // --- Library views ---
-  app.get('/library/:view(recent|continue|read|recommended)', requireBrowseAuth, (req, res) => {
+  app.get('/library/:view(recent|continue|read|recommended|want|following)', requireBrowseAuth, (req, res) => {
     const view = String(req.params.view || 'recent');
     const page = safePage(req.query.page);
     const pageSize = 24;
@@ -533,13 +554,17 @@ export function registerLibraryRoutes(app, deps) {
       recent: t('library.title.recent'),
       continue: t('library.title.continue'),
       read: t('library.title.read'),
-      recommended: t('library.title.recommended')
+      recommended: t('library.title.recommended'),
+      want: t('library.title.want'),
+      following: t('library.title.following')
     };
     const subtitles = {
       recent: t('library.sub.recent'),
       continue: t('library.sub.continue'),
       read: t('library.sub.read'),
-      recommended: t('library.sub.recommended')
+      recommended: t('library.sub.recommended'),
+      want: t('library.sub.want'),
+      following: t('library.sub.following')
     };
     const genres = parseGenreList(req.query.genre);
     const genre = genres.join(',');
@@ -576,6 +601,8 @@ export function registerLibraryRoutes(app, deps) {
           PAGE_CACHE_TTL_MS,
           { total: 0, items: [] }
         );
+    // Opening «Новое у любимых» clears its sidebar badge (before the sidebar is rendered below).
+    if (view === 'following' && user && page === 1) markFollowingSeen(user.username);
     const isReadSeriesList = view === 'read' && result.itemType === 'series';
     const readBookIds = user && !isReadSeriesList ? getReadBookIdSet(user.username) : null;
     const readSeriesNames = user && isReadSeriesList ? getFullyReadSeriesNames(user.username) : null;
@@ -864,6 +891,7 @@ export function registerLibraryRoutes(app, deps) {
             csrfToken: req.csrfToken || '',
             page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
             readSeriesNames: username ? getFullyReadSeriesNames(username) : null,
+            seriesReadCounts: username ? getSeriesReadCounts(username) : null,
             lang: langState.lang, langs: langState.options
           })
         );
@@ -924,12 +952,21 @@ export function registerLibraryRoutes(app, deps) {
       });
       const summary = getFacetSummary(facet, value);
       const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
+      let seriesProgress = null;
+      // Whole series even under ?author= (the usual link from author / book pages).
+      if (facet === 'series' && username) {
+        try {
+          seriesProgress = getSeriesReadingProgress(username, value, { langs: langState.list });
+        } catch (err) {
+          console.warn('[series] progress failed:', err.message);
+        }
+      }
       res.send(renderFacetBooks({
         title: tp('facet.titleWithValue', { label: facetLabels[facet] || t('facet.sectionFallback'), value: displayValue }),
         ...result, summary, page, pageSize,
         user: req.user || null, stats, facetPath,
         indexStatus: getIndexStatus(), sort, order, facet, facetValue: value,
-        favorite, seriesRead, breadcrumbs, csrfToken: req.csrfToken || '',
+        favorite, seriesRead, seriesProgress, breadcrumbs, csrfToken: req.csrfToken || '',
         readBookIds: username ? getReadBookIdSet(username) : null,
         view, authorFilter,
         listView: bookLayout === 'list', layout: bookLayout,
@@ -952,6 +989,7 @@ export function registerLibraryRoutes(app, deps) {
       const details = await getDetails(book);
       const bookmarked = username ? isBookmarked(username, book.id) : false;
       const isRead = username ? isBookRead(username, book.id) : false;
+      const wantToRead = username && !isRead ? isWantToRead(username, book.id) : false;
       const similarBooks = buildSimilarBooks(book);
       const tgRuntime = username ? resolveTelegramRuntimeConfig() : null;
       const telegramSendAvailable = Boolean(
@@ -960,7 +998,7 @@ export function registerLibraryRoutes(app, deps) {
 
       res.send(
         renderBook({
-          book, details, bookmarked, isRead, user, telegramSendAvailable,
+          book, details, bookmarked, isRead, wantToRead, user, telegramSendAvailable,
           stats: getCachedStats(),
           indexStatus: getIndexStatus(),
           similarBooks, csrfToken: req.csrfToken || '',
@@ -1059,7 +1097,11 @@ export function registerLibraryRoutes(app, deps) {
   app.get('/library/my', requireWebAuth, (req, res) => {
     res.send(renderMyLibrary({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
-      userStats: getUserStats(req.user.username), csrfToken: req.csrfToken || ''
+      userStats: {
+        ...getUserStats(req.user.username),
+        followingNewCount: getFollowingNewCount(req.user.username, { langs: effectiveContentLangs(req.user.username) })
+      },
+      csrfToken: req.csrfToken || ''
     }));
   });
 

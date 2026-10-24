@@ -7330,6 +7330,109 @@ function resolveRecentCatalogCutoff() {
   return bounds;
 }
 
+/*
+ * «Новое у любимых»: unread books of the user's favorite authors and series added to the
+ * catalog (INPX `date`) within FOLLOWING_WINDOW_DAYS of the newest dated book. The sidebar
+ * badge counts the ones newer than the last visit of /library/following (meta following_seen:<user>).
+ */
+const FOLLOWING_WINDOW_DAYS = 90;
+const FOLLOWING_BADGE_TTL_MS = 120_000;
+const _followingBadgeMemo = new Map(); // username -> { count, at }
+
+function followingSeenKey(username) {
+  return `following_seen:${username}`;
+}
+
+function followingCutoffDate() {
+  const bounds = resolveRecentCatalogCutoff();
+  if (!bounds?.maxDate) return null;
+  const d = new Date(`${bounds.maxDate}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() - FOLLOWING_WINDOW_DAYS);
+  return { cutoff: d.toISOString().slice(0, 10), maxDate: bounds.maxDate };
+}
+
+/** FROM/WHERE shared by the list and the counter; positional params in order. */
+function followingSqlParts(username, cutoff, { lang = '', langs = null, newerThan = '' } = {}) {
+  const extra = buildCatalogExtraFilters({ lang, langs });
+  const where = [
+    `${ISO_DATE_PRED('active_books')}`,
+    `SUBSTR(active_books.date, 1, 10) >= ?`,
+    `NOT EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = ? AND rb.book_id = active_books.id)`,
+    ...(newerThan ? [`SUBSTR(active_books.date, 1, 10) > ?`] : []),
+    ...extra.map((f) => f.where)
+  ];
+  const cte = `
+    WITH fav(book_id) AS (
+      SELECT ba.book_id FROM favorite_authors fa JOIN book_authors ba ON ba.author_id = fa.author_id WHERE fa.username = ?
+      UNION
+      SELECT bs.book_id FROM favorite_series fs JOIN book_series bs ON bs.series_id = fs.series_id WHERE fs.username = ?
+    )`;
+  const body = `
+    FROM fav
+    JOIN active_books ON active_books.id = fav.book_id
+    WHERE ${where.join(' AND ')}`;
+  const params = [username, username, cutoff, username, ...(newerThan ? [newerThan] : []), ...extra.flatMap((f) => f.params)];
+  return { cte, body, params };
+}
+
+export function getFollowingNewBooks(username, { page = 1, pageSize = 24, lang = '', langs = null } = {}) {
+  const u = String(username || '').trim();
+  const window = followingCutoffDate();
+  if (!u || !window) return { total: 0, items: [] };
+  const { cte, body, params } = followingSqlParts(u, window.cutoff, { lang, langs });
+  const total = db.prepare(`${cte} SELECT COUNT(*) AS count ${body}`).get(...params).count;
+  const offset = (Math.max(1, page) - 1) * pageSize;
+  const items = db.prepare(`${cte}
+    SELECT active_books.id, active_books.title, active_books.authors, active_books.genres, active_books.series,
+           active_books.series_no AS seriesNo, active_books.ext, active_books.lang, active_books.lib_rate AS libRate,
+           active_books.archive_name AS archiveName, active_books.deleted, active_books.date
+    ${body}
+    ORDER BY SUBSTR(active_books.date, 1, 10) DESC, active_books.id DESC
+    LIMIT ? OFFSET ?`).all(...params, pageSize, offset).map(mapBookListRow);
+  attachSeriesListsToBooks(items);
+  attachCachedAnnotationsToBooks(items);
+  return { total, items };
+}
+
+/** Unseen «Новое у любимых» for the sidebar badge (memoized; cleared on favorite changes and visits). */
+export function getFollowingNewCount(username, { langs = null } = {}) {
+  const u = String(username || '').trim();
+  if (!u) return 0;
+  const memo = _followingBadgeMemo.get(u);
+  if (memo && Date.now() - memo.at < FOLLOWING_BADGE_TTL_MS) return memo.count;
+  let count = 0;
+  try {
+    const hasFavorites = db.prepare(`
+      SELECT 1 FROM favorite_authors WHERE username = ? UNION ALL SELECT 1 FROM favorite_series WHERE username = ? LIMIT 1
+    `).get(u, u);
+    const window = hasFavorites ? followingCutoffDate() : null;
+    if (window) {
+      const seen = String(getMeta(followingSeenKey(u)) || '');
+      const { cte, body, params } = followingSqlParts(u, window.cutoff, { langs, newerThan: seen });
+      count = db.prepare(`${cte} SELECT COUNT(*) AS count ${body}`).get(...params).count;
+    }
+  } catch (err) {
+    console.warn('[following] badge count failed:', err.message);
+  }
+  _followingBadgeMemo.set(u, { count, at: Date.now() });
+  return count;
+}
+
+/** Visiting /library/following marks everything up to the newest catalog date as seen. */
+export function markFollowingSeen(username) {
+  const u = String(username || '').trim();
+  const window = followingCutoffDate();
+  if (!u || !window) return;
+  setMeta(followingSeenKey(u), window.maxDate);
+  _followingBadgeMemo.delete(u);
+}
+
+export function invalidateFollowingBadge(username) {
+  if (username) _followingBadgeMemo.delete(String(username).trim());
+  else _followingBadgeMemo.clear();
+}
+
 /**
  * Books newly added to the catalog (INPX `date`), not the full library / reindex stamp.
  * Additive catalog filters: genre (OR), lang, format, year, minRate, hasSeries.
@@ -7508,6 +7611,7 @@ let _stmtContinueItems = null;
 let _stmtReadSeriesCount = null;
 let _stmtReadSeriesItems = null;
 let _stmtReadViewCount = null;
+let _stmtWantViewCount = null;
 let _stmtReadViewItems = null;
 let _stmtCachedBookAnnotation = null;
 
@@ -7588,6 +7692,48 @@ export function getLibraryView(view = 'recent', {
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `).all(normalizedUsername, normalizedUsername, pageSize, offset).map(mapBookListRow);
+    attachSeriesListsToBooks(items);
+    attachCachedAnnotationsToBooks(items);
+    return { total, items };
+  }
+
+  if (view === 'following') {
+    return getFollowingNewBooks(username, { page, pageSize, lang, langs });
+  }
+
+  if (view === 'want') {
+    const normalizedUsername = String(username || '').trim();
+    if (!normalizedUsername) {
+      return { total: 0, items: [] };
+    }
+    /* Opened / read books are also removed by recordReadingHistory / toggleReadBook; the
+       NOT EXISTS guards cover read marks made elsewhere (e.g. progress ≥ 99 in the reader). */
+    const wantFilter = `
+      w.username = ?
+      AND NOT EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = w.username AND rb.book_id = w.book_id)
+      AND NOT EXISTS (SELECT 1 FROM reading_history rh WHERE rh.username = w.username AND rh.book_id = w.book_id)`;
+    _stmtWantViewCount ??= db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM want_to_read w
+      JOIN active_books b ON b.id = w.book_id
+      WHERE ${wantFilter}
+    `);
+    const total = _stmtWantViewCount.get(normalizedUsername).count;
+    const orderBy = sort === 'rating'
+      ? applyOrder('b.lib_rate DESC, b.title_sort ASC, b.id DESC', order)
+      : sort === 'title'
+        ? applyOrder('b.title_sort ASC, b.id ASC', order)
+        : sort === 'author'
+          ? applyOrder('b.author_sort ASC, b.title_sort ASC, b.id ASC', order)
+          : applyOrder('w.created_at DESC, b.id DESC', order);
+    const items = db.prepare(`
+      SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
+      FROM want_to_read w
+      JOIN active_books b ON b.id = w.book_id
+      WHERE ${wantFilter}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `).all(normalizedUsername, pageSize, offset).map(mapBookListRow);
     attachSeriesListsToBooks(items);
     attachCachedAnnotationsToBooks(items);
     return { total, items };
@@ -8026,6 +8172,7 @@ export function recordReadingHistory(username, bookId) {
       open_count = reading_history.open_count + 1
   `);
   _stmtRecordHistoryUpsert.run(username, bookId);
+  removeWantToRead(username, bookId);
 }
 
 let _stmtGetReadHistory = null;
@@ -8363,6 +8510,66 @@ export function isSeriesFullyRead(username, seriesName) {
   return row && row.total > 0 && row.readCount >= row.total;
 }
 
+/**
+ * Series reading progress for one user: «Прочитано N из M» and the next unread book in series
+ * order. Editions of one volume (same number + title, e.g. FB2 and EPUB, or two languages) count
+ * once — reading any of them marks the volume read, so «next» never points at another edition.
+ */
+export function getSeriesReadingProgress(username, seriesName, { langs = null } = {}) {
+  const u = String(username || '').trim();
+  if (!u || !seriesName) return null;
+  const canonical = resolveSeriesCatalogName(String(seriesName));
+  const langClause = languageFilterClause('b.lang', '', langs);
+  const rows = db.prepare(`
+    SELECT b.id, b.title, b.title_sort AS titleSort,
+           COALESCE(NULLIF(bs.series_no, ''), b.series_no) AS seriesNo,
+           EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = ? AND rb.book_id = b.id) AS isRead
+    FROM series_catalog sc
+    JOIN book_series bs ON bs.series_id = sc.id
+    JOIN active_books b ON b.id = bs.book_id
+    WHERE sc.name = ?${langClause ? ` AND ${langClause.where}` : ''}
+    -- unnumbered volumes (omnibus, companions) go last so «next» follows the numbering
+    ORDER BY CASE WHEN COALESCE(NULLIF(bs.series_no, ''), NULLIF(b.series_no, '')) IS NULL THEN 1 ELSE 0 END ASC,
+             COALESCE(CAST(NULLIF(bs.series_no, '') AS REAL), b.series_index) ASC, b.title_sort ASC, b.id ASC
+  `).all(u, canonical, ...(langClause ? langClause.params : []));
+  const volumes = [];
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = `${String(row.seriesNo || '').trim()}|${String(row.titleSort || row.title || '').trim().toLowerCase()}`;
+    let vol = byKey.get(key);
+    if (!vol) {
+      vol = { first: row, read: false };
+      byKey.set(key, vol);
+      volumes.push(vol);
+    }
+    if (row.isRead) vol.read = true;
+  }
+  const read = volumes.filter((v) => v.read).length;
+  const nextVol = volumes.find((v) => !v.read) || null;
+  return {
+    total: volumes.length,
+    read,
+    next: nextVol ? { id: nextVol.first.id, title: nextVol.first.title, seriesNo: normalizeSeriesNo(nextVol.first.seriesNo) } : null
+  };
+}
+
+/** Read books per series name for one user (author page «прочитано N»); read_books of one user is small. */
+let _stmtSeriesReadCounts = null;
+export function getSeriesReadCounts(username) {
+  const u = String(username || '').trim();
+  if (!u) return new Map();
+  _stmtSeriesReadCounts ??= db.prepare(`
+    SELECT sc.name AS name, COUNT(DISTINCT rb.book_id) AS n
+    FROM read_books rb
+    JOIN active_books b ON b.id = rb.book_id
+    JOIN book_series bs ON bs.book_id = rb.book_id
+    JOIN series_catalog sc ON sc.id = bs.series_id
+    WHERE rb.username = ?
+    GROUP BY sc.name
+  `);
+  return new Map(_stmtSeriesReadCounts.all(u).map((r) => [r.name, r.n]));
+}
+
 export function removeReadBooksForSeries(username, seriesName) {
   if (!username || !seriesName) return { removed: 0 };
   const ids = getAllBookIdsByFacet('series', seriesName);
@@ -8384,6 +8591,29 @@ export function toggleBookmark(username, bookId) {
   db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
   db.prepare('INSERT OR IGNORE INTO bookmarks(username, book_id) VALUES(?, ?)').run(username, bookId);
   return true;
+}
+
+/* ── «Хочу прочитать» ── a book leaves the list once it is opened or marked read. */
+let _stmtIsWantToRead = null;
+export function isWantToRead(username, bookId) {
+  _stmtIsWantToRead ??= db.prepare('SELECT 1 FROM want_to_read WHERE username = ? AND book_id = ?');
+  return Boolean(_stmtIsWantToRead.get(username, bookId));
+}
+
+export function toggleWantToRead(username, bookId) {
+  if (isWantToRead(username, bookId)) {
+    removeWantToRead(username, bookId);
+    return false;
+  }
+  db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
+  db.prepare('INSERT OR IGNORE INTO want_to_read(username, book_id) VALUES(?, ?)').run(username, bookId);
+  return true;
+}
+
+let _stmtRemoveWantToRead = null;
+export function removeWantToRead(username, bookId) {
+  _stmtRemoveWantToRead ??= db.prepare('DELETE FROM want_to_read WHERE username = ? AND book_id = ?');
+  return _stmtRemoveWantToRead.run(username, bookId).changes > 0;
 }
 
 /** Добавить в избранное только отсутствующие; bookIds — в порядке запроса, дубликаты пропускаются. */
@@ -8418,6 +8648,7 @@ export function toggleReadBook(username, bookId) {
   }
   db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
   db.prepare('INSERT OR IGNORE INTO read_books(username, book_id) VALUES(?, ?)').run(username, bookId);
+  removeWantToRead(username, bookId);
   deleteReadingHistoryEntry(username, bookId);
   touchUserReaderRevision(username, 'read_books_rev');
   invalidateReadCache(username);
@@ -8452,6 +8683,7 @@ export function addReadBooksIfMissing(username, bookIds) {
     }
     db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
     db.prepare('INSERT OR IGNORE INTO read_books(username, book_id) VALUES(?, ?)').run(username, bookId);
+    removeWantToRead(username, bookId);
     added++;
   }
   if (added > 0) {

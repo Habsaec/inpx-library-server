@@ -3,6 +3,7 @@
  */
 import { PAGE_CACHE_MAX, PAGE_CACHE_TTL_MS } from '../constants.js';
 import { invalidateRecommendationsCache } from './recommendations.js';
+import { invalidateFollowingBadge } from '../inpx.js';
 
 const pageDataCache = new Map();
 const refreshing = new Set();
@@ -130,7 +131,7 @@ export function invalidateUserLibraryViewCaches(username) {
   const u = String(username || '').trim();
   if (!u) return;
   for (const key of pageDataCache.keys()) {
-    if (key.startsWith(`library:continue:${u}:`) || key.startsWith(`library:read:${u}:`)) {
+    if (key.startsWith(`library:continue:${u}:`) || key.startsWith(`library:read:${u}:`) || key.startsWith(`library:want:${u}:`) || key.startsWith(`library:following:${u}:`)) {
       pageDataCache.delete(key);
     }
   }
@@ -145,4 +146,5 @@ export function invalidateUserPageCaches(username) {
   invalidateFavoritesPage(username);
   invalidateUserLibraryViewCaches(username);
   invalidateRecommendationsCache(username);
+  invalidateFollowingBadge(username);
 }

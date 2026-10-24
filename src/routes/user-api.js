@@ -16,7 +16,7 @@ import QRCode from 'qrcode';
 import {
   getBookById, getBooksByIds, getReadingHistory, getBookmarks, getFavoriteAuthors, getFavoriteSeries,
   getBookmarksPage,
-  isBookmarked, toggleBookmark, addBookmarksIfMissing,
+  isBookmarked, toggleBookmark, addBookmarksIfMissing, toggleWantToRead, removeWantToRead, getSeriesReadingProgress,
   toggleFavoriteAuthor, toggleFavoriteSeries, getAllBookIdsByFacet,
   toggleReadBook, addReadBooksIfMissing, isSeriesFullyRead, removeReadBooksForSeries,
   removeReadBookIfPresent,
@@ -27,6 +27,7 @@ import { createSmtpTransport } from '../services/email.js';
 import { invalidateUserPageCaches } from '../services/cache.js';
 import { invalidateRecommendationsCache } from '../services/recommendations.js';
 import { logSystemEvent } from '../services/system-events.js';
+import { effectiveContentLangs } from '../user-content-langs.js';
 import { isServerBusyError } from '../services/heavy-task-limiter.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
@@ -92,6 +93,39 @@ export function registerUserApiRoutes(app, deps) {
     invalidateUserPageCaches(req.user.username);
     invalidateRecommendationsCache(req.user.username);
     res.json({ bookmarked });
+  });
+
+  /* ── «Хочу прочитать» ─────────────────────────────────────────────── */
+
+  app.post('/api/want/:id', requireApiAuth, (req, res) => {
+    const book = getBookById(req.params.id);
+    if (!book) {
+      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    }
+    const want = toggleWantToRead(req.user.username, book.id);
+    invalidateUserPageCaches(req.user.username);
+    res.json({ want });
+  });
+
+  app.delete('/api/want/:id', requireApiAuth, (req, res) => {
+    const book = getBookById(req.params.id);
+    if (!book) {
+      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    }
+    removeWantToRead(req.user.username, book.id);
+    invalidateUserPageCaches(req.user.username);
+    res.json({ want: false });
+  });
+
+  /* Series progress for the Android series screen (web renders the same block server-side):
+     { total, read, next: { id, title, seriesNo } | null }; editions count once, profile languages apply. */
+  app.get('/api/series-progress', requireApiAuth, (req, res) => {
+    const name = String(req.query.name || '').trim();
+    if (!name) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.error.unknown'));
+    }
+    const progress = getSeriesReadingProgress(req.user.username, name, { langs: effectiveContentLangs(req.user.username) });
+    res.json(progress || { total: 0, read: 0, next: null });
   });
 
   /* ── Read books ──────────────────────────────────────────────────── */

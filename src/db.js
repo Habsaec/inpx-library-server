@@ -1129,7 +1129,7 @@ export function deleteUser(username) {
     db.prepare(`DELETE FROM smart_shelves WHERE username = ?`).run(normalizedUsername);
     /* Per-user tables without ON DELETE CASCADE that were left behind (read marks, ratings,
        reader notes, sync revisions). Some are created lazily, so skip a table an old DB lacks. */
-    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions']) {
+    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions', 'want_to_read']) {
       const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table);
       if (exists) db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(normalizedUsername);
     }
@@ -1143,6 +1143,7 @@ export function deleteUser(username) {
       } catch { /* malformed entry: still drop the token row below */ }
       db.prepare(`DELETE FROM meta WHERE key = ?`).run(row.key);
     }
+    db.prepare(`DELETE FROM meta WHERE key = ?`).run(`following_seen:${normalizedUsername}`);
     return db.prepare(`DELETE FROM users WHERE username = ?`).run(normalizedUsername).changes;
   })();
 }
@@ -1744,6 +1745,16 @@ SELECT rp.username, rp.book_id, rp.updated_at
 FROM reading_positions rp
 WHERE rp.progress >= 99
   AND NOT EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = rp.username AND rb.book_id = rp.book_id);
+
+    /* «Хочу прочитать»: a book leaves the list once it is opened or marked read. */
+    CREATE TABLE IF NOT EXISTS want_to_read (
+      username TEXT NOT NULL,
+      book_id TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (username, book_id),
+      FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_want_to_read_username_created ON want_to_read(username, created_at);
 
     CREATE TABLE IF NOT EXISTS book_ratings (
       username TEXT NOT NULL,
@@ -2595,7 +2606,8 @@ async function cleanupOrphanedCatalogs() {
  */
 const USER_BOOK_TABLES = [
   'bookmarks', 'read_books', 'book_ratings', 'reading_history', 'shelf_books',
-  'reading_positions', 'reader_bookmarks', 'reader_book_revisions', 'reader_annotations'
+  'reading_positions', 'reader_bookmarks', 'reader_book_revisions', 'reader_annotations',
+  'want_to_read'
 ];
 
 db.exec(`
@@ -4323,6 +4335,8 @@ export function upsertReadingHistoryEntry(username, bookId, lastOpenedAt, openCo
       open_count = excluded.open_count
   `);
   _stmtUpsertReadHistory.run(username, bookId, opened, count);
+  // An opened book leaves «Хочу прочитать» (Android reports opens through this path).
+  db.prepare('DELETE FROM want_to_read WHERE username = ? AND book_id = ?').run(username, bookId);
   touchUserReaderRevision(username, 'reading_history_rev');
 }
 
@@ -4845,14 +4859,19 @@ function _ensureUserStatsStmt() {
         (SELECT COUNT(*) FROM shelves WHERE username = ?) AS shelvesCount,
         (SELECT COUNT(*) FROM reader_bookmarks rbm JOIN active_books ab3 ON ab3.id = rbm.book_id WHERE rbm.username = ?) AS readerBookmarksCount,
         (SELECT COUNT(*) FROM reader_annotations ra JOIN active_books ab4 ON ab4.id = ra.book_id WHERE ra.username = ?) AS readerAnnotationsCount,
-        (SELECT created_at FROM users WHERE username = ?) AS createdAt
+        (SELECT created_at FROM users WHERE username = ?) AS createdAt,
+        (SELECT COUNT(*) FROM want_to_read w JOIN active_books ab5 ON ab5.id = w.book_id
+          WHERE w.username = ?
+            AND NOT EXISTS (SELECT 1 FROM read_books rb5 WHERE rb5.username = w.username AND rb5.book_id = w.book_id)
+            AND NOT EXISTS (SELECT 1 FROM reading_history rh5 WHERE rh5.username = w.username AND rh5.book_id = w.book_id)
+        ) AS wantCount
     `);
   }
   return _stmtUserStats;
 }
 
 export function getUserStats(username) {
-  const row = _ensureUserStatsStmt().get(username, username, username, username, username, username, username, username, username);
+  const row = _ensureUserStatsStmt().get(username, username, username, username, username, username, username, username, username, username);
   return {
     readingCount: row?.readingCount || 0,
     bookmarkCount: row?.bookmarkCount || 0,
@@ -4862,6 +4881,7 @@ export function getUserStats(username) {
     shelvesCount: row?.shelvesCount || 0,
     readerBookmarksCount: row?.readerBookmarksCount || 0,
     readerAnnotationsCount: row?.readerAnnotationsCount || 0,
+    wantCount: row?.wantCount || 0,
     createdAt: row?.createdAt || null
   };
 }

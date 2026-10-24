@@ -23,6 +23,7 @@ function seed(username) {
   db.prepare('INSERT OR IGNORE INTO user_reader_revisions (username) VALUES (?)').run(username);
   setMeta(`device_token:${username}:tok1`, JSON.stringify({ user: username, tokenHash: `hash-${username}` }));
   setMeta(`device_token_hash:hash-${username}`, `${username}:tok1`);
+  setMeta(`following_seen:${username}`, '2026-01-01');
 }
 
 const TABLES = ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions'];
@@ -38,6 +39,7 @@ test('deleteUser removes read marks, ratings, notes, sync revisions and device t
   assert.deepEqual(countRows(USER), Object.fromEntries(TABLES.map((t) => [t, 0])));
   assert.equal(getMeta(`device_token:${USER}:tok1`), null);
   assert.equal(getMeta(`device_token_hash:hash-${USER}`), null);
+  assert.equal(getMeta(`following_seen:${USER}`), null);
   // Another user's data stays untouched.
   for (const [table, n] of Object.entries(countRows(OTHER))) assert.ok(n >= 1, `${table} kept for other user`);
   assert.ok(getMeta(`device_token:${OTHER}:tok1`));

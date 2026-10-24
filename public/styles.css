@@ -566,6 +566,20 @@ a.table-row-link:active {
   transition: background 0.22s var(--ease-premium), color 0.22s var(--ease-premium), transform 0.1s ease-out;
 }
 
+/* Unseen count next to «Новое у любимых» */
+.sidenav-links .nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast, #1a1612);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+}
+
 @media (min-width: 901px) {
   .sidenav-links a {
     min-height: 32px;
@@ -3926,6 +3940,65 @@ html[data-theme="light"] .card-series {
   border-radius: 2px;
   background: var(--accent, #3b82f6);
   transition: width 0.3s ease;
+}
+
+/* Series page: «Прочитано N из M» + «Читать следующую» */
+.series-progress {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+  margin: 4px 0 16px;
+}
+
+.series-progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.875rem;
+}
+
+.series-progress-label {
+  font-weight: 600;
+}
+
+.series-progress-done {
+  color: #4ac694;
+  font-weight: 600;
+}
+
+.series-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.series-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent, #3b82f6);
+}
+
+.series-progress-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.series-progress-next-title {
+  color: var(--link);
+  text-decoration: none;
+  font-size: 0.875rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.series-progress-next-title:hover {
+  text-decoration: underline;
 }
 
 .read-progress-label {
@@ -7466,6 +7539,16 @@ html[data-theme="light"] .page-jump::after {
   color: #4ac694;
   background: color-mix(in srgb, #4ac694 16%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #4ac694 40%, transparent);
+}
+
+.book-detail-corner-actions .book-detail-want-action.is-active {
+  color: #6aa8e8;
+  background: color-mix(in srgb, #6aa8e8 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #6aa8e8 40%, transparent);
+}
+
+.book-detail-corner-actions .book-detail-want-action.is-active svg {
+  fill: currentColor;
 }
 
 .book-detail-corner-actions .book-detail-bookmark-action.is-active,

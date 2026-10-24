@@ -68,6 +68,7 @@
 
   function apiReadPath(id) { return apiActionPath('/api/read', id); }
   function apiBookmarkPath(id) { return apiActionPath('/api/bookmarks', id); }
+  function apiWantPath(id) { return apiActionPath('/api/want', id); }
   function apiReadingHistoryPath(id) { return apiActionPath('/api/reading-history', id); }
   function apiSendToEreaderPath(id) { return apiActionPath('/api/send-to-ereader', id); }
   function apiSendToTelegramPath(id) { return apiActionPath('/api/send-to-telegram', id); }
@@ -140,7 +141,7 @@
 
   const api = {
     bookIdNeedsSafeUrl, encodeBookRef, decodeBookRef, bookPagePath, readPagePath, liteBookPagePath, liteReadPagePath, apiBookPath, downloadBookPath,
-    apiReadPath, apiBookmarkPath, apiReadingHistoryPath, apiSendToEreaderPath, apiSendToTelegramPath,
+    apiReadPath, apiBookmarkPath, apiWantPath, apiReadingHistoryPath, apiSendToEreaderPath, apiSendToTelegramPath,
     resolveBookIdFromElement, resolveBatchBookIdFromElement, findCardsByBookId
   };
   globalThis.bookRef = api;

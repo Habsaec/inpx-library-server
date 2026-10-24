@@ -651,6 +651,22 @@ export function renderLibraryView({
       secondaryHref: '/catalog',
       secondaryLabel: t('favorites.toCatalog')
     },
+    following: {
+      title: t('library.empty.following.title'),
+      text: t('library.empty.following.text'),
+      actionHref: '/authors',
+      actionLabel: t('library.empty.following.action'),
+      secondaryHref: '/series',
+      secondaryLabel: t('library.empty.following.secondary')
+    },
+    want: {
+      title: t('library.empty.want.title'),
+      text: t('library.empty.want.text'),
+      actionHref: '/catalog',
+      actionLabel: t('favorites.toCatalog'),
+      secondaryHref: '/library/recent',
+      secondaryLabel: t('library.openRecent')
+    },
     read: {
       title: t('library.empty.read.title'),
       text: t('library.empty.read.text'),
@@ -666,7 +682,7 @@ export function renderLibraryView({
   const genreList = Array.isArray(genres) ? genres.filter(Boolean) : [];
   const showFilters = !isSeries && (view === 'recent' || view === 'recommended');
   const filterAction = `/library/${view}`;
-  const countHintLabel = view === 'continue' || view === 'recommended' || view === 'read' ? t('library.countInSection') : t('library.countInCatalog');
+  const countHintLabel = ['continue', 'recommended', 'read', 'want', 'following'].includes(view) ? t('library.countInSection') : t('library.countInCatalog');
   const totalN = Math.max(0, Math.floor(Number(total) || 0));
   const totalNum = formatLocaleInt(totalN);
   const totalBookWord = isSeries ? plural('series', totalN) : plural('book', totalN);
@@ -715,7 +731,8 @@ export function renderLibraryView({
       formId: `library-filters-${view}`
     })
     : '';
-  const sortControl = isSeries || hideListControls
+  // «Новое у любимых» is always newest first.
+  const sortControl = isSeries || hideListControls || view === 'following'
     ? ''
     : renderSortControl({
       action: filterAction,
@@ -726,9 +743,10 @@ export function renderLibraryView({
     });
   const showBatch = Boolean(canDownloadInUi(user) && items.length);
   const removeReading = Boolean(view === 'continue' && user);
+  const removeWant = Boolean(view === 'want' && user);
   const booksList = isListView
-    ? renderBookFlibustaList(items, { user, batchSelect: showBatch, removeReading })
-    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds, removeReading });
+    ? renderBookFlibustaList(items, { user, batchSelect: showBatch, removeReading, removeWant })
+    : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds, removeReading, removeWant });
   const booksMarkup = showBatch
     ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${booksList}</div>`
     : booksList;
@@ -799,6 +817,7 @@ export function renderBook({
   details,
   bookmarked,
   isRead = false,
+  wantToRead = false,
   user,
   stats,
   indexStatus,
@@ -860,6 +879,7 @@ export function renderBook({
         <div class="book-detail-content">
           ${isAuthenticated ? `<div class="book-detail-corner-actions">
             <button class="book-detail-icon-action book-detail-read-action ${isRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-read-button="1" aria-pressed="${isRead ? 'true' : 'false'}" aria-label="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}" title="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7"/></svg></button>
+            ${isRead ? '' : `<button class="book-detail-icon-action book-detail-want-action ${wantToRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-want-button="1" aria-pressed="${wantToRead ? 'true' : 'false'}" aria-label="${escapeHtml(wantToRead ? t('book.inWant') : t('book.addWant'))}" title="${escapeHtml(wantToRead ? t('book.inWant') : t('book.addWant'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.8h10a.8.8 0 0 1 .8.8v15.6L12 16.4l-5.8 3.8V4.6a.8.8 0 0 1 .8-.8z"/></svg></button>`}
             <button class="book-detail-icon-action book-detail-bookmark-action ${bookmarked ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-bookmark-button="1" aria-pressed="${bookmarked ? 'true' : 'false'}" aria-label="${escapeHtml(bookmarked ? t('book.inFavorite') : t('book.addFavorite'))}" title="${escapeHtml(bookmarked ? t('book.inFavorite') : t('book.addFavorite'))}" ${bookmarked ? 'data-active-favorite="true"' : ''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.4s-6.8-4.2-6.8-8.8A3.8 3.8 0 0 1 12 8.1a3.8 3.8 0 0 1 6.8 3.5c0 4.6-6.8 8.8-6.8 8.8z"/></svg></button>
             <button class="book-detail-icon-action book-detail-shelf-action" type="button" ${bookIdDataAttr(book.id)} data-add-to-shelf="1" aria-label="${escapeHtml(t('book.toShelf'))}" title="${escapeHtml(t('book.toShelf'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16"/><path d="M6.5 19V8.2c0-.7.6-1.2 1.3-1.2H10V19"/><path d="M10 19V6.2c0-.7.6-1.2 1.3-1.2H14V19"/><path d="M14 19V9.2c0-.7.6-1.2 1.3-1.2H18V19"/></svg></button>
           </div>` : ''}
@@ -1145,7 +1165,30 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
 }
 
-export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '', lang = '', langs = [] }) {
+/** «Прочитано N из M» + «Читать следующую» on a series page (signed-in users, 2+ volumes). */
+function renderSeriesProgress(progress) {
+  if (!progress || progress.total < 2) return '';
+  const pct = Math.round((progress.read / progress.total) * 100);
+  const label = tp('series.progress', { read: formatLocaleInt(progress.read), total: formatLocaleInt(progress.total) });
+  const next = progress.next;
+  const nextLabel = next
+    ? (progress.read === 0 ? t('series.startReading') : t('series.readNext'))
+    : '';
+  const nextTitle = next ? `${next.seriesNo ? `${next.seriesNo}. ` : ''}${next.title}` : '';
+  return `<div class="series-progress">
+      <div class="series-progress-head">
+        <span class="series-progress-label">${escapeHtml(label)}</span>
+        ${next ? '' : `<span class="series-progress-done">${escapeHtml(t('series.allRead'))}</span>`}
+      </div>
+      <div class="series-progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(label)}"><span style="width:${pct}%"></span></div>
+      ${next ? `<div class="series-progress-next">
+        <a class="button button-primary" href="${readPagePath(next.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(nextLabel)}</a>
+        <a class="series-progress-next-title" href="${bookPagePath(next.id)}">${escapeHtml(nextTitle)}</a>
+      </div>` : ''}
+    </div>`;
+}
+
+export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, seriesProgress = null, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '', lang = '', langs = [] }) {
   const isGenre = facet === 'genres';
   const isLang = facet === 'languages';
   const isEntityView = (isGenre || isLang) && (view === 'authors' || view === 'series');
@@ -1264,6 +1307,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
       </div>
     </section>
     ${viewTabs}
+    ${facet === 'series' && user ? renderSeriesProgress(seriesProgress) : ''}
     ${showBatch ? renderBatchDownloadToolbar(batchCtx, { user }) : ''}
     <div class="list-context-hint list-context-hint-spacious">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural(countLabelKey, total)}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
     ${bodyBlock}
@@ -1303,6 +1347,7 @@ export function renderAuthorFacetPage({
   authorPortraitUrl = '',
   authorBioHtml = '',
   readSeriesNames = null,
+  seriesReadCounts = null,
   lang = '',
   langs = []
 }) {
@@ -1390,7 +1435,7 @@ export function renderAuthorFacetPage({
     ? `/facet/authors/${encodeURIComponent(facetValue)}/outside-series?sort=${encodeURIComponent(outsideSeriesSort)}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}`
     : '';
   const seriesListHtml = (series.length || standaloneBooks.length)
-    ? `<section class="library-shelf library-shelf-secondary author-facet-series-block">${renderAuthorFacetSeriesList(series, standaloneBooks.length ? { href: outsideSeriesHref, label: t('authorPage.outsideSeries'), bookCount: standaloneBooks.length } : null, readSeriesNames, facetValue)}</section>`
+    ? `<section class="library-shelf library-shelf-secondary author-facet-series-block">${renderAuthorFacetSeriesList(series, standaloneBooks.length ? { href: outsideSeriesHref, label: t('authorPage.outsideSeries'), bookCount: standaloneBooks.length } : null, readSeriesNames, facetValue, seriesReadCounts)}</section>`
     : '';
   const listBatch = Boolean(isListView && canDownloadInUi(user) && (
     series.some((s) => Array.isArray(s.books) && s.books.length) || standaloneBooks.length
@@ -2265,6 +2310,8 @@ export function renderMyLibrary({ user, stats, indexStatus, userStats, csrfToken
     + (Number(userStats.favoriteSeriesCount) || 0);
   const sections = [
     { href: '/library/continue', title: t('nav.reading'), count: userStats.readingCount },
+    { href: '/library/want', title: t('nav.want'), count: userStats.wantCount },
+    { href: '/library/following', title: t('nav.following'), count: userStats.followingNewCount || 0 },
     { href: '/favorites', title: t('nav.favorites'), count: favoritesTotal },
     { href: '/shelves', title: t('nav.shelves'), count: userStats.shelvesCount },
     { href: '/library/read', title: t('library.title.read'), count: userStats.readBooksCount },
@@ -2299,6 +2346,7 @@ export function renderProfile({ user, stats, indexStatus, userStats, readingStat
   const tiles = [
     { href: '/library/continue', label: t('nav.reading'), value: userStats.readingCount },
     { href: '/library/read', label: t('library.title.read'), value: userStats.readBooksCount },
+    { href: '/library/want', label: t('nav.want'), value: userStats.wantCount },
     { href: '/favorites?view=books', label: t('favorites.books'), value: userStats.bookmarkCount },
     { href: '/favorites?view=authors', label: t('favorites.authors'), value: userStats.favoriteAuthorsCount },
     { href: '/favorites?view=series', label: t('favorites.series'), value: userStats.favoriteSeriesCount },

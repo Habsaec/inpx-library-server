@@ -98,7 +98,7 @@ export function registerBrowseApiRoutes(app) {
     res.json(result);
   });
 
-  app.get('/api/library/:view(recent|continue|read|recommended)', requireBrowseAuth, (req, res) => {
+  app.get('/api/library/:view(recent|continue|read|recommended|want|following)', requireBrowseAuth, (req, res) => {
     const view = String(req.params.view);
     const page = safePage(req.query.page);
     const pageSizeRaw = Number(req.query.pageSize);
@@ -142,7 +142,7 @@ export function registerBrowseApiRoutes(app) {
           page, pageSize, username, genre, genreMode,
           lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, sort
         })
-        : view === 'continue' || view === 'read'
+        : view === 'continue' || view === 'read' || view === 'want' || view === 'following'
           ? getStaleOrSchedule(
             `library:${view}:${username}:sort:${sort}:${order}:p${page}:s${pageSize}`,
             () => getLibraryView(view, { ...libraryOpts, username, type }),

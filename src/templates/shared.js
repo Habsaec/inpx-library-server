@@ -12,7 +12,8 @@ import { resolveTelegramRuntimeConfig } from '../db.js';
 import { config } from '../config.js';
 import { BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath, encodeBookRef, bookIdNeedsSafeUrl } from '../utils/book-ref.js';
-import { formatSingleAuthorName, splitAuthorValues } from '../inpx.js';
+import { formatSingleAuthorName, splitAuthorValues, getFollowingNewCount } from '../inpx.js';
+import { effectiveContentLangs } from '../user-content-langs.js';
 import {
   t,
   tp,
@@ -863,6 +864,15 @@ function renderSidebarNavigation(user, currentPath = '/', stats = null) {
       ${user ? `
       ${groupLabel('nav.groupMy')}
       ${link('/library/continue', t('nav.reading'), true)}
+      ${link('/library/want', t('nav.want'), true)}
+      ${(() => {
+        /* «Новое у любимых» + unseen count (memoized per user in inpx.js, ~2 min). */
+        let count = 0;
+        try { count = getFollowingNewCount(user.username, { langs: effectiveContentLangs(user.username) }); } catch { count = 0; }
+        const active = pathOnly === '/library/following' ? 'active' : '';
+        const badge = count > 0 ? ` <span class="nav-badge" aria-label="${escapeHtml(tp('nav.followingBadge', { n: count }))}">${count > 99 ? '99+' : count}</span>` : '';
+        return `<a class="${active}" href="/library/following">${escapeHtml(t('nav.following'))}${badge}</a>`;
+      })()}
       ${link('/favorites', t('nav.favorites'))}
       ${link('/shelves', t('nav.shelves'))}
       ${link('/library/read', t('library.title.read'), true)}
@@ -1001,7 +1011,13 @@ function renderReadingRemoveButton(book, className) {
   return `<button class="button ${className}" type="button" ${bookIdDataAttr(book.id)} data-reading-remove="1" data-reading-last-opened="${escapeHtml(book.lastOpenedAt || '')}" data-reading-open-count="${openCount}" title="${label}" aria-label="${label}">${escapeHtml(t('book.remove'))}</button>`;
 }
 
-export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false, readBookIds = null, seriesContext = null, removeReading = false } = {}) {
+/** «Убрать» on /library/want cards and rows (handled by attachWantActions, which toggles the entry off). */
+function renderWantRemoveButton(book, className) {
+  const label = escapeHtml(t('library.removeFromWant'));
+  return `<button class="button ${className}" type="button" ${bookIdDataAttr(book.id)} data-want-button="1" title="${label}" aria-label="${label}">${escapeHtml(t('book.remove'))}</button>`;
+}
+
+export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false, readBookIds = null, seriesContext = null, removeReading = false, removeWant = false } = {}) {
   const uniqueItems = uniqueBooksById(items);
   const effectiveBatch = batchSelect && !hideDownloads;
   const canDl = canDownloadInUi(user);
@@ -1024,7 +1040,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
     const progressKey = Math.round(Number(book.readProgress) || 0);
     const cacheKey = _cardCacheKey(book, `${flags}${isRead ? '1' : '0'}${book.libRate || 0}|p${progressKey}|d${Number(book.deleted) ? 1 : 0}`);
     // The reading page card embeds per-user open history, so it is never shared through the cache.
-    const cached = removeReading ? null : getCachedCardHtml(cacheKey);
+    const cached = removeReading || removeWant ? null : getCachedCardHtml(cacheKey);
     if (cached) return cached;
     const cardDl = hideDownloads ? '' : renderDownloadMenu(book, { compact: true, user });
     const seriesInfo = seriesContext
@@ -1043,9 +1059,10 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
             ${showSeries ? `<div class="card-series">${renderSeriesLinks(book.seriesList, { limit: 1, popoverId: `card-s-${book.id}`, firstAuthor: book.authorsList?.[0] || firstAuthorValue(book.authors) })}</div>` : ''}
             ${book.readProgress > 0 ? `<div class="card-read-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(book.readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(book.readProgress)}%"></div></div><span class="read-progress-label">${Math.round(book.readProgress)}%</span></div>` : ''}
             ${removeReading ? `<div class="card-actions card-actions-favorites">${renderReadingRemoveButton(book, 'card-remove-reading-action')}</div>` : ''}
+            ${removeWant ? `<div class="card-actions card-actions-favorites">${renderWantRemoveButton(book, 'card-remove-reading-action')}</div>` : ''}
           </div>
         </article>`;
-    if (!removeReading) setCachedCardHtml(cacheKey, html);
+    if (!removeReading && !removeWant) setCachedCardHtml(cacheKey, html);
     return html;
   }).join('')}
     </div>`;
@@ -1112,7 +1129,7 @@ export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', e
 }
 
 /** Список серий на странице автора (как в разделе «Серии», счётчик — книги этого автора в серии). */
-export function renderAuthorFacetSeriesList(series = [], outsideSeries = null, readSeriesNames = null, authorName = '') {
+export function renderAuthorFacetSeriesList(series = [], outsideSeries = null, readSeriesNames = null, authorName = '', seriesReadCounts = null) {
   if (!series.length && !outsideSeries) {
     return '';
   }
@@ -1134,7 +1151,13 @@ export function renderAuthorFacetSeriesList(series = [], outsideSeries = null, r
         <a class="table-row table-row-link" href="/facet/series/${encodeURIComponent(s.name)}${authorParam}">
           <div style="display:flex;align-items:center">
             <span><strong>${escapeHtml(s.displayName || s.name)}</strong><br>
-            <span class="muted">${countLabel('book', s.bookCount)}</span></span>
+            <span class="muted">${countLabel('book', s.bookCount)}${(() => {
+              /* «· прочитано N» while a series is started but not finished (finished ones get the badge). */
+              const n = seriesReadCounts?.get(s.name) || 0;
+              return n > 0 && !(readSeriesNames && readSeriesNames.has(s.name))
+                ? ` · ${escapeHtml(tp('series.readCountShort', { n: formatLocaleInt(n) }))}`
+                : '';
+            })()}</span></span>
             ${seriesBadge(s.name)}
           </div>
         </a>`;
@@ -1260,7 +1283,7 @@ function renderListSendMenu(book, user) {
 }
 
 function renderAuthorFlibustaBookRow(book, {
-  user = null, showSeriesNo = true, batchSelect = false, showAuthor = false, removeReading = false
+  user = null, showSeriesNo = true, batchSelect = false, showAuthor = false, removeReading = false, removeWant = false
 } = {}) {
   const no = showSeriesNo ? formatAuthorListSeriesNo(book) : '';
   const noHtml = no ? `<span class="author-flibusta-no">${escapeHtml(no)}</span>` : '';
@@ -1281,7 +1304,9 @@ function renderAuthorFlibustaBookRow(book, {
     ? `<span class="author-flibusta-dl">${renderDownloadMenu(book, { compact: true, user })}</span>`
     : '';
   const emailBtn = renderListSendMenu(book, user);
-  const removeBtn = removeReading ? renderReadingRemoveButton(book, 'author-flibusta-remove-reading') : '';
+  const removeBtn = removeReading
+    ? renderReadingRemoveButton(book, 'author-flibusta-remove-reading')
+    : removeWant ? renderWantRemoveButton(book, 'author-flibusta-remove-reading') : '';
   const actions = `<span class="author-flibusta-actions">${readBtn}${dl}${emailBtn}${removeBtn}</span>`;
   const deletedHtml = Number(book.deleted)
     ? `<span class="deleted-badge deleted-badge--inline" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>`
@@ -1348,7 +1373,7 @@ export function renderAuthorFlibustaList({
 /**
  * Flat Flibusta-style book list for catalog / search / novinki (title + author rows).
  */
-export function renderBookFlibustaList(books = [], { user = null, batchSelect = false, removeReading = false } = {}) {
+export function renderBookFlibustaList(books = [], { user = null, batchSelect = false, removeReading = false, removeWant = false } = {}) {
   const uniqueItems = uniqueBooksById(books);
   if (!uniqueItems.length) return '';
   const rows = uniqueItems
@@ -1357,6 +1382,7 @@ export function renderBookFlibustaList(books = [], { user = null, batchSelect = 
       showSeriesNo: false,
       batchSelect,
       removeReading,
+      removeWant,
       showAuthor: true
     }))
     .join('');
@@ -1582,7 +1608,7 @@ function renderThemeBootScript() {
 
 /** Личные разделы («Моя библиотека»): пункты сайдбара и активность хаба в нижней навигации. */
 const MY_LIBRARY_PATHS = [
-  '/library/my', '/library/continue', '/favorites', '/shelves',
+  '/library/my', '/library/continue', '/library/want', '/library/following', '/favorites', '/shelves',
   '/library/read', '/library/bookmarks', '/library/notes'
 ];
 
