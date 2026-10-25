@@ -1866,21 +1866,7 @@ ${renderFaviconLinks()}
   <span class="ft-pct" id="ft-pct">0%</span>
 </div>
 
-<div class="reader-tts-dock" id="reader-tts-dock" role="region" aria-hidden="true" aria-label="${escapeHtml(t('reader.ttsBar'))}">
-  <div class="reader-tts-dock-inner">
-    <div class="reader-tts-dock-row reader-tts-dock-transport">
-      <button type="button" class="reader-tts-dock-btn tb-btn js-tts-prev" id="btn-tts-dock-prev" disabled title="${escapeHtml(t('reader.ttsPrev'))}" aria-label="${escapeHtml(t('reader.ttsPrev'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6V5zm3.6 7L18 5v14L9.6 12z" fill="currentColor"/></svg></button>
-      <button type="button" class="reader-tts-dock-btn tb-btn reader-tts-dock-main" id="btn-tts-dock" title="${escapeHtml(t('reader.ttsPlay'))}" aria-label="${escapeHtml(t('reader.tts'))}"><svg class="tts-main-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="tts-main-path" fill="currentColor" d="M8 5v14l11-7z"/></svg></button>
-      <button type="button" class="reader-tts-dock-btn tb-btn js-tts-stop" id="btn-tts-dock-stop" hidden title="${escapeHtml(t('reader.ttsStop'))}" aria-label="${escapeHtml(t('reader.ttsStop'))}">${ttsStopSvg}</button>
-      <button type="button" class="reader-tts-dock-btn tb-btn js-tts-next" id="btn-tts-dock-next" disabled title="${escapeHtml(t('reader.ttsNext'))}" aria-label="${escapeHtml(t('reader.ttsNext'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5h2v14h-2V5zm-2.4 7L8 5v14l7.6-7z" fill="currentColor"/></svg></button>
-    </div>
-    <div class="reader-tts-dock-row reader-tts-dock-rate-group">
-      <button type="button" class="reader-tts-dock-btn tb-btn" id="btn-tts-dock-slower" title="${escapeHtml(t('reader.ttsSlower'))}" aria-label="${escapeHtml(t('reader.ttsSlower'))}"><span class="reader-tts-dock-rate-sym" aria-hidden="true">−</span></button>
-      <span class="reader-tts-dock-rate" id="tts-dock-rate" aria-live="polite">1.00×</span>
-      <button type="button" class="reader-tts-dock-btn tb-btn" id="btn-tts-dock-faster" title="${escapeHtml(t('reader.ttsFaster'))}" aria-label="${escapeHtml(t('reader.ttsFaster'))}"><span class="reader-tts-dock-rate-sym" aria-hidden="true">+</span></button>
-    </div>
-  </div>
-</div>
+<div class="reader-tts-dock" id="reader-tts-dock" role="region" aria-hidden="true" aria-label="${escapeHtml(t('reader.ttsBar'))}"></div>
 
 <div class="reader-book-pages" id="reader-book-pages" aria-hidden="true">
   <span class="book-page-num" id="book-page-left"></span>
@@ -2120,15 +2106,7 @@ ${renderFaviconLinks()}
       </div>
       <div class="rs-group">
         <div class="rs-label">${escapeHtml(t('reader.ttsSettings'))}</div>
-        <div class="rs-sublabel">${escapeHtml(t('reader.ttsRate'))}</div>
-        <div class="rs-slider">
-          <input type="range" id="rs-tts-rate" name="readerTtsRate" min="0.5" max="2" step="0.05" aria-label="${escapeHtml(t('reader.ttsRate'))}">
-          <span class="rs-val" id="rs-tts-rate-val">1.00</span>
-        </div>
-        <div class="rs-sublabel">${escapeHtml(t('reader.ttsVoice'))}</div>
-        <select id="rs-tts-voice" name="readerTtsVoice" class="rs-select" aria-label="${escapeHtml(t('reader.ttsVoice'))}">
-          <option value="">${escapeHtml(t('reader.ttsVoiceDefault'))}</option>
-        </select>
+        <div id="rs-tts-mount"></div>
       </div>
       <div class="rs-actions">
         <button type="button" class="rs-reset" id="reader-reset-settings">${escapeHtml(t('reader.reset'))}</button>

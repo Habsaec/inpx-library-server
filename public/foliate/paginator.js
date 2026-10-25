@@ -519,6 +519,11 @@ class View {
     set overlayer(overlayer) {
         this.#overlayer = overlayer
         this.#element.append(overlayer.element)
+        // The overlayer is attached after load() already expanded the view, and expand() skips an
+        // unchanged size: without this pass the layer kept left:0 and highlights (TTS, notes)
+        // were drawn one page to the left.
+        this.#lastExpandedSize = NaN
+        if (this.document?.documentElement) this.expand()
     }
     get overlayer() {
         return this.#overlayer

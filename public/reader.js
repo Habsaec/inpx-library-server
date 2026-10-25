@@ -34,6 +34,7 @@ import {
   shouldRetryPositionConflict,
   adoptConflictBaseRevision,
 } from '/reader-shared/position-revision.js';
+import { createReaderTts, normalizeTtsSettings, TTS_SETTING_DEFAULTS } from '/reader-shared/reader-tts.js';
 import {
   TAP_ZONE_IDS,
   TAP_ACTIONS,
@@ -143,11 +144,6 @@ import {
   const panelTabs = document.querySelectorAll('.panel-tab');
   const panelBodies = document.querySelectorAll('[data-panel-tab]');
   const toastEl = $('reader-toast');
-  const btnTts = $('btn-tts');
-  const btnTtsDock = $('btn-tts-dock');
-  const btnTtsStop = $('btn-tts-stop');
-  const btnTtsDockStop = $('btn-tts-dock-stop');
-  const ttsDockEl = $('reader-tts-dock');
   const bookPagesEl = $('reader-book-pages');
   const bookPageLeft = $('book-page-left');
   const bookPageRight = $('book-page-right');
@@ -219,7 +215,7 @@ import {
   function resumeTtsAfterHidden() {
     if (!ttsChainActive || ttsPausedByUser) return;
     if (speechSynthesis.speaking || speechSynthesis.pending) return;
-    try { ttsKickSpeak?.(); } catch (e) { console.warn('[reader TTS resume]', e); }
+    try { readerTts?.kick(); } catch (e) { console.warn('[reader TTS resume]', e); }
   }
 
   document.addEventListener('visibilitychange', () => {
@@ -258,26 +254,18 @@ import {
   );
 
   let view = null;
-  /** Цепочка озвучивания (Web Speech API); пауза только по кнопке. */
+  /** Озвучка (reader-shared/reader-tts.js); состояние зеркалится из onStateChange. */
+  let readerTts = null;
   let ttsChainActive = false;
   let ttsPausedByUser = false;
-  /** Не вызывать stopReaderTts при load iframe — переходим к следующей секции во время TTS. */
-  let ttsAdvancingSection = false;
-  /** Долгое нажатие на кнопку TTS — стоп (сенсорные устройства). */
-  let ttsStopLongPressTimer = null;
-  let ttsStopLongPressConsumeClick = false;
-  let ttsStopLongPressPt = null;
-  const TTS_STOP_LONG_PRESS_MS = 550;
-  const TTS_STOP_LONG_PRESS_SLOP_PX = 14;
-  /** Инвалидирует callbacks utterance при пропуске / стопе */
-  let ttsSpeakToken = 0;
-  const ttsNav = { skipBack() {}, skipForward() {} };
+  const ttsNav = {
+    skipBack: () => readerTts?.prevSentence(),
+    skipForward: () => readerTts?.nextSentence(),
+  };
   let ttsKeepaliveUrl = null;
   let ttsKeepaliveEl = null;
   let ttsMediaSessionHandlers = false;
   let ttsBgMaintainTimer = null;
-  let ttsKickSpeak = null;
-  let lastTtsSpeechAt = 0;
   let tocData = [];
   let bookmarksData = [];
   let annotationsData = [];
@@ -373,11 +361,6 @@ import {
     }
   }
 
-  function syncTtsKeepaliveWithSpeech() {
-    if (!ttsChainActive || ttsPausedByUser) pauseTtsKeepalive();
-    else void startTtsKeepalivePlayback();
-  }
-
   function syncTtsMediaSessionPlayback() {
     if (!('mediaSession' in navigator)) return;
     try {
@@ -424,6 +407,9 @@ import {
       navigator.mediaSession.setActionHandler('stop', () => {
         stopReaderTts();
       });
+      // Not every browser knows these actions: last, so a TypeError does not skip the ones above.
+      navigator.mediaSession.setActionHandler('seekbackward', () => readerTts?.prevParagraph());
+      navigator.mediaSession.setActionHandler('seekforward', () => readerTts?.nextParagraph());
     } catch (e) {
       console.warn('[reader MediaSession]', e);
     }
@@ -458,7 +444,7 @@ import {
     justify: true, hyphenate: true,
     usePublisherFont: false, fontWeight: 400,
     letterSpacing: 0, paragraphSpacing: 0.4, textIndent: 0,
-    ttsRate: 1, ttsVoice: '', chromePinned: false,
+    ...TTS_SETTING_DEFAULTS, chromePinned: false,
     tapZonesShort: defaultTapZonesShort(),
     tapZonesLong: defaultTapZonesLong(),
   };
@@ -650,9 +636,7 @@ import {
     S.paragraphSpacing = Number.isFinite(ps) ? Math.min(1.5, Math.max(0, ps)) : defaults.paragraphSpacing;
     const ti = Number(S.textIndent);
     S.textIndent = Number.isFinite(ti) ? Math.min(3, Math.max(0, ti)) : defaults.textIndent;
-    const tr = Number(S.ttsRate);
-    S.ttsRate = Number.isFinite(tr) ? Math.min(2, Math.max(0.5, tr)) : defaults.ttsRate;
-    if (typeof S.ttsVoice !== 'string') S.ttsVoice = defaults.ttsVoice;
+    normalizeTtsSettings(S);
     S.chromePinned = Boolean(S.chromePinned);
     S.tapZonesShort = normalizeTapZones(S.tapZonesShort, defaultTapZonesShort());
     S.tapZonesLong = normalizeTapZones(S.tapZonesLong, defaultTapZonesLong());
@@ -2046,8 +2030,8 @@ import {
     m.style.top = top + 'px';
   }
   function maybeShowSelMenu(doc) {
-    // Во время TTS фразы раньше выделялись через Selection — меню заметок всплывало само.
-    if (ttsChainActive) { hideSelMenu(); return; }
+    // Подсветка озвучки рисуется оверлеем, не Selection: выделение во время TTS — от пользователя
+    // (в меню есть «Читать отсюда»).
     if (panelOverlay.classList.contains('is-open') || isFootnoteOverlayOpen()) { hideSelMenu(); return; }
     const sel = doc.getSelection?.();
     if (!sel || sel.isCollapsed || !sel.rangeCount) {
@@ -2321,13 +2305,7 @@ import {
     syncPanelChrome(tab);
     if (tab === 'settings') {
       document.querySelectorAll('.panel-body input[type="range"]').forEach(guardRangeSliderTouchScroll);
-      void ensureTtsVoices().then(() => {
-        try {
-          populateTtsVoiceList();
-        } catch (e) {
-          console.warn(e);
-        }
-      });
+      readerTts?.onSettingsOpen();
     }
     if (tab === 'notes') renderNotesTab();
     if (tab === 'toc') scrollTocToCurrent();
@@ -2577,30 +2555,6 @@ import {
 
     initTapZonesSettings();
 
-    const ttsRateEl = $('rs-tts-rate');
-    const ttsRateVal = $('rs-tts-rate-val');
-    if (ttsRateEl) {
-      ttsRateEl.addEventListener('input', () => {
-        setTtsRate(Number(ttsRateEl.value), { persist: true, fromSlider: true });
-      });
-    }
-    const ttsVoiceEl = $('rs-tts-voice');
-    if (ttsVoiceEl) {
-      ttsVoiceEl.addEventListener('change', () => {
-        S.ttsVoice = ttsVoiceEl.value || '';
-        saveSettings();
-      });
-    }
-    if (window.speechSynthesis) {
-      speechSynthesis.addEventListener('voiceschanged', () => {
-        if (activePanelTab === 'settings') {
-          try {
-            populateTtsVoiceList();
-          } catch { /* */ }
-        }
-      });
-    }
-
     document.querySelectorAll('.panel-body input[type="range"]').forEach(guardRangeSliderTouchScroll);
   }
 
@@ -2680,603 +2634,56 @@ import {
     refreshTapZonesUi();
     updateSeekbar();
     updateDayNightButton();
-    const ttsR = $('rs-tts-rate');
-    const ttsRV = $('rs-tts-rate-val');
-    if (ttsR) {
-      const r = Number(S.ttsRate);
-      ttsR.value = String(Number.isFinite(r) ? Math.min(2, Math.max(0.5, r)) : 1);
-      if (ttsRV) ttsRV.textContent = Number(ttsR.value).toFixed(2);
-    }
-    updateTtsDockRateUi();
-    const ttsV = $('rs-tts-voice');
-    if (ttsV && S.ttsVoice && [...ttsV.options].some(o => o.value === S.ttsVoice)) ttsV.value = S.ttsVoice;
-    else if (ttsV) ttsV.value = '';
+    readerTts?.refreshSettingsUi();
   }
 
-  /* ===== TTS (read aloud) ===== */
-  function ssmlToPlain(ssmlStr) {
-    if (!ssmlStr || typeof ssmlStr !== 'string') return '';
-    try {
-      const d = new DOMParser().parseFromString(ssmlStr, 'application/xml');
-      if (d.querySelector('parsererror')) throw new Error('parse');
-      return (d.documentElement.textContent || '').replace(/\s+/g, ' ').trim();
-    } catch {
-      return String(ssmlStr).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-    }
-  }
-
-  /** Сегменты с mark → view.tts.setMark для подсветки (смысловые единицы из foliate). */
-  function parseTtsSsmlSegments(ssmlStr) {
-    if (!ssmlStr || typeof ssmlStr !== 'string') return [];
-    const d = new DOMParser().parseFromString(ssmlStr, 'application/xml');
-    if (d.querySelector('parsererror')) {
-      const plain = ssmlToPlain(ssmlStr);
-      return plain ? [{ mark: null, text: plain }] : [];
-    }
-    const root = d.documentElement;
-    if (!root) return [];
-    const parts = [];
-    let buf = '';
-    function markName(el) {
-      return el.getAttribute('name') || el.getAttributeNS('http://www.w3.org/2001/10/synthesis', 'name') || '';
-    }
-    function walk(node) {
-      for (const child of node.childNodes) {
-        if (child.nodeType === 3) buf += child.textContent;
-        else if (child.nodeType === 1) {
-          if (child.localName === 'mark') {
-            const name = markName(child);
-            const t = buf.replace(/\s+/g, ' ').trim();
-            buf = '';
-            if (t) parts.push({ mark: name || null, text: t });
-          } else walk(child);
-        }
-      }
-    }
-    walk(root);
-    const tail = buf.replace(/\s+/g, ' ').trim();
-    if (tail) parts.push({ mark: null, text: tail });
-    if (!parts.length) {
-      const plain = ssmlToPlain(ssmlStr);
-      if (plain) return [{ mark: null, text: plain }];
-    }
-    return parts;
-  }
-
-  function getReaderTtsLang() {
-    const c = view?.renderer?.getContents?.()?.[0];
-    const fromDoc = c?.doc?.documentElement?.lang;
-    const fromMeta = view?.language?.canonical;
-    const raw = (fromDoc || fromMeta || (rLocale() === 'en' ? 'en' : 'ru')).trim();
-    if (!raw) return rLocale() === 'en' ? 'en-US' : 'ru-RU';
-    if (raw.length === 2) return raw === 'en' ? 'en-US' : raw === 'ru' ? 'ru-RU' : raw;
-    return raw;
-  }
-
-  function populateTtsVoiceList() {
-    const sel = $('rs-tts-voice');
-    if (!sel || !window.speechSynthesis) return;
-    const voices = speechSynthesis.getVoices().slice();
-    const pref = getReaderTtsLang().toLowerCase().split(/[-_]/)[0] || '';
-    voices.sort((a, b) => {
-      const la = (a.lang || '').toLowerCase();
-      const lb = (b.lang || '').toLowerCase();
-      const as = la.startsWith(pref) ? 0 : 1;
-      const bs = lb.startsWith(pref) ? 0 : 1;
-      if (as !== bs) return as - bs;
-      if (a.localService !== b.localService) return a.localService ? -1 : 1;
-      return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
-    });
-    const keep = S.ttsVoice || '';
-    sel.innerHTML = '';
-    const o0 = document.createElement('option');
-    o0.value = '';
-    o0.textContent = rt('reader.ttsVoiceDefault');
-    sel.appendChild(o0);
-    for (const v of voices) {
-      const o = document.createElement('option');
-      o.value = v.voiceURI;
-      o.textContent = `${v.name} (${v.lang || ''})`;
-      sel.appendChild(o);
-    }
-    if (keep && [...sel.options].some((x) => x.value === keep)) sel.value = keep;
-    else sel.value = '';
-  }
-
-  const TTS_RATE_MIN = 0.5;
-  const TTS_RATE_MAX = 2;
-  const TTS_RATE_STEP = 0.1;
-
-  function clampTtsRate(value) {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return 1;
-    return Math.min(TTS_RATE_MAX, Math.max(TTS_RATE_MIN, Math.round(n * 100) / 100));
-  }
-
-  function updateTtsDockRateUi() {
-    const rate = clampTtsRate(S.ttsRate);
-    const label = $('tts-dock-rate');
-    if (label) label.textContent = `${rate.toFixed(2)}×`;
-    const slower = $('btn-tts-dock-slower');
-    const faster = $('btn-tts-dock-faster');
-    if (slower) slower.disabled = rate <= TTS_RATE_MIN + 1e-9;
-    if (faster) faster.disabled = rate >= TTS_RATE_MAX - 1e-9;
-  }
-
-  function setTtsRate(next, opts = {}) {
-    const rate = clampTtsRate(next);
-    S.ttsRate = rate;
-    if (!opts.fromSlider) {
-      const ttsR = $('rs-tts-rate');
-      const ttsRV = $('rs-tts-rate-val');
-      if (ttsR) ttsR.value = String(rate);
-      if (ttsRV) ttsRV.textContent = rate.toFixed(2);
-    } else {
-      const ttsRV = $('rs-tts-rate-val');
-      if (ttsRV) ttsRV.textContent = rate.toFixed(2);
-    }
-    updateTtsDockRateUi();
-    if (opts.persist !== false) saveSettings();
-  }
-
-  function applyTtsUtteranceSettings(u) {
-    u.rate = clampTtsRate(S.ttsRate);
-    const uri = S.ttsVoice && String(S.ttsVoice).trim();
-    if (uri && window.speechSynthesis) {
-      const v = speechSynthesis.getVoices().find((x) => x.voiceURI === uri);
-      if (v) u.voice = v;
-    }
-  }
-
-  function ensureTtsVoices() {
-    return new Promise((resolve) => {
-      try {
-        if (!window.speechSynthesis) {
-          resolve();
-          return;
-        }
-        if (speechSynthesis.getVoices().length) {
-          resolve();
-          return;
-        }
-        speechSynthesis.addEventListener('voiceschanged', () => resolve(), { once: true });
-        setTimeout(resolve, 400);
-      } catch {
-        resolve();
-      }
-    });
-  }
-
-  const TTS_PATH_PLAY = 'M8 5v14l11-7z';
-  const TTS_PATH_PAUSE = 'M6 5h4v14H6zM14 5h4v14h-4z';
-
-  /** Одна иконка в кнопке: только смена path (плей ↔ пауза). */
-  function syncTtsMainIcon(host, playing) {
-    if (!host) return;
-    const path = host.querySelector('.tts-main-path');
-    if (!path) return;
-    path.setAttribute('d', playing ? TTS_PATH_PAUSE : TTS_PATH_PLAY);
-  }
-
-  function updateTtsButtons() {
-    const playing = ttsChainActive && !ttsPausedByUser;
-    const mainLabel = playing ? rt('reader.ttsPause') : rt('reader.tts');
-    const mainTitle = playing ? rt('reader.ttsPause') : rt('reader.ttsPlay');
-    if (btnTts) {
-      btnTts.classList.toggle('is-active', playing);
-      btnTts.title = mainTitle;
-      btnTts.setAttribute('aria-label', mainLabel);
-      syncTtsMainIcon(btnTts, playing);
-    }
-    if (btnTtsDock) {
-      btnTtsDock.classList.toggle('is-active', playing);
-      btnTtsDock.title = mainTitle;
-      btnTtsDock.setAttribute('aria-label', mainLabel);
-      syncTtsMainIcon(btnTtsDock, playing);
-    }
-    document.querySelectorAll('.js-tts-prev, .js-tts-next').forEach((b) => {
-      b.disabled = !ttsChainActive;
-    });
-    [btnTtsStop, btnTtsDockStop].forEach((btn) => {
-      if (!btn) return;
-      btn.hidden = !ttsChainActive;
-    });
-    if (ttsDockEl) {
-      ttsDockEl.classList.toggle('is-visible', ttsChainActive);
-      ttsDockEl.setAttribute('aria-hidden', ttsChainActive ? 'false' : 'true');
-    }
-    updateTtsDockRateUi();
-    document.body.classList.toggle('reader-tts-active', ttsChainActive);
-    if (!ttsChainActive) pauseTtsKeepalive();
-    syncTtsMediaSessionPlayback();
-    if (ttsChainActive) syncTtsMediaMetadata();
-  }
-
-  function stopReaderTts() {
-    ttsSpeakToken++;
-    clearTtsBackgroundMaintain();
-    ttsKickSpeak = null;
-    ttsNav.skipBack = () => {};
-    ttsNav.skipForward = () => {};
-    if (ttsStopLongPressTimer != null) {
-      clearTimeout(ttsStopLongPressTimer);
-      ttsStopLongPressTimer = null;
-    }
-    ttsStopLongPressPt = null;
-    try {
-      window.speechSynthesis?.cancel();
-    } catch { /* */ }
-    try { view?.tts?.clearHighlight?.(); } catch { /* */ }
-    try { view?.deselect?.(); } catch { /* */ }
-    hideSelMenu();
-    activeSel = null;
-    ttsChainActive = false;
-    ttsPausedByUser = false;
-    ttsAdvancingSection = false;
-    releaseReaderWakeLock();
-    updateTtsButtons();
-  }
-
-  /**
-   * После окончания текста в секции — перелистнуть и продолжить озвучку.
-   * @returns {Promise<boolean>} true если цепочка продолжена
-   */
-  async function advanceTtsToNextSection(depth) {
-    if (!ttsChainActive || !view || depth > 14) return false;
-    const prevCfi = view.lastLocation?.cfi;
-    ttsAdvancingSection = true;
-    try {
-      await view.goRight();
-    } catch (e) {
-      console.warn(e);
-      ttsAdvancingSection = false;
-      return false;
-    }
-    await new Promise((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        clearTimeout(tid);
-        view.removeEventListener('load', onLoad);
-        resolve();
-      };
-      const onLoad = () => finish();
-      const tid = setTimeout(finish, 650);
-      view.addEventListener('load', onLoad, { once: true });
-    });
-    ttsAdvancingSection = false;
-    if (!ttsChainActive) return false;
-    if (!view.lastLocation || view.lastLocation.cfi === prevCfi) return false;
-    if (!view.renderer?.getContents?.()?.[0]?.doc?.body) return false;
-    try {
-      await view.initTTS('sentence', true);
-    } catch (e) {
-      console.warn(e);
-      return advanceTtsToNextSection(depth + 1);
-    }
-    if (!view.tts) return false;
-    let first;
-    try {
-      first = view.tts.start();
-    } catch (e) {
-      console.warn(e);
-      first = null;
-    }
-    if (!first) {
-      return advanceTtsToNextSection(depth + 1);
-    }
-    runTtsUtteranceChain(first);
-    return true;
-  }
-
-  function runTtsUtteranceChain(initialSsml) {
-    let parts = [];
-    let idx = 0;
-    let useInitialSsml = true;
-
-    function finishTtsChain() {
-      ttsChainActive = false;
-      ttsPausedByUser = false;
-      ttsKickSpeak = null;
-      clearTtsBackgroundMaintain();
-      ttsNav.skipBack = () => {};
-      ttsNav.skipForward = () => {};
-      releaseReaderWakeLock();
-      updateTtsButtons();
-    }
-
-    function ensureParts() {
-      if (idx < parts.length) return true;
-      const ssml = useInitialSsml ? (useInitialSsml = false, initialSsml) : view.tts.next();
-      if (!ssml) return false;
-      parts = parseTtsSsmlSegments(ssml);
-      idx = 0;
-      return true;
-    }
-
-    function speakStep() {
-      if (!ttsChainActive || !view?.tts) {
-        finishTtsChain();
-        return;
-      }
-      if (!ensureParts()) {
-        if (ttsChainActive) {
-          void advanceTtsToNextSection(0).then((cont) => {
-            if (!cont) finishTtsChain();
-          });
-        } else finishTtsChain();
-        return;
-      }
-      while (idx < parts.length && !(parts[idx].text && String(parts[idx].text).trim())) idx++;
-      if (idx >= parts.length) {
-        requestAnimationFrame(speakStep);
-        return;
-      }
-      const seg = parts[idx];
-      if (seg.mark != null && String(seg.mark).length) {
-        try {
-          view.tts.setMark(String(seg.mark));
-        } catch (e) {
-          console.warn(e);
-        }
-      }
-      const u = new SpeechSynthesisUtterance(seg.text);
-      u.lang = getReaderTtsLang();
-      applyTtsUtteranceSettings(u);
-      const token = ttsSpeakToken;
-      u.onstart = () => {
-        lastTtsSpeechAt = Date.now();
+  /* ===== TTS (read aloud): player, highlight, settings — public/reader-shared/reader-tts.js ===== */
+  readerTts = createReaderTts({
+    getView: () => view,
+    getSettings: () => S,
+    saveSettings,
+    toast,
+    locale: rLocale,
+    getChapterLabel: () => ftChapter?.textContent || '',
+    getSelectionRange: () => activeSel?.range || null,
+    onReadFromSelection: () => {
+      hideSelMenu();
+      try { activeSel?.doc?.getSelection?.()?.removeAllRanges?.(); } catch { /* */ }
+      activeSel = null;
+    },
+    onBeforeStart: () => {
+      try { view?.deselect?.(); } catch { /* */ }
+      hideSelMenu();
+      activeSel = null;
+      initReaderMediaSessionHandlers();
+      setChromeVisible(true);
+    },
+    onSpeechStart: () => { void startTtsKeepalivePlayback(); },
+    /* Пока страница скрыта, Chrome/Android отменяет фразу без произнесения и всё равно шлёт
+       onend/onerror — не продвигаемся; resumeTtsAfterHidden() повторит фразу при возврате. */
+    canAdvance: () => document.visibilityState !== 'hidden',
+    onStateChange: ({ active, paused }) => {
+      ttsChainActive = active;
+      ttsPausedByUser = paused;
+      if (active && !paused) {
+        void acquireReaderWakeLock();
         void startTtsKeepalivePlayback();
-      };
-      /**
-       * Пока страница скрыта, Chrome/Android отменяет фразу без реального произнесения, и
-       * onend/onerror всё равно срабатывают — если в этот момент продвинуть idx, цепочка
-       * молча проматывается вперёд (иногда на главы) пока не вернётся видимость. Поэтому в
-       * скрытом состоянии просто выходим без advance; resumeTtsAfterHidden() повторит этот
-       * же сегмент, когда страница снова станет видимой.
-       */
-      u.onend = () => {
-        lastTtsSpeechAt = Date.now();
-        if (!ttsChainActive || token !== ttsSpeakToken) return;
-        if (document.visibilityState === 'hidden') return;
-        idx++;
-        speakStep();
-      };
-      u.onerror = () => {
-        lastTtsSpeechAt = Date.now();
-        if (!ttsChainActive || token !== ttsSpeakToken) return;
-        if (document.visibilityState === 'hidden') return;
-        idx++;
-        speakStep();
-      };
-      try {
-        speechSynthesis.speak(u);
-      } catch (e) {
-        console.warn(e);
-        idx++;
-        speakStep();
-      }
-      updateTtsButtons();
-    }
-
-    ttsNav.skipForward = () => {
-      if (!ttsChainActive) return;
-      ttsSpeakToken++;
-      try {
-        speechSynthesis.cancel();
-      } catch { /* */ }
-      idx++;
-      requestAnimationFrame(speakStep);
-    };
-
-    ttsNav.skipBack = () => {
-      if (!ttsChainActive) return;
-      ttsSpeakToken++;
-      try {
-        speechSynthesis.cancel();
-      } catch { /* */ }
-      if (idx > 0) {
-        idx--;
+        if (document.visibilityState === 'hidden') maintainTtsInBackground();
       } else {
-        let prevSsml;
-        try {
-          prevSsml = view.tts.prev(true);
-        } catch (e) {
-          console.warn(e);
-          prevSsml = null;
-        }
-        if (!prevSsml) {
-          toast(rt('reader.ttsNoPrev'));
-          requestAnimationFrame(speakStep);
-          return;
-        }
-        parts = parseTtsSsmlSegments(prevSsml);
-        idx = Math.max(0, parts.length - 1);
-        while (idx > 0 && !(parts[idx].text && String(parts[idx].text).trim())) idx--;
+        clearTtsBackgroundMaintain();
+        pauseTtsKeepalive();
+        releaseReaderWakeLock();
       }
-      requestAnimationFrame(speakStep);
-    };
-
-    ttsKickSpeak = speakStep;
-    speakStep();
-  }
-
-  async function startReaderTts() {
-    if (!view || view.isFixedLayout) {
-      toast(rt('reader.ttsFixedLayout'));
-      return;
-    }
-    if (!window.speechSynthesis) {
-      toast(rt('reader.ttsUnavailable'));
-      return;
-    }
-    const contents = view.renderer.getContents();
-    if (!contents?.length || !contents[0]?.doc?.body) {
-      toast(rt('reader.ttsNoText'));
-      return;
-    }
-    stopReaderTts();
-    await ensureTtsVoices();
-    try {
-      await view.initTTS('sentence', true);
-    } catch (e) {
-      console.warn(e);
-      toast(rt('reader.ttsNoText'));
-      return;
-    }
-    if (!view.tts) {
-      toast(rt('reader.ttsNoText'));
-      return;
-    }
-    let firstSsml;
-    try {
-      const loc = view.lastLocation;
-      if (loc?.range?.cloneRange) {
-        firstSsml = view.tts.from(loc.range.cloneRange());
-      } else {
-        firstSsml = view.tts.start();
-      }
-    } catch (e) {
-      console.warn(e);
-      try {
-        firstSsml = view.tts.start();
-      } catch (e2) {
-        console.warn(e2);
-        firstSsml = null;
-      }
-    }
-    if (!firstSsml) {
-      toast(rt('reader.ttsNoText'));
-      return;
-    }
-    initReaderMediaSessionHandlers();
-    ttsChainActive = true;
-    ttsPausedByUser = false;
-    lastTtsSpeechAt = Date.now();
-    try { view?.deselect?.(); } catch { /* */ }
-    hideSelMenu();
-    activeSel = null;
-    void acquireReaderWakeLock();
-    setChromeVisible(true);
-    updateTtsButtons();
-    void startTtsKeepalivePlayback();
-    if (document.visibilityState === 'hidden') maintainTtsInBackground();
-    runTtsUtteranceChain(firstSsml);
-  }
-
-  function toggleReaderTts() {
-    if (!ttsChainActive) {
-      void startReaderTts();
-      return;
-    }
-    if (ttsPausedByUser) {
-      try {
-        speechSynthesis.resume();
-      } catch { /* */ }
-      ttsPausedByUser = false;
-      void acquireReaderWakeLock();
-    } else {
-      try {
-        speechSynthesis.pause();
-      } catch { /* */ }
-      ttsPausedByUser = true;
-      releaseReaderWakeLock();
-    }
-    syncTtsKeepaliveWithSpeech();
-    updateTtsButtons();
-  }
-
-  function clearTtsStopLongPressTimer() {
-    if (ttsStopLongPressTimer != null) {
-      clearTimeout(ttsStopLongPressTimer);
-      ttsStopLongPressTimer = null;
-    }
-    ttsStopLongPressPt = null;
-  }
-
-  function wireTtsPrimaryControl(el) {
-    if (!el) return;
-    el.addEventListener('pointerdown', (e) => {
-      if (!ttsChainActive || e.shiftKey) return;
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      clearTtsStopLongPressTimer();
-      ttsStopLongPressPt = { x: e.clientX, y: e.clientY };
-      ttsStopLongPressTimer = window.setTimeout(() => {
-        ttsStopLongPressTimer = null;
-        ttsStopLongPressPt = null;
-        ttsStopLongPressConsumeClick = true;
-        stopReaderTts();
-        scheduleChromeHide();
-      }, TTS_STOP_LONG_PRESS_MS);
-    });
-    el.addEventListener('pointermove', (e) => {
-      if (ttsStopLongPressPt == null || ttsStopLongPressTimer == null) return;
-      const dx = e.clientX - ttsStopLongPressPt.x;
-      const dy = e.clientY - ttsStopLongPressPt.y;
-      if (dx * dx + dy * dy > TTS_STOP_LONG_PRESS_SLOP_PX * TTS_STOP_LONG_PRESS_SLOP_PX) {
-        clearTtsStopLongPressTimer();
-      }
-    });
-    el.addEventListener('pointerup', () => clearTtsStopLongPressTimer());
-    el.addEventListener('pointercancel', () => clearTtsStopLongPressTimer());
-    el.addEventListener('pointerleave', (e) => {
-      if (e.pointerType === 'mouse') clearTtsStopLongPressTimer();
-    });
-    el.addEventListener('contextmenu', (e) => {
-      if (ttsChainActive) e.preventDefault();
-    });
-    el.addEventListener('click', (ev) => {
-      if (ttsStopLongPressConsumeClick) {
-        ttsStopLongPressConsumeClick = false;
-        ev.preventDefault();
-        return;
-      }
-      if (ev.shiftKey && ttsChainActive) {
-        stopReaderTts();
-        scheduleChromeHide();
-        return;
-      }
-      toggleReaderTts();
-      scheduleChromeHide();
-    });
-  }
-  wireTtsPrimaryControl(btnTts);
-  wireTtsPrimaryControl(btnTtsDock);
-
-  document.querySelectorAll('.js-tts-stop').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      stopReaderTts();
-      scheduleChromeHide();
-    });
+      syncTtsMediaSessionPlayback();
+      if (active) syncTtsMediaMetadata();
+    },
+    openSettings: () => openPanel('settings'),
+    afterControl: () => scheduleChromeHide(),
   });
 
-  document.querySelectorAll('.js-tts-prev').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      ttsNav.skipBack();
-      scheduleChromeHide();
-    });
-  });
-  document.querySelectorAll('.js-tts-next').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      ttsNav.skipForward();
-      scheduleChromeHide();
-    });
-  });
-
-  const btnTtsDockSlower = $('btn-tts-dock-slower');
-  const btnTtsDockFaster = $('btn-tts-dock-faster');
-  if (btnTtsDockSlower) {
-    btnTtsDockSlower.addEventListener('click', () => {
-      setTtsRate(clampTtsRate(S.ttsRate) - TTS_RATE_STEP);
-    });
-  }
-  if (btnTtsDockFaster) {
-    btnTtsDockFaster.addEventListener('click', () => {
-      setTtsRate(clampTtsRate(S.ttsRate) + TTS_RATE_STEP);
-    });
-  }
-  updateTtsDockRateUi();
+  function startReaderTts() { return readerTts.start(); }
+  function stopReaderTts() { readerTts?.stop(); }
+  function toggleReaderTts() { readerTts.toggle(); }
 
   /* ===== Toolbar buttons ===== */
   const btnFullscreen = $('btn-fullscreen');
@@ -3372,6 +2779,13 @@ import {
     if (k === ']') {
       e.preventDefault();
       ttsNav.skipForward();
+      scheduleChromeHide();
+      return;
+    }
+    if (k === '{' || k === '}') {
+      e.preventDefault();
+      if (k === '{') readerTts?.prevParagraph();
+      else readerTts?.nextParagraph();
       scheduleChromeHide();
       return;
     }
@@ -4101,7 +3515,7 @@ import {
     applyBookStyles();
 
     view.addEventListener('load', ({ detail: { doc, index } }) => {
-      if (!ttsAdvancingSection) stopReaderTts();
+      if (!readerTts?.isAdvancingSection()) stopReaderTts();
       if (doc && index != null) docIndexMap.set(doc, index);
       void applySectionStyles(doc);
       wireDoc(doc);
