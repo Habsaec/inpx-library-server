@@ -1,94 +1,78 @@
+<h1 align="center">INPX Library Server</h1>
+
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="INPX Library Server — self-hosted ebook library: search, browser reading, OPDS, send to device">
+  Домашняя библиотека электронных книг для коллекций INPX / FB2:<br>
+  каталог и поиск, чтение в браузере, OPDS, отправка на ридер и <a href="https://github.com/Habsaec/inpx-book-reader">Android-приложение</a>.
 </p>
 
 <p align="center">
   <a href="https://github.com/Habsaec/inpx-library-server/releases/latest"><img src="https://img.shields.io/github/v/release/Habsaec/inpx-library-server?style=flat-square&labelColor=1e1a16&color=a1671b&label=release" alt="Latest release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-d4ac5c?style=flat-square&labelColor=1e1a16" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D20-9a8e7e?style=flat-square&labelColor=1e1a16" alt="Node.js 20+">
   <a href="https://hub.docker.com/r/habsaec/inpx-library-server"><img src="https://img.shields.io/badge/docker-amd64%20%7C%20arm64-7a5a28?style=flat-square&labelColor=1e1a16" alt="Docker amd64 / arm64"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D20-9a8e7e?style=flat-square&labelColor=1e1a16" alt="Node.js 20+">
   <img src="https://img.shields.io/badge/OPDS-1.x%20%7C%202-3d4a5c?style=flat-square&labelColor=1e1a16" alt="OPDS 1.x / 2">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-d4ac5c?style=flat-square&labelColor=1e1a16" alt="MIT License"></a>
 </p>
 
 <p align="center">
-  <a href="#быстрый-старт">Быстрый старт</a> ·
+  <img src="./assets/readme/hero.webp" width="100%" alt="Главная страница библиотеки в браузере и Android-приложение">
+</p>
+
+<p align="center">
+  <a href="#установка">Установка</a> ·
+  <a href="#первые-шаги">Первые шаги</a> ·
   <a href="#возможности">Возможности</a> ·
   <a href="#android-приложение">Android</a> ·
-  <a href="#opds-и-koreader">OPDS</a> ·
+  <a href="#opds-и-koreader">OPDS и KOReader</a> ·
   <a href="#настройка">Настройка</a> ·
   <a href="CHANGELOG.md">Изменения</a>
 </p>
 
-**INPX Library Server** — self-hosted библиотека электронных книг для коллекций INPX/FB2 (Флибуста, Либрусек и любые свои папки). Каталог с полнотекстовым поиском, чтение в браузере, OPDS для KOReader, отправка на Kindle/Kobo и в Telegram, синхронизация с [Android-приложением](https://github.com/Habsaec/inpx-book-reader). Работает на NAS, Raspberry Pi и обычном ПК и рассчитан на библиотеки в сотни тысяч книг.
+Укажите папку с архивами Флибусты, Либрусека или своими FB2 / EPUB — сервер построит каталог с авторами, сериями, жанрами и полнотекстовым поиском. Читать можно прямо в браузере или в Android-приложении: позиция, закладки и заметки синхронизируются. Работает на NAS, Raspberry Pi и обычном ПК, рассчитан на библиотеки в сотни тысяч книг.
 
----
+## Как это выглядит
 
-<p align="center">
-  <img src="./assets/readme/features.svg" width="100%" alt="Capabilities: Search, Reader, Delivery, Clients">
-</p>
-
-## Возможности
-
-### Каталог и поиск
-
-- Полнотекстовый поиск (SQLite FTS5) со стеммингом, подсказками при вводе, исправлением опечаток и «Возможно, вы искали»
-- Авторы, серии, жанры, языки; фильтры по жанру (И / ИЛИ), языку, формату, году, рейтингу, наличию серии
-- Страница автора в стиле Флибусты: серии, межавторские серии, книги вне серий, портрет и биография
-- Новинки по дате INPX, персональные рекомендации, похожие книги
-- Обложки или компактный список; выбор нескольких книг для скачивания и отправки
-
-### Чтение
-
-- Читалка в браузере для FB2 и EPUB: темы, шрифты, закладки, заметки с цветами, озвучка (TTS)
-- Позиция чтения синхронизируется между браузером, Android-приложением и устройствами — без «прыжков»: при конфликте читалка спрашивает, где продолжить
-- Экспорт заметок в Markdown / HTML или на почту ридера
-
-### Личная библиотека
-
-- «Продолжить чтение», «Хочу прочитать», «Прочитано», «Мои оценки»
-- Избранные авторы и серии, раздел «Новое у любимых»
-- Обычные и **умные полки** (сохранённый фильтр каталога), закрепление полок на главной
-- Прогресс серии («Прочитано 3 из 8 · Читать следующую»), отметка «прочитано до тома N»
-- Цель на год и статистика чтения, импорт из Goodreads / LiveLib (CSV)
-- Скрытие прочитанного, свой набор языков, формат скачивания по умолчанию
-
-### Выдача книг
-
-- FB2, FB2.ZIP, EPUB, MOBI, AZW3; пакетный ZIP
-- Конвертация через [fb2cng](https://github.com/rupor-github/fb2cng)
-- Отправка на e-mail ридера (Kindle, PocketBook, Kobo) и в Telegram; Telegram-бот с поиском и еженедельной сводкой
-- OPDS 1.x / 2 с прогрессом чтения, синхронизация позиции с KOReader (KOSync)
-
-### Источники
-
-- INPX-коллекции (ZIP / 7z, в т.ч. PPMd) и обычные папки с FB2 / EPUB / MOBI / AZW3
-- Несколько источников одновременно, автоматическая чистка дубликатов
-- Слежение за папками: новые файлы индексируются сами
-- Sidecar Флибусты / FLibrary: обложки, иллюстрации (JPEG XL, WebP), рецензии, биографии, портреты авторов
-- Пересоздание индекса и удаление источника не теряют закладки, позиции и полки пользователей
-
-### Администрирование
-
-- Источники и индексация с журналом, пользователи и права, анонимный доступ
-- SMTP, Telegram-бот, вход через OIDC / SSO (Authentik и совместимые)
-- Оформление: логотип, шапка, фон, палитра с проверкой контрастности, 3D-обложки
-- Мониторинг, журналы, бэкап базы и пользователей, обновление из ZIP
-
-Интерфейс **RU · EN**, светлая, тёмная и автоматическая тема. Кластерный режим и health-checks (`/health`, `/ready`) для продакшена.
-
----
+<table>
+  <tr>
+    <td width="50%"><img src="./assets/readme/catalog.webp" alt="Каталог: обложки, фильтры и сортировка"></td>
+    <td width="50%"><img src="./assets/readme/book.webp" alt="Страница книги: серия, оценка, чтение и отправка"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Каталог</b> — обложки или список, фильтры, сортировка</td>
+    <td align="center"><b>Книга</b> — серия, оценка, скачивание, отправка на ридер</td>
+  </tr>
+  <tr>
+    <td><img src="./assets/readme/reader.webp" alt="Читалка в браузере"></td>
+    <td><img src="./assets/readme/series.webp" alt="Серия: прогресс и следующий том"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Читалка</b> — FB2 / EPUB в браузере, темы, закладки, озвучка</td>
+    <td align="center"><b>Серия</b> — «Прочитано N из M» и следующий том</td>
+  </tr>
+</table>
 
 <p align="center">
-  <img src="./assets/readme/architecture.svg" width="100%" alt="Architecture: sources to SQLite index to Web, OPDS, Android">
+  <img src="./assets/readme/mobile.webp" width="85%" alt="Веб-интерфейс на телефоне: главная, книга, читалка">
 </p>
 
-Метаданные книг живут в одном SQLite-индексе и отдаются через `/api/*` — один контракт для веба, OPDS, Telegram и Android-приложения.
+<details>
+<summary><b>Ещё скриншоты</b>: поиск, профиль, полки, тёмная тема, админка</summary>
+<br>
 
----
+| | |
+|---|---|
+| ![Поиск с подсказками](./assets/readme/search.webp) | ![Профиль: цель на год и статистика](./assets/readme/profile.webp) |
+| Подсказки поиска: книги, авторы, серии | Профиль: цель на год, статистика, коллекция |
+| ![Полки и умные полки](./assets/readme/shelves.webp) | ![Тёмная тема](./assets/readme/home-dark.webp) |
+| Полки и умные полки | Тёмная тема |
+| ![Админка: дашборд](./assets/readme/admin.webp) | ![Админка: источники книг](./assets/readme/admin-sources.webp) |
+| Админка: состояние сервера и память базы | Админка: источники книг и слежение за папками |
 
-## Быстрый старт
+На скриншотах — вымышленная демо-библиотека.
+</details>
 
-Нужна папка с книгами: `.inpx` + архивы `.zip` / `.7z` или каталог с FB2 / EPUB.
+## Установка
+
+Нужна папка с книгами: INPX-коллекция (`.inpx` + архивы `.zip` / `.7z`) или обычный каталог с FB2 / EPUB / MOBI / AZW3.
 
 ### Docker
 
@@ -104,12 +88,16 @@ docker run -d \
   habsaec/inpx-library-server:latest
 ```
 
-Откройте http://localhost:3000 → войдите как **admin / admin** и сразу смените пароль.
+Откройте http://localhost:3000 и войдите как **admin / admin**.
 
-Дополнительные источники монтируйте в `/sources/*` (`-v /path/to/epub:/sources/epub:ro`) и добавляйте в админке: **Источники → Добавить → «Папка»**.
+- `inpx-data` — база, настройки и кэш. Её и нужно бэкапить.
+- `inpx-app` — код приложения. При запуске нового образа код в томе обновляется сам.
+- Другие папки с книгами монтируйте в `/sources/…` (`-v /path/to/epub:/sources/epub:ro`) и добавляйте в админке как источник.
+
+Обновление: `docker pull habsaec/inpx-library-server:latest`, затем пересоздайте контейнер той же командой.
 
 <details>
-<summary><strong>Docker Compose</strong></summary>
+<summary><b>Docker Compose</b></summary>
 
 ```yaml
 services:
@@ -124,7 +112,6 @@ services:
       - app-data:/app/data
       - /path/to/library:/library:ro
     environment:
-      - PORT=3000
       - LIBRARY_ROOT=/library
 
 volumes:
@@ -136,191 +123,171 @@ volumes:
 docker compose up -d
 ```
 
-`docker compose down -v` удалит данные в именованных томах.
+`docker compose down -v` удаляет и тома с данными — не используйте `-v`, если библиотека нужна.
 </details>
 
 <details>
-<summary><strong>Synology NAS (Container Manager)</strong></summary>
+<summary><b>Synology NAS (Container Manager)</b></summary>
 
-В репозитории есть готовый [`docker-compose.yml`](docker-compose.yml) под Synology: порт **3000**, данные в `/volume1/docker/inpx-library-data`.
+В репозитории есть готовый [`docker-compose.yml`](docker-compose.yml) для Synology: порт **3000**, данные — в `/volume1/docker/inpx-library-data`.
 
-1. Создайте папку данных: `mkdir -p /volume1/docker/inpx-library-data`
-2. В compose раскомментируйте том с книгами, например `- /volume1/books/library:/library:ro`
-3. **Container Manager → Проект → Создать**, укажите папку с `docker-compose.yml` → **Применить**
-4. Откройте `http://NAS-IP:3000` → **admin / admin**
+1. Создайте папку данных: `mkdir -p /volume1/docker/inpx-library-data`.
+2. В `docker-compose.yml` раскомментируйте строку с томом книг и укажите свой путь, например `- /volume1/books/library:/library:ro`.
+3. **Container Manager → Проект → Создать**, выберите папку с `docker-compose.yml` → **Применить**.
+4. Откройте `http://<IP-NAS>:3000` → **admin / admin**.
 
-Образ собран для **amd64** и **arm64**. Healthcheck идёт через `curl`: на слабых NAS проверка через Node не укладывается в таймаут.
-</details>
-
-<details>
-<summary><strong>Сборка образа из исходников</strong></summary>
-
-```bash
-docker build -t inpx-library .
-docker run -d --name inpx-library -p 3000:3000 \
-  -v inpx-data:/app/data \
-  -v /path/to/library:/library:ro \
-  -e LIBRARY_ROOT=/library \
-  inpx-library
-```
+Образ собран для **amd64** и **arm64**.
 </details>
 
 ### Windows
 
-1. Скачайте [последний релиз](https://github.com/Habsaec/inpx-library-server/releases/latest) и распакуйте (или `git clone https://github.com/Habsaec/inpx-library-server.git`).
-2. Запустите **`install.cmd`** — он скачает портативный Node.js 24 и установит зависимости вместе с конвертером.
-3. При желании создайте `.env` из [`.env.example`](.env.example) и укажите путь к книгам: `LIBRARY_ROOT=D:\Books`.
-4. Запустите **`start-server.cmd`** и откройте http://localhost:3000.
+1. Скачайте `inpx-library-server-<версия>.zip` из [последнего релиза](https://github.com/Habsaec/inpx-library-server/releases/latest) и распакуйте, например, в `D:\inpx-library-server`.
+2. Запустите **`install.cmd`**. Он скачает портативный Node.js 24 в папку `runtime`, установит зависимости и конвертер fb2cng. Системный Node.js не нужен.
+3. Запустите **`start-server.cmd`** и откройте http://localhost:3000.
 
-Остановка — `stop-server.cmd`, перезапуск — `restart-server.cmd`.
+Остановка — `stop-server.cmd`, перезапуск — `restart-server.cmd`. Путь к книгам удобнее всего указать в админке при добавлении источника.
 
 ### Linux (Debian / Ubuntu / Raspberry Pi OS / OpenMediaVault)
 
 ```bash
 git clone https://github.com/Habsaec/inpx-library-server.git
 cd inpx-library-server
-chmod +x install.sh start.sh stop.sh restart.sh
-sudo ./install.sh    # Node.js, зависимости; предложит службу systemd
+sudo ./install.sh    # Node.js 20, зависимости, конвертер; предложит службу systemd
 ./start.sh
 ```
 
+Если при установке вы включили службу:
+
 ```bash
-sudo systemctl status inpx-library     # если служба установлена
+sudo systemctl status inpx-library
 sudo journalctl -u inpx-library -f
 ```
 
 ### macOS
 
+Нужны Xcode Command Line Tools и Node.js 20+ (Homebrew или установщик с nodejs.org).
+
 ```bash
-chmod +x install.sh start.sh
-sudo ./install.sh    # нужны Xcode Command Line Tools и Node.js 20+
+git clone https://github.com/Habsaec/inpx-library-server.git
+cd inpx-library-server
+sudo ./install.sh
 ./start.sh
 ```
 
----
-
 ## Первые шаги
 
-1. Войдите как **admin / admin** и смените пароль в профиле.
-2. **Админка → Источники → Добавить**: папка с `.inpx` и архивами или каталог с книгами.
-3. Дождитесь индексации — от минут до ~45 минут на полной Флибусте. Ход виден в админке.
-4. Создайте пользователей или включите **Админка → Пользователи → «Анонимный доступ»**.
-5. Для отправки на ридер настройте **Админка → Почта**, для Telegram — **Админка → Telegram-бот**.
-6. Бэкап: **Админка → Резервные копии и обновление → «Скачать бэкап БД»** или файл `data/library.db`.
+1. Войдите как **admin / admin** и сразу смените пароль в профиле.
+2. **Админка → Источники книг → «Добавить источник»**: путь к файлу `.inpx` или к папке с книгами (для Docker — путь внутри контейнера, например `/library`).
+3. Дождитесь индексации. Ход виден в админке; полная Флибуста индексируется около 45 минут.
+4. Создайте пользователей в **Админка → Пользователи** или включите там же «Анонимный доступ».
+5. Для отправки книг на ридер заполните **Админка → Почта**, для Telegram — **Админка → Telegram-бот**.
+6. Резервная копия: **Админка → Резервные копии и обновление → «Скачать бэкап БД»** (или файл `data/library.db`).
 
-**За HTTPS / reverse proxy** (nginx, Caddy, Traefik): `TRUST_PROXY=1` и `SESSION_SECURE_COOKIE=true`.
+За HTTPS / reverse proxy (nginx, Caddy, Traefik) задайте `TRUST_PROXY=1` и `SESSION_SECURE_COOKIE=true`.
 
----
+## Возможности
+
+| | |
+|---|---|
+| **Каталог и поиск** | Полнотекстовый поиск с подсказками и исправлением опечаток · авторы, серии, жанры, языки · фильтры (жанр И/ИЛИ, язык, формат, год, рейтинг) · новинки, рекомендации, похожие книги |
+| **Чтение** | FB2 и EPUB в браузере: темы, шрифты, закладки, заметки с цветами, озвучка · позиция синхронизируется с телефоном без «прыжков» · экспорт заметок в Markdown / HTML |
+| **Личная библиотека** | Читаю · Хочу прочитать · Прочитано · Мои оценки · избранные авторы и серии · «Новое у любимых» · полки и умные полки · цель на год и статистика · импорт из Goodreads / LiveLib |
+| **Выдача** | FB2, FB2.ZIP, EPUB, MOBI, AZW3 и др. через [fb2cng](https://github.com/rupor-github/fb2cng) · пакетный ZIP · отправка на e-mail ридера (Kindle, PocketBook, Kobo) и в Telegram |
+| **Клиенты** | Android-приложение · OPDS 1.x / 2 с прогрессом чтения · синхронизация прогресса KOReader (KOSync) · Telegram-бот с поиском |
+| **Источники** | INPX-коллекции (ZIP / 7z, включая PPMd) и обычные папки · несколько источников сразу · чистка дубликатов · слежение за папками · обложки, иллюстрации (JPEG XL, WebP), рецензии и портреты из sidecar Флибусты |
+| **Админка** | Пользователи и права, анонимный доступ, OIDC / SSO · SMTP и Telegram · оформление (логотип, шапка, фон, палитра) · мониторинг, журнал, бэкап, обновление из ZIP |
+
+Интерфейс на русском и английском, светлая, тёмная и автоматическая тема. Пересоздание индекса и удаление источника не теряют закладки, позиции и полки пользователей.
 
 ## Android-приложение
 
-[**INPX Book Reader**](https://github.com/Habsaec/inpx-book-reader) — читалка для Android, работающая с этим сервером: каталог, офлайн-полка, озвучка, режим для E-Ink и синхронизация позиции, закладок и заметок с веб-читалкой.
+[**INPX Book Reader**](https://github.com/Habsaec/inpx-book-reader) — читалка для Android, работающая с этим сервером: каталог, офлайн-чтение, озвучка, режим E-Ink и общая с веб-читалкой синхронизация.
 
-- APK: [последний релиз](https://github.com/Habsaec/inpx-book-reader/releases/latest) — или QR-код в боковой панели веб-интерфейса.
-- Вход без ввода пароля: в том же окне сервер показывает одноразовый QR-код (10 минут), который сканирует приложение.
-
----
+1. Установите APK из [релизов приложения](https://github.com/Habsaec/inpx-book-reader/releases/latest) — ссылка и QR-код есть в боковой панели веб-интерфейса («Приложение»).
+2. Там же откройте окно входа: сервер покажет одноразовый QR-код (действует 10 минут). Отсканируйте его в приложении — адрес, логин и пароль вводить не придётся.
 
 ## OPDS и KOReader
 
-**OPDS:** `http://<сервер>:3000/opds` (OPDS 2 — `/opds/v2`). Вход — логин и пароль пользователя библиотеки (Basic Auth). Подходит для KOReader, FBReader, Moon+ Reader, Librera. У начатых книг в названии виден прогресс: ◔ ◑ ◕ ⬤. Анонимный OPDS включается в **Админка → Пользователи**.
+**OPDS** — `http://<сервер>:3000/opds` (OPDS 2: `/opds/v2`). Вход — логин и пароль пользователя библиотеки. Подходит для KOReader, FBReader, Moon+ Reader, Librera. У начатых книг в названии виден прогресс: ◔ ◑ ◕ ⬤.
 
-**KOSync (синхронизация прогресса KOReader):**
+**Синхронизация прогресса KOReader:**
 
-1. **Профиль → «KOReader: синхронизация прогресса»**: создайте отдельный пароль для KOReader (пароль аккаунта не используется).
-2. В KOReader: **Облако → Синхронизация прогресса → Свой сервер** → `http://<сервер>:3000/kosync`, логин библиотеки и созданный пароль.
-3. Скачайте книгу через сервер хотя бы раз — так сервер узнаёт её в KOReader.
+1. В профиле, в блоке **«KOReader: синхронизация прогресса»**, создайте отдельный пароль для KOReader (пароль аккаунта не используется).
+2. В KOReader: **Облако → Синхронизация прогресса → Свой сервер**, адрес `http://<сервер>:3000/kosync`, ваш логин и созданный пароль.
+3. Скачайте книгу через OPDS — так сервер узнаёт её в KOReader.
 
----
+## Как устроено
+
+```mermaid
+flowchart LR
+  A["INPX-коллекции<br>и папки с книгами"] --> B["Индекс SQLite<br>FTS5-поиск, обложки"]
+  B --> W["Веб-интерфейс<br>и читалка"]
+  B --> O["OPDS / KOSync"]
+  B --> R["Android-приложение"]
+  B --> T["Telegram-бот<br>и e-mail"]
+```
+
+Метаданные (серии, авторы, жанры) берутся из индекса и отдаются через `/api/*` — один контракт для веба, OPDS, Telegram и Android.
 
 ## Настройка
 
-Все переменные с комментариями — в [`.env.example`](.env.example). Большинство параметров (SMTP, Telegram, OIDC, оформление, память базы, слежение за папками) удобнее менять в админке; переменные окружения задают значения по умолчанию.
+Почти всё настраивается в админке. Переменные окружения задают значения по умолчанию; полный список с комментариями — в [`.env.example`](.env.example) (скопируйте в `.env`).
 
 <details>
-<summary><strong>Основные переменные окружения</strong></summary>
+<summary><b>Основные переменные окружения</b></summary>
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
 | `PORT` | `3000` | Порт сервера |
-| `LIBRARY_ROOT` | `/library` | Папка с книгами (на Windows — свой путь, например `D:\Books`) |
-| `INPX_FILE` | — | Путь к `.inpx` (иначе задаётся в админке) |
-| `SESSION_SECRET` | авто | Секрет cookie (≥16 символов, иначе создаётся `data/.session-secret`) |
+| `LIBRARY_ROOT` | `/library` | Папка с книгами по умолчанию |
 | `SESSION_SECURE_COOKIE` | `false` | `true` за HTTPS |
-| `SESSION_MAX_AGE_MS` | `1209600000` | Время жизни сессии (14 дней) |
-| `TRUST_PROXY` | `false` | Прокси перед сервером: `1` — один nginx / Caddy, `loopback` или список подсетей; `true` — доверять любому (IP можно подделать) |
-| `LOGIN_WINDOW_MS` / `LOGIN_MAX_ATTEMPTS` | `900000` / `10` | Ограничение попыток входа |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` | — | SMTP для отправки на ридер |
-| `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | — | Учётные данные SMTP |
+| `TRUST_PROXY` | `false` | Прокси перед сервером: `1` — один nginx / Caddy, `loopback` или список подсетей |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | — | Почта для отправки на ридер (или в админке) |
 | `TELEGRAM_BOT_TOKEN` | — | Токен Telegram-бота (или в админке) |
-| `FB2CNG_PATH` | `./converter/fbc` | Конвертер fb2cng |
-| `FB2CNG_CONFIG_PATH` | `./converter/fb2cng.yaml` | Конфиг конвертера |
-| `SEVEN_ZIP_PATH` | из `7zip-bin` | Путь к 7z |
-| `SCAN_INTERVAL_HOURS` | `0` | Автоскан источников каждые N часов (0 — выкл.) |
-| `FOLDER_WATCH` | `1` | Слежение за папочными источниками (`0` — выкл.) |
-| `FOLDER_WATCH_QUIET_SEC` | `120` | Пауза без изменений перед индексацией, с |
-| `COVER_MAX_WIDTH` / `COVER_MAX_HEIGHT` | `220` / `320` | Размер миниатюр обложек |
-| `COVER_QUALITY` | `86` | Качество WebP-миниатюр |
-| `COVER_THUMB_DISK_TTL_DAYS` | `30` | Срок хранения миниатюр на диске |
-| `COVER_THUMB_DISK_CACHE_MB` | `2048` | Лимит дискового кэша миниатюр |
+| `SCAN_INTERVAL_HOURS` | `0` | Пересканировать источники каждые N часов |
+| `FOLDER_WATCH` | `1` | Следить за папками и индексировать новые файлы |
 | `DOWNLOAD_MAX_CONCURRENT` | `4` | Сколько книг готовится к выдаче одновременно |
-| `DOWNLOAD_MAX_QUEUE` | `100` | Очередь скачиваний; сверх неё — `503` с `Retry-After` |
-| `DOWNLOAD_QUEUE_TIMEOUT_MS` | `120000` | Сколько скачивание ждёт в очереди |
-| `SQLITE_CACHE_SIZE_MB` / `SQLITE_MMAP_SIZE_MB` | авто | Память SQLite (можно задать в админке) |
-| `PERF_PROFILE` | авто | `default` или `embedded` для NAS / малой памяти |
-| `CLUSTER_WORKERS` | `0` | Число воркеров кластера (0 — один процесс) |
-| `EVENTS_STDOUT` | `true` | События в stdout (`docker logs`) |
-| `HEALTH_MINIMAL` | `false` | Минимальный ответ `/health` |
+| `PERF_PROFILE` | авто | `embedded` для NAS / малой памяти |
+| `CLUSTER_WORKERS` | `0` | Число процессов (0 — один) |
 
 </details>
 
 <details>
-<summary><strong>Большие библиотеки и слабое железо</strong></summary>
+<summary><b>Большие библиотеки и слабое железо</b></summary>
 
-- Индексация, подсчёт счётчиков каталога и декодирование иллюстраций идут в фоновых потоках — сервер отвечает во время импорта.
-- На устройствах с ≤ 2 ГБ памяти включается экономный профиль; подстроить кэш SQLite можно в **Админка → Обслуживание → Память базы данных**.
-- Флибуста и Либрусек «96 ГБ» (PPMd-архивы, WebP-картинки) поддерживаются; для старых ридеров включите **Админка → Контент → WebP в FB2 → PNG**.
-- При добавлении второй копии той же коллекции используйте **Админка → Дубликаты → Автоочистка**.
-- Если сервер «подвисает», первым делом смотрите строки `[perf] event loop stalled` в `runtime.log` и `/health/perf`.
+- Индексация и тяжёлые пересчёты идут в фоновых потоках — сервер отвечает во время импорта.
+- На устройствах с ≤ 2 ГБ памяти включается экономный профиль; кэш базы настраивается в **Админка → Дашборд → Обслуживание → Память базы данных**.
+- Флибуста и Либрусек «96 ГБ» (PPMd-архивы, картинки WebP) поддерживаются. Для старых ридеров включите **Админка → Контент → «Иллюстрации WebP в FB2»** (перекодирование в PNG).
+- Добавили вторую копию той же коллекции — запустите **Админка → Дубликаты → автоочистка**.
 
 </details>
 
 <details>
-<summary><strong>Устранение неполадок</strong></summary>
+<summary><b>Если что-то не работает</b></summary>
 
-- **Не отвечает:** `curl -sS http://127.0.0.1:3000/health` должен вернуть `"ok":true`.
-- **Порт занят:** смените `PORT` в `.env` или проброс порта в Docker.
-- **Нет книг:** источник добавлен в админке, индексация завершилась, путь смонтирован внутрь контейнера?
-- **«Архивы не найдены» после импорта INPX:** проверьте путь и монтирование папки с архивами.
-- **Windows, пустой каталог:** проверьте `LIBRARY_ROOT` в `.env`.
-- **Нет конвертации в EPUB/MOBI:** после установки должен быть `converter/fbc` (`fbc.exe` на Windows).
+- **Сервер не отвечает:** `curl -sS http://127.0.0.1:3000/health` должен вернуть `"ok":true`.
+- **Каталог пуст:** источник добавлен и индексация завершилась? В Docker путь источника — внутри контейнера (`/library`, `/sources/…`).
+- **«Архивы не найдены» после импорта INPX:** архивы `.zip` / `.7z` должны лежать рядом с `.inpx`; проверьте монтирование.
+- **Нет EPUB / MOBI в «Скачать»:** конвертер не установлен — повторите `install.cmd` / `install.sh`.
 - **Ошибка `better-sqlite3` / `NODE_MODULE_VERSION`:** повторно запустите `install.cmd` / `install.sh`.
 - **Забыли пароль admin:** `reset-admin.cmd` (Windows) или `./reset-admin.sh`.
+- **Сервер «подвисает»:** ищите `[perf] event loop stalled` в `data/runtime.log`, время ответов — на `/health/perf`.
 
 </details>
-
----
 
 ## Для разработчиков
 
 ```bash
 npm install
-npm run dev      # сервер с перезапуском при изменениях
+npm run dev      # перезапуск при изменениях
 npm test
 ```
 
-Стек: Node.js (ESM), Express, SQLite (better-sqlite3), vanilla JS/CSS без фреймворков.
-
-- [`AGENTS.md`](AGENTS.md) — контракт API для Android-приложения и правила проекта
-- [`docs/architecture`](docs/architecture) — индексация, парсер INPX, поиск, OPDS, структура проекта
-- [`docs/decisions`](docs/decisions) — архитектурные решения
-- [`CHANGELOG.md`](CHANGELOG.md) — история изменений
-
-JSON-ошибки API содержат стабильное поле `code` (например `UNAUTHORIZED`) и локализованное `error` — клиентам стоит опираться на `code`.
+Node.js (ESM), Express, SQLite (better-sqlite3), vanilla JS / CSS без фреймворков. Документация: [`AGENTS.md`](AGENTS.md) (API для Android и правила проекта), [`docs/architecture`](docs/architecture) (индексация, INPX, поиск, OPDS), [`docs/decisions`](docs/decisions). Ошибки API содержат стабильное поле `code` — клиентам стоит опираться на него.
 
 ## Связанные проекты
 
-| Репозиторий | Роль |
+| Репозиторий | |
 |---|---|
 | [inpx-library-server](https://github.com/Habsaec/inpx-library-server) | Сервер: индекс, веб, OPDS, API (этот репозиторий) |
 | [inpx-book-reader](https://github.com/Habsaec/inpx-book-reader) | Android-приложение |
