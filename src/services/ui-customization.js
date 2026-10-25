@@ -44,6 +44,9 @@ import {
   DISPLAY_FONT_STACK,
   THEME_PRESETS,
   getThemePresetById,
+  isBuiltinSurface,
+  canonicalSurface,
+  paletteContrast,
 } from './theme-engine.js';
 import { extractThemeFromImageFile } from './bg-theme-extractor.js';
 
@@ -620,11 +623,38 @@ export function hasUiThemeColorsConfigured() {
   const overlayDark = getSetting('ui_bg_overlay_color_dark');
   const overlayLight = getSetting('ui_bg_overlay_color_light');
   if (overlayDark !== '' || overlayLight !== '') return true;
+  return hasCustomThemeSurface();
+}
+
+/** A non-built-in panel/surface color (manual or extracted from the background). */
+export function hasCustomThemeSurface() {
+  if (hasUiDynamicThemeFromBg() && hasExtractedBgPalette()) return true;
   const dark = getSetting('ui_glass_color_dark');
   const light = getSetting('ui_glass_color_light');
-  if (dark !== '' && normalizeHexColor(dark, LEGACY_SURFACE_DARK) !== LEGACY_SURFACE_DARK) return true;
-  if (light !== '' && normalizeHexColor(light, LEGACY_SURFACE_LIGHT) !== LEGACY_SURFACE_LIGHT) return true;
+  if (dark !== '' && !isBuiltinSurface(dark, 'dark')) return true;
+  if (light !== '' && !isBuiltinSurface(light, 'light')) return true;
   return false;
+}
+
+/**
+ * Which preset the saved colors match: preset id, `'custom'` for hand-tuned colors,
+ * `null` while the palette follows the background image.
+ */
+export function detectActiveThemePreset() {
+  if (hasUiDynamicThemeFromBg() && hasExtractedBgPalette()) return null;
+  const roleKeys = ['ui_glass_text_dark', 'ui_glass_text_light', 'ui_glass_muted_dark', 'ui_glass_muted_light', 'ui_glass_link_dark', 'ui_glass_link_light'];
+  if (roleKeys.some((key) => getSetting(key) !== '')) return 'custom';
+  const surface = (mode) => canonicalSurface(
+    getSetting(mode === 'dark' ? 'ui_glass_color_dark' : 'ui_glass_color_light') || (mode === 'dark' ? LEGACY_SURFACE_DARK : LEGACY_SURFACE_LIGHT),
+    mode,
+    mode === 'dark' ? LEGACY_SURFACE_DARK : LEGACY_SURFACE_LIGHT,
+  );
+  const accent = (mode) => normalizeHexColor(getSetting(mode === 'dark' ? 'ui_accent_dark' : 'ui_accent_light'), '');
+  const match = THEME_PRESETS.find((preset) => ['dark', 'light'].every((mode) => (
+    canonicalSurface(preset[mode].surface, mode, '') === surface(mode)
+    && normalizeHexColor(preset[mode].accent, '') === accent(mode)
+  )));
+  return match ? match.id : 'custom';
 }
 
 const UI_BACKGROUND_SLIDER_KEYS = ['ui_bg_blur', 'ui_bg_overlay', 'ui_bg_size', 'ui_bg_position'];
@@ -640,8 +670,16 @@ export function hasUiBackgroundSlidersConfigured() {
   return UI_BACKGROUND_SLIDER_KEYS.some((key) => getSetting(key) !== '');
 }
 
+/* Saving the appearance form used to store the defaults (88 / 0) too, which switched glass panels on
+   for good; a stored default does not count as configured. */
+const UI_PANEL_SLIDER_DEFAULTS = { ui_surface_opacity: 88, ui_surface_blur: 0 };
+
 export function hasUiPanelSlidersConfigured() {
-  return UI_PANEL_SLIDER_KEYS.some((key) => getSetting(key) !== '');
+  return UI_PANEL_SLIDER_KEYS.some((key) => {
+    const raw = getSetting(key);
+    if (raw === '') return false;
+    return !(key in UI_PANEL_SLIDER_DEFAULTS) || Number(raw) !== UI_PANEL_SLIDER_DEFAULTS[key];
+  });
 }
 
 export function hasUiThemeSlidersConfigured() {
@@ -654,8 +692,10 @@ export function hasUiBackgroundImage() {
   return fs.existsSync(path.join(UI_DIR, 'background.webp'));
 }
 
+/* Only a custom surface turns panels into glass: changing just the accent or the text keeps the
+   solid built-in sidebar/topbar. */
 export function usesPanelGlass() {
-  return hasUiPanelSlidersConfigured() || hasUiThemeColorsConfigured() || hasUiBackgroundImage();
+  return hasUiPanelSlidersConfigured() || hasCustomThemeSurface() || hasUiBackgroundImage();
 }
 
 export function hasUiThemeShapeConfigured() {
@@ -799,7 +839,7 @@ export function getUiCustomization() {
       ? normalizeHexColor(glassColorDarkRaw, LEGACY_SURFACE_DARK)
       : LEGACY_SURFACE_DARK;
     displayLight = glassColorLightRaw
-      ? normalizeHexColor(glassColorLightRaw, LEGACY_SURFACE_LIGHT)
+      ? canonicalSurface(glassColorLightRaw, 'light', LEGACY_SURFACE_LIGHT)
       : LEGACY_SURFACE_LIGHT;
   }
   const themePair = buildThemePair(
@@ -919,6 +959,22 @@ export function getUiCustomization() {
     hasCustomThemeTypography: hasUiThemeTypographyConfigured(),
     dynamicThemeFromBg,
     hasExtractedBgPalette: hasExtractedBgPalette(),
+    activePreset: detectActiveThemePreset(),
+    contrastDark: paletteContrast(themePair.dark),
+    contrastLight: paletteContrast(themePair.light),
+  };
+}
+
+/** Readable roles of one mode for the admin mini-preview (server is the single source of colors). */
+function previewPaletteRoles(palette) {
+  return {
+    surface: palette.surface,
+    bg: palette.bg || palette.shellBg,
+    text: palette.text,
+    muted: palette.muted,
+    link: palette.link,
+    accent: palette.accent,
+    contrast: paletteContrast(palette),
   };
 }
 
@@ -1018,8 +1074,11 @@ export function getThemePreviewFromDraft(draft = {}) {
     lightSurface = normalizeHexColor(getSetting('ui_bg_palette_light'), LEGACY_SURFACE_LIGHT);
   } else {
     darkSurface = normalizeHexColor(draftStr(draft.glassColorDark, saved.glassColorDark), LEGACY_SURFACE_DARK);
-    lightSurface = normalizeHexColor(draftStr(draft.glassColorLight, saved.glassColorLight), LEGACY_SURFACE_LIGHT);
+    lightSurface = canonicalSurface(draftStr(draft.glassColorLight, saved.glassColorLight), 'light', LEGACY_SURFACE_LIGHT);
   }
+  const customSurface = useExtractedPalette
+    || !isBuiltinSurface(darkSurface, 'dark')
+    || !isBuiltinSurface(lightSurface, 'light');
 
   const textDark = draftManualColor(
     draft, 'glassTextDark', 'glassTextAutoDark', saved.glassTextAutoDark, saved.glassTextDark,
@@ -1065,10 +1124,12 @@ export function getThemePreviewFromDraft(draft = {}) {
 
   const vars = [...themePairToCssVars(themePair)];
 
+  const surfaceBlur = clampInt(draftStr(draft.surfaceBlur, String(saved.surfaceBlur)), 0, 24, 0);
   vars.push(
     `--ui-surface-opacity:${surfaceOpacity}`,
-    `--ui-surface-blur:${clampInt(draftStr(draft.surfaceBlur, String(saved.surfaceBlur)), 0, 24, 0)}px`,
+    `--ui-surface-blur:${surfaceBlur}px`,
   );
+  const panelGlass = hasBg || customSurface || surfaceOpacity !== 88 || surfaceBlur !== 0;
 
   if (hasBg) {
     const blur = clampInt(draftStr(draft.bgBlur, String(saved.blur)), 0, 24, 0);
@@ -1166,9 +1227,13 @@ export function getThemePreviewFromDraft(draft = {}) {
   // Live preview always injects full theme vars — enable matching root attrs so CSS mappings apply.
   return {
     vars,
+    palettes: {
+      dark: previewPaletteRoles(themePair.dark),
+      light: previewPaletteRoles(themePair.light),
+    },
     attrs: {
       theme: true,
-      sliders: true,
+      sliders: panelGlass,
       bg: hasBg,
       header: headerOn,
       headerFit: headerOn
@@ -1241,10 +1306,14 @@ export function saveUiSettings({
     setSetting('ui_bg_overlay', String(overlayStrengthFromBgContrast(bgOverlay)));
   }
   if (surfaceOpacity !== undefined) {
-    setSetting('ui_surface_opacity', String(clampInt(surfaceOpacity, 0, 100, 88)));
+    const opacity = clampInt(surfaceOpacity, 0, 100, 88);
+    setSetting('ui_surface_opacity', opacity === 88 ? '' : String(opacity));
+    // The unified slider replaces the old per-panel values, which readSurfaceOpacity() would fall back to.
+    for (const key of ['ui_panel_opacity', 'ui_topbar_opacity', 'ui_sidebar_opacity']) setSetting(key, '');
   }
   if (surfaceBlur !== undefined) {
-    setSetting('ui_surface_blur', String(clampInt(surfaceBlur, 0, 24, 0)));
+    const panelBlur = clampInt(surfaceBlur, 0, 24, 0);
+    setSetting('ui_surface_blur', panelBlur === 0 ? '' : String(panelBlur));
   }
   if (!dynamicActive && glassColorDark !== undefined) {
     const palette = buildThemePair(glassColorDark, DEFAULT_GLASS_LIGHT).dark;
@@ -1679,6 +1748,7 @@ export function getUiAppearanceFormState() {
     overlayColorAutoDark: ui.overlayColorAutoDark,
     overlayColorAutoLight: ui.overlayColorAutoLight,
     dynamicThemeFromBg: ui.dynamicThemeFromBg,
+    activePreset: ui.activePreset,
     radiusPreset: ui.radiusPreset,
     radiusScale: ui.radiusScale,
     shadowPreset: ui.shadowPreset,
@@ -1711,7 +1781,7 @@ export function getPublicUiSettingsJson() {
   const siteName = String(getSetting('site_name') || '').trim();
   const pair = ui.themePair;
   const mapAppPalette = (p) => ({
-    bg: p.shellBg,
+    bg: p.bg || p.shellBg,
     surface: p.surface,
     surfaceHover: p.surfaceHover,
     text: p.text,
@@ -1729,32 +1799,7 @@ export function getPublicUiSettingsJson() {
     topbarBorder: p.topbarBorder,
     coverBorder: p.cardCoverBorder,
   });
-  const themeVersion = [
-    ui.glassColorDark,
-    ui.glassColorLight,
-    ui.glassTextDark,
-    ui.glassTextLight,
-    ui.glassAccentDark,
-    ui.glassAccentLight,
-    ui.glassLinkDark,
-    ui.glassLinkLight,
-    ui.glassMutedDark,
-    ui.glassMutedLight,
-    ui.fontFamily,
-    ui.fontSize,
-    ui.density,
-    ui.radiusPreset,
-    ui.radiusScale,
-    ui.shadowPreset,
-    ui.backgroundUrl,
-    ui.headerUrl,
-    ui.headerHeight,
-    ui.headerPosition,
-    ui.headerSize,
-    ui.blur,
-    ui.overlay,
-  ].join(':');
-  return {
+  const json = {
     siteName,
     logoUrl: ui.logoUrl,
     faviconUrl: ui.faviconUrl,
@@ -1800,8 +1845,11 @@ export function getPublicUiSettingsJson() {
     fontFamily: ui.fontFamily,
     customFontUrl: ui.customFontUrl,
     dynamicThemeFromBg: ui.dynamicThemeFromBg,
-    themeVersion,
+    themeVersion: '',
     appPaletteDark: mapAppPalette(pair.dark),
     appPaletteLight: mapAppPalette(pair.light),
   };
+  /* Opaque change marker for clients that cache the theme (Android): every field above counts. */
+  json.themeVersion = crypto.createHash('sha1').update(JSON.stringify(json)).digest('hex').slice(0, 16);
+  return json;
 }

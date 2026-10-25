@@ -1707,67 +1707,78 @@ export function renderAdminAppearance({
     ? `<div class="ui-font-preview">${escapeHtml(t('admin.ui.fontPreviewSample'))}</div>`
     : `<span class="muted">${escapeHtml(t('admin.ui.fontCustomEmpty'))}</span>`;
 
+  const contrastBadge = (ratio) => {
+    if (!Number.isFinite(Number(ratio))) return '<span class="ui-contrast-badge" data-ui-contrast hidden></span>';
+    const low = Number(ratio) < 4.5;
+    return `<span class="ui-contrast-badge${low ? ' is-low' : ''}" data-ui-contrast title="${escapeHtml(t(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk'))}">${escapeHtml(String(ratio))}:1</span>`;
+  };
+
+  /* One color role of a theme mode: picker + hex + contrast with the surface + «Авто». */
+  const colorRow = ({ theme, role, label, name, autoName = '', value, auto = false, contrast, locked = false, lockedTitle = '' }) => {
+    const id = `ui-color-${role}-${theme}`;
+    const disabled = auto || locked;
+    return `
+      <div class="ui-color-row" data-ui-color-row="${role}" data-ui-color-theme="${theme}">
+        <label class="ui-color-row-label" for="${id}">${escapeHtml(label)}</label>
+        <div class="ui-color-row-value">
+          <input type="color" id="${id}" name="${name}" form="ui-main-form" value="${escapeHtml(value)}" data-ui-color-input${role === 'surface' ? ` data-ui-glass-color="${theme}"` : ''}${disabled ? ' disabled' : ''}${locked && lockedTitle ? ` title="${escapeHtml(lockedTitle)}"` : ''}>
+          <code data-ui-color-hex>${escapeHtml(value)}</code>
+          ${role === 'surface' ? '' : contrastBadge(contrast)}
+        </div>
+        ${autoName ? `<label class="admin-checkbox-label ui-color-row-auto">
+          <input type="checkbox" data-ui-color-auto ${auto ? 'checked' : ''}>
+          ${escapeHtml(t('admin.ui.accentAuto'))}
+        </label>
+        <input type="hidden" name="${autoName}" value="${auto ? '1' : '0'}" form="ui-main-form" data-ui-color-auto-value>` : '<span></span>'}
+      </div>`;
+  };
+
   const glassThemeCard = (theme, palette, themeTitle, surfaceOpacity, ui) => {
-    const glassName = theme === 'dark' ? 'glassColorDark' : 'glassColorLight';
-    const glassId = `ui-glass-${theme}`;
     const opacity = Number(surfaceOpacity);
     const panelOpacity = Number.isFinite(opacity) ? opacity : 88;
     const isLight = theme === 'light';
+    const suffix = isLight ? 'Light' : 'Dark';
     const previewPalette = isLight
       ? adjustLightTextForGlassOpacity(palette, panelOpacity)
       : palette;
-    const panelBg = buildGlassPanelBackground(palette.surface, panelOpacity, isLight ? DEFAULT_GLASS_LIGHT : DEFAULT_GLASS_DARK);
-    const pickHint = escapeHtml(t('admin.ui.glassPreviewPickHint'));
-    const glassPreviewPick = (role, fieldName, color, labelKey, auto) => {
-      const roleClass = role === 'text' ? ' ui-glass-preview-main' : '';
-      return `<label class="ui-glass-preview-pick${roleClass}" title="${pickHint}">
-        <input type="color" name="${fieldName}" form="ui-main-form" value="${escapeHtml(color)}" class="ui-glass-preview-color-input" data-ui-glass-pick-input="${role}" data-ui-glass-pick-theme="${theme}" data-ui-glass-auto="${auto ? '1' : '0'}">
-        <span>${escapeHtml(t(labelKey))}</span>
-      </label>`;
-    };
-    const textField = isLight ? 'glassTextLight' : 'glassTextDark';
-    const mutedField = isLight ? 'glassMutedLight' : 'glassMutedDark';
-    const linkField = isLight ? 'glassLinkLight' : 'glassLinkDark';
-    const textAuto = isLight ? ui.glassTextAutoLight : ui.glassTextAutoDark;
-    const mutedAuto = isLight ? ui.glassMutedAutoLight : ui.glassMutedAutoDark;
-    const linkAuto = isLight ? ui.glassLinkAutoLight : ui.glassLinkAutoDark;
-    const accentField = isLight ? 'accentLight' : 'accentDark';
-    const accentAutoField = isLight ? 'accentAutoLight' : 'accentAutoDark';
-    const accentColor = isLight ? ui.glassAccentLight : ui.glassAccentDark;
-    const accentAuto = isLight ? ui.glassAccentAutoLight : ui.glassAccentAutoDark;
+    /* The glass fill sits on that mode's own page background, not on the admin page behind the card. */
+    const glassFill = buildGlassPanelBackground(palette.surface, panelOpacity, isLight ? DEFAULT_GLASS_LIGHT : DEFAULT_GLASS_DARK);
+    const panelBg = `linear-gradient(${glassFill}, ${glassFill}), ${palette.bg || palette.shellBg || palette.surface}`;
+    const contrast =(isLight ? ui.contrastLight : ui.contrastDark) || {};
     return `
     <div class="ui-glass-theme-card" data-ui-glass-card="${theme}">
       <div class="ui-glass-theme-card-title">${escapeHtml(themeTitle)}</div>
       <div class="ui-glass-preview" data-ui-glass-preview-panel="${theme}" data-ui-glass-preview-light="${isLight ? '1' : '0'}" style="background:${escapeHtml(panelBg)};color:${escapeHtml(previewPalette.text)};">
-        ${glassPreviewPick('text', textField, previewPalette.text, 'admin.ui.glassPreviewSample', textAuto)}
+        <div class="ui-glass-preview-main" data-ui-preview-role="text">${escapeHtml(t('admin.ui.glassPreviewSample'))}</div>
         <div class="ui-glass-preview-meta">
-          ${glassPreviewPick('muted', mutedField, previewPalette.muted, 'admin.ui.glassPreviewMuted', mutedAuto)}
-          ${glassPreviewPick('link', linkField, palette.link, 'admin.ui.glassPreviewLink', linkAuto)}
+          <span data-ui-preview-role="muted" style="color:${escapeHtml(previewPalette.muted)}">${escapeHtml(t('admin.ui.glassPreviewMuted'))}</span>
+          <span class="ui-glass-preview-link" data-ui-preview-role="link" style="color:${escapeHtml(palette.link)}">${escapeHtml(t('admin.ui.glassPreviewLink'))}</span>
         </div>
+        <span class="ui-glass-preview-accent" data-ui-preview-role="accent" style="--preview-accent:${escapeHtml(palette.accent)}">${escapeHtml(t('admin.ui.glassPreviewAccent'))}</span>
       </div>
-      <div class="ui-color-field">
-        <label for="${glassId}">${escapeHtml(t('admin.ui.glassBaseColor'))}</label>
-        <div class="ui-color-field-row">
-          <input type="color" id="${glassId}" name="${glassName}" form="ui-main-form" value="${escapeHtml(palette.surface)}" data-ui-glass-color="${theme}"${ui.dynamicThemeFromBg ? ' disabled title="' + escapeHtml(t('admin.ui.glassBaseColorLocked')) + '"' : ''}>
-          <code data-ui-glass-hex="${glassName}">${escapeHtml(palette.surface)}</code>
-        </div>
-        <span class="admin-field-hint">${escapeHtml(ui.dynamicThemeFromBg ? t('admin.ui.glassBaseColorLockedHint') : t('admin.ui.glassBaseColorHint'))}</span>
+      <div class="ui-color-rows">
+        ${colorRow({
+          theme, role: 'surface', label: t('admin.ui.glassBaseColor'), name: `glassColor${suffix}`,
+          value: palette.surface, locked: ui.dynamicThemeFromBg, lockedTitle: t('admin.ui.glassBaseColorLocked'),
+        })}
+        ${colorRow({
+          theme, role: 'text', label: t('admin.ui.colorRoleText'), name: `glassText${suffix}`, autoName: `glassTextAuto${suffix}`,
+          value: previewPalette.text, auto: isLight ? ui.glassTextAutoLight : ui.glassTextAutoDark, contrast: contrast.text,
+        })}
+        ${colorRow({
+          theme, role: 'muted', label: t('admin.ui.colorRoleMuted'), name: `glassMuted${suffix}`, autoName: `glassMutedAuto${suffix}`,
+          value: previewPalette.muted, auto: isLight ? ui.glassMutedAutoLight : ui.glassMutedAutoDark, contrast: contrast.muted,
+        })}
+        ${colorRow({
+          theme, role: 'link', label: t('admin.ui.colorRoleLink'), name: `glassLink${suffix}`, autoName: `glassLinkAuto${suffix}`,
+          value: palette.link, auto: isLight ? ui.glassLinkAutoLight : ui.glassLinkAutoDark, contrast: contrast.link,
+        })}
+        ${colorRow({
+          theme, role: 'accent', label: t('admin.ui.accentColor'), name: `accent${suffix}`, autoName: `accentAuto${suffix}`,
+          value: isLight ? ui.glassAccentLight : ui.glassAccentDark, auto: isLight ? ui.glassAccentAutoLight : ui.glassAccentAutoDark, contrast: contrast.accent,
+        })}
       </div>
-      <div class="ui-color-field">
-        <div class="ui-color-field-head">
-          <label for="ui-accent-${theme}">${escapeHtml(t('admin.ui.accentColor'))}</label>
-          <label class="admin-checkbox-label ui-accent-auto-label">
-            <input type="checkbox" data-ui-accent-auto="${theme}" ${accentAuto ? 'checked' : ''}>
-            ${escapeHtml(t('admin.ui.accentAuto'))}
-          </label>
-        </div>
-        <div class="ui-color-field-row">
-          <input type="color" id="ui-accent-${theme}" name="${accentField}" form="ui-main-form" value="${escapeHtml(accentColor)}" data-ui-accent="${theme}"${accentAuto ? ' disabled' : ''}>
-          <code data-ui-accent-hex="${theme}">${escapeHtml(accentColor)}</code>
-        </div>
-        <input type="hidden" name="${accentAutoField}" id="ui-accent-auto-${theme}" value="${accentAuto ? '1' : '0'}" form="ui-main-form">
-        <span class="admin-field-hint">${escapeHtml(t('admin.ui.accentColorHint'))}</span>
-      </div>
+      <span class="admin-field-hint">${escapeHtml(ui.dynamicThemeFromBg ? t('admin.ui.glassBaseColorLockedHint') : t('admin.ui.colorRolesHint'))}</span>
     </div>`;
   };
 
@@ -1831,16 +1842,18 @@ export function renderAdminAppearance({
       <span class="admin-field-hint">${escapeHtml(t('admin.ui.fontCustomHint'))}</span>
     </div>`;
 
+  const activePreset = ui.activePreset || '';
   const presetButtons = `
     <div class="ui-preset-row" data-ui-presets>
       ${THEME_PRESETS.map((p) => `
-        <button type="button" class="ui-preset-btn" data-ui-preset="${p.id}"
+        <button type="button" class="ui-preset-btn${activePreset === p.id ? ' is-active' : ''}" data-ui-preset="${p.id}" aria-pressed="${activePreset === p.id ? 'true' : 'false'}"
           data-preset-dark="${escapeHtml(p.dark.surface)}" data-preset-light="${escapeHtml(p.light.surface)}"
           data-preset-accent-dark="${escapeHtml(p.dark.accent || '')}" data-preset-accent-light="${escapeHtml(p.light.accent || '')}"
           title="${escapeHtml(t('admin.ui.preset.' + p.id))}">
-          <span class="ui-preset-swatch" style="--preset-dark:${escapeHtml(p.dark.surface)};--preset-light:${escapeHtml(p.light.surface)};--preset-accent:${escapeHtml(p.dark.accent || p.light.accent || p.dark.surface)}"></span>
+          <span class="ui-preset-swatch" style="--preset-dark:${escapeHtml(p.dark.surface)};--preset-light:${escapeHtml(p.light.surface)};--preset-accent-dark:${escapeHtml(p.dark.accent || '#c4a35a')};--preset-accent-light:${escapeHtml(p.light.accent || '#8a6230')}"></span>
           <span class="ui-preset-name">${escapeHtml(t('admin.ui.preset.' + p.id))}</span>
         </button>`).join('')}
+      <span class="ui-preset-custom" data-ui-preset-custom${activePreset === 'custom' ? '' : ' hidden'}>${escapeHtml(t('admin.ui.presetCustom'))}</span>
     </div>`;
 
   const content = `
@@ -2003,6 +2016,7 @@ export function renderAdminAppearance({
           </div>
         </div>
         </div>
+        ${`<div class="admin-card-reset" data-ui-reset-wrap="sliders"${ui.hasCustomThemeSliders ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="sliders">${escapeHtml(t('admin.ui.resetSliders'))}</button></div>`}
       </div>
 
       <div class="admin-card">
@@ -2101,21 +2115,6 @@ export function renderAdminAppearance({
           </div>
           ${`<div class="admin-card-reset" data-ui-reset-wrap="manuscript"${ui.hasCustomManuscript ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="manuscript">${escapeHtml(t('admin.ui.resetManuscript'))}</button></div>`}
         </div>
-        <hr class="admin-divider">
-        <div class="admin-section-label">${escapeHtml(t('admin.ui.sectionPanels'))}</div>
-        <div class="admin-form-grid admin-form-grid--gap-12">
-          <div class="admin-field-group">
-            <label for="ui-surface-opacity">${escapeHtml(t('admin.ui.surfaceOpacity'))}</label>
-            <input type="range" id="ui-surface-opacity" name="surfaceOpacity" form="ui-main-form" min="0" max="100" step="1" value="${ui.surfaceOpacity}">
-            <span class="admin-field-hint">${escapeHtml(t('admin.ui.surfaceOpacityHint'))} <strong data-ui-range-value="surfaceOpacity">${ui.surfaceOpacity}</strong></span>
-          </div>
-          <div class="admin-field-group">
-            <label for="ui-surface-blur">${escapeHtml(t('admin.ui.surfaceBlur'))}</label>
-            <input type="range" id="ui-surface-blur" name="surfaceBlur" form="ui-main-form" min="0" max="24" step="1" value="${ui.surfaceBlur}">
-            <span class="admin-field-hint">${escapeHtml(t('admin.ui.surfaceBlurHint'))} <strong data-ui-range-value="surfaceBlur">${ui.surfaceBlur}</strong></span>
-          </div>
-        </div>
-        ${`<div class="admin-card-reset" data-ui-reset-wrap="sliders"${ui.hasCustomThemeSliders ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="sliders">${escapeHtml(t('admin.ui.resetSliders'))}</button></div>`}
       </div>
 
       </div>
@@ -2145,12 +2144,24 @@ export function renderAdminAppearance({
           ${glassThemeCard('light', ui.themePair.light, t('admin.ui.glassThemeLight'), ui.surfaceOpacity, ui)}
         </div>
         ${`<div class="admin-card-reset" data-ui-reset-wrap="colors"${ui.hasCustomThemeColors ? '' : ' hidden'}><button type="button" class="button-danger" data-ui-reset="colors">${escapeHtml(t('admin.ui.resetColors'))}</button></div>`}
-        <input type="hidden" name="glassTextAutoDark" id="ui-glass-text-auto-dark" value="${ui.glassTextAutoDark ? '1' : '0'}" form="ui-main-form">
-        <input type="hidden" name="glassTextAutoLight" id="ui-glass-text-auto-light" value="${ui.glassTextAutoLight ? '1' : '0'}" form="ui-main-form">
-        <input type="hidden" name="glassMutedAutoDark" id="ui-glass-muted-auto-dark" value="${ui.glassMutedAutoDark ? '1' : '0'}" form="ui-main-form">
-        <input type="hidden" name="glassMutedAutoLight" id="ui-glass-muted-auto-light" value="${ui.glassMutedAutoLight ? '1' : '0'}" form="ui-main-form">
-        <input type="hidden" name="glassLinkAutoDark" id="ui-glass-link-auto-dark" value="${ui.glassLinkAutoDark ? '1' : '0'}" form="ui-main-form">
-        <input type="hidden" name="glassLinkAutoLight" id="ui-glass-link-auto-light" value="${ui.glassLinkAutoLight ? '1' : '0'}" form="ui-main-form">
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-card-title">${escapeHtml(t('admin.ui.sectionPanels'))}</div>
+        <div class="admin-card-subtitle">${escapeHtml(t('admin.ui.sectionPanelsHint'))}</div>
+
+        <div class="admin-form-grid admin-form-grid--gap-12">
+          <div class="admin-field-group">
+            <label for="ui-surface-opacity">${escapeHtml(t('admin.ui.surfaceOpacity'))}</label>
+            <input type="range" id="ui-surface-opacity" name="surfaceOpacity" form="ui-main-form" min="0" max="100" step="1" value="${ui.surfaceOpacity}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.surfaceOpacityHint'))} <strong data-ui-range-value="surfaceOpacity">${ui.surfaceOpacity}</strong></span>
+          </div>
+          <div class="admin-field-group">
+            <label for="ui-surface-blur">${escapeHtml(t('admin.ui.surfaceBlur'))}</label>
+            <input type="range" id="ui-surface-blur" name="surfaceBlur" form="ui-main-form" min="0" max="24" step="1" value="${ui.surfaceBlur}">
+            <span class="admin-field-hint">${escapeHtml(t('admin.ui.surfaceBlurHint'))} <strong data-ui-range-value="surfaceBlur">${ui.surfaceBlur}</strong></span>
+          </div>
+        </div>
       </div>
 
       <!-- 5. Форма и тени -->

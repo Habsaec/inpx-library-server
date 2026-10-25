@@ -3,11 +3,16 @@
  * Used when custom background is active (glass mode).
  */
 
-/** Built-in palette surfaces (:root / html[data-theme="light"]) before theme overrides. */
+/** Built-in palette surfaces (:root / html[data-theme="light"] in styles.css) before theme overrides. */
 export const LEGACY_SURFACE_DARK = '#1a1612';
-export const LEGACY_SURFACE_LIGHT = '#fffdf8';
+export const LEGACY_SURFACE_LIGHT = '#fff9f0';
 export const DEFAULT_GLASS_DARK = LEGACY_SURFACE_DARK;
 export const DEFAULT_GLASS_LIGHT = LEGACY_SURFACE_LIGHT;
+/** Older builds stored the light default as #fffdf8; it still means «built-in light». */
+const LEGACY_LIGHT_ALIASES = new Set(['#fffdf8']);
+
+/** Minimum WCAG contrast against the surface for body-size text (AA). */
+export const MIN_TEXT_CONTRAST = 4.5;
 
 export function normalizeHexColor(raw, fallback) {
   const s = String(raw || '').trim();
@@ -51,7 +56,7 @@ function hexToHsl(hex) {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const l = (max + min) / 2;
-  if (max === min) return { h: 0, s: 0, l };
+  if (max === min) return { h: 0, s: 0, l: l * 100 };
   const d = max - min;
   const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
   let h;
@@ -87,6 +92,45 @@ function hslToHex(h, s, l) {
   return rgbToHex(r * 255, g * 255, b * 255);
 }
 
+/** WCAG contrast ratio of two hex colors (1–21). */
+export function contrastRatio(aHex, bHex) {
+  const a = relativeLuminance(...hexToRgb(aHex));
+  const b = relativeLuminance(...hexToRgb(bHex));
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+/**
+ * Nudge `fgHex` lighter (dark surface) or darker (light surface) until it reaches `min`
+ * contrast against `bgHex`, keeping hue and saturation. Returns the input when it already passes.
+ */
+export function ensureContrast(fgHex, bgHex, min = MIN_TEXT_CONTRAST) {
+  const fg = normalizeHexColor(fgHex, '#000000');
+  const bg = normalizeHexColor(bgHex, '#000000');
+  if (contrastRatio(fg, bg) >= min) return fg;
+  const towardLight = relativeLuminance(...hexToRgb(bg)) < 0.45;
+  const { h, s, l } = hexToHsl(fg);
+  for (let step = 1; step <= 100; step += 1) {
+    const next = hslToHex(h, s, towardLight ? l + step : l - step);
+    if (contrastRatio(next, bg) >= min) return next;
+  }
+  return towardLight ? '#ffffff' : '#000000';
+}
+
+/** True when `hex` is the built-in surface of that mode (the hand-tuned palette in styles.css). */
+export function isBuiltinSurface(hex, mode) {
+  const value = normalizeHexColor(hex, '');
+  if (!value) return false;
+  if (mode === 'dark') return value === LEGACY_SURFACE_DARK;
+  return value === LEGACY_SURFACE_LIGHT || LEGACY_LIGHT_ALIASES.has(value);
+}
+
+/** Map legacy aliases of the built-in light surface onto the current value. */
+export function canonicalSurface(hex, mode, fallback) {
+  const value = normalizeHexColor(hex, fallback);
+  if (mode === 'light' && LEGACY_LIGHT_ALIASES.has(value)) return LEGACY_SURFACE_LIGHT;
+  return value;
+}
+
 function pickAutoText(surfaceHex) {
   return relativeLuminance(...hexToRgb(surfaceHex)) < 0.45 ? '#ece6dc' : '#2a2218';
 }
@@ -119,25 +163,126 @@ export function buildThemePalette(surfaceHex, textHex = '', accentHex = '') {
   return { ...palette };
 }
 
+function rgbaOf(hex, alpha) {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** Link derived from the accent: same hue, a touch brighter (dark) / deeper (light), readable on the surface. */
+function linkFromAccent(accent, surface, isDark) {
+  const link = ensureContrast(shiftLightness(accent, isDark ? 6 : -6), surface);
+  return { link, linkHover: shiftLightness(link, isDark ? 8 : -8) };
+}
+
+/**
+ * Hand-tuned tokens of styles.css (:root and html[data-theme="light"]). Used as the base whenever the
+ * surface is the built-in one, so changing only the accent or the text leaves every other token alone.
+ */
+function builtinTokens(isDark, accent) {
+  if (isDark) {
+    const tint = (a) => rgbaOf(accent, a);
+    return {
+      surface: LEGACY_SURFACE_DARK,
+      text: '#f2ebe0',
+      muted: '#a89884',
+      accent: '#c4a35a',
+      accentHover: '#d4b56e',
+      link: '#d4b06a',
+      linkHover: '#e8c984',
+      surfaceHover: '#241f19',
+      bg: '#14110e',
+      shellBg: '#16130f',
+      bgOverlayColor: LEGACY_SURFACE_DARK,
+      sidebarBg: '#12100d',
+      topbarBg: 'rgba(18, 16, 13, 0.82)',
+      border: tint(0.12),
+      sidebarBrandBorder: tint(0.10),
+      topbarBorder: tint(0.10),
+      fieldBg: tint(0.05),
+      panelSoftBg: tint(0.07),
+      buttonBg: tint(0.08),
+      buttonBgHover: tint(0.16),
+      buttonBorderHover: tint(0.28),
+      cardBg: tint(0.03),
+      cardBgHover: tint(0.07),
+      cardCoverBg: 'linear-gradient(145deg, #1e1a15 0%, #12100d 100%)',
+      cardCoverFallbackBg: 'linear-gradient(180deg, #1a1612 0%, #0e0c0a 100%)',
+      cardCoverBorder: tint(0.12),
+    };
+  }
+  return {
+    surface: LEGACY_SURFACE_LIGHT,
+    text: '#1f1810',
+    muted: '#6b5a48',
+    accent: '#8a6230',
+    accentHover: '#6e4c24',
+    link: '#7a5218',
+    linkHover: '#5c3c10',
+    surfaceHover: '#f5ebdc',
+    bg: '#f3ebe0',
+    shellBg: '#efe6d8',
+    bgOverlayColor: LEGACY_SURFACE_LIGHT,
+    sidebarBg: '#e8dccb',
+    topbarBg: 'rgba(255, 249, 240, 0.78)',
+    border: 'rgba(55, 40, 24, 0.12)',
+    sidebarBrandBorder: 'rgba(55, 40, 24, 0.10)',
+    topbarBorder: 'rgba(55, 40, 24, 0.10)',
+    fieldBg: 'rgba(255, 255, 255, 0.88)',
+    panelSoftBg: 'rgba(255, 255, 255, 0.55)',
+    buttonBg: 'rgba(255, 255, 255, 0.88)',
+    buttonBgHover: 'rgba(245, 235, 220, 0.98)',
+    buttonBorderHover: 'rgba(55, 40, 24, 0.18)',
+    cardBg: 'rgba(255, 255, 255, 0.45)',
+    cardBgHover: 'rgba(255, 255, 255, 0.78)',
+    cardCoverBg: 'linear-gradient(145deg, #e8dcc7 0%, #d4c4ab 100%)',
+    cardCoverFallbackBg: 'linear-gradient(180deg, #efe5d5 0%, #dccdb6 100%)',
+    cardCoverBorder: 'rgba(55, 40, 24, 0.10)',
+  };
+}
+
+const HEX_RE = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
+
 function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
   const surface = normalizeHexColor(surfaceHex, DEFAULT_GLASS_DARK);
-  const textOverride = String(textHex || '').trim();
-  const text = textOverride ? normalizeHexColor(textOverride, pickAutoText(surface)) : pickAutoText(surface);
   const isDark = relativeLuminance(...hexToRgb(surface)) < 0.45;
+  const textOverride = String(textHex || '').trim();
+  const hasTextOverride = HEX_RE.test(textOverride);
+  const accentOverride = String(accentHex || '').trim();
+  const hasAccentOverride = HEX_RE.test(accentOverride);
+  const flags = { textAuto: !hasTextOverride, accentAuto: !hasAccentOverride };
+
+  if (isBuiltinSurface(surface, isDark ? 'dark' : 'light')) {
+    const accent = hasAccentOverride ? normalizeHexColor(accentOverride, '') : '';
+    const palette = builtinTokens(isDark, accent || (isDark ? '#c4a35a' : '#8a6230'));
+    if (accent) {
+      palette.accent = accent;
+      palette.accentHover = shiftLightness(accent, isDark ? 8 : -8);
+      Object.assign(palette, linkFromAccent(accent, palette.surface, isDark));
+    }
+    if (hasTextOverride) {
+      palette.text = normalizeHexColor(textOverride, palette.text);
+      palette.muted = ensureContrast(mixHex(palette.text, palette.surface, isDark ? 0.36 : 0.32), palette.surface);
+    }
+    return { ...palette, ...flags };
+  }
+
+  const text = hasTextOverride ? normalizeHexColor(textOverride, pickAutoText(surface)) : pickAutoText(surface);
   const { h, s } = hexToHsl(surface);
   const hue = s < 8 ? 38 : h;
 
-  const accentOverride = String(accentHex || '').trim();
-  const hasAccentOverride = /^#[0-9a-fA-F]{3,6}$/.test(accentOverride);
   const accent = hasAccentOverride
-    ? normalizeHexColor(accentOverride, hslToHex(hue, Math.min(42, s + 12), isDark ? 58 : 42))
-    : hslToHex(hue, Math.min(42, s + 12), isDark ? 58 : 42);
+    ? normalizeHexColor(accentOverride, '')
+    : ensureContrast(hslToHex(hue, Math.min(42, s + 12), isDark ? 58 : 42), surface);
   const accentHover = hasAccentOverride
     ? shiftLightness(accent, isDark ? 8 : -8)
     : hslToHex(hue, Math.min(48, s + 18), isDark ? 52 : 36);
-  const link = hslToHex(hue, Math.min(55, s + 22), isDark ? 68 : 34);
-  const linkHover = hslToHex(hue, Math.min(60, s + 28), isDark ? 74 : 28);
-  const muted = mixHex(text, surface, isDark ? 0.42 : 0.38);
+  const { link, linkHover } = hasAccentOverride
+    ? linkFromAccent(accent, surface, isDark)
+    : {
+      link: ensureContrast(hslToHex(hue, Math.min(55, s + 22), isDark ? 68 : 34), surface),
+      linkHover: hslToHex(hue, Math.min(60, s + 28), isDark ? 74 : 28),
+    };
+  const muted = ensureContrast(mixHex(text, surface, isDark ? 0.42 : 0.38), surface);
   const surfaceHover = isDark ? mixHex(surface, '#ffffff', 0.12) : mixHex(surface, '#000000', 0.06);
   const shellBg = isDark ? mixHex(surface, '#000000', 0.15) : mixHex(surface, '#ffffff', 0.08);
   const borderMix = isDark ? 'rgba(255,255,255,0.11)' : `color-mix(in srgb, ${text} 14%, transparent)`;
@@ -154,7 +299,6 @@ function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
     : `color-mix(in srgb, ${surface} 40%, white 60%)`;
   const coverA = isDark ? mixHex(surface, '#000000', 0.2) : mixHex(surface, '#ffffff', 0.15);
   const coverB = isDark ? mixHex(surface, '#000000', 0.45) : mixHex(surface, '#000000', 0.08);
-  const bgOverlayColor = surface;
 
   return {
     surface,
@@ -165,8 +309,9 @@ function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
     link,
     linkHover,
     surfaceHover,
+    bg: shellBg,
     shellBg,
-    bgOverlayColor,
+    bgOverlayColor: surface,
     sidebarBg: surface,
     topbarBg: surface,
     border: borderMix,
@@ -182,8 +327,18 @@ function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
     cardCoverBg: `linear-gradient(135deg, ${coverA} 0%, ${coverB} 100%)`,
     cardCoverFallbackBg: `linear-gradient(180deg, ${coverA} 0%, ${coverB} 100%)`,
     cardCoverBorder: isDark ? 'rgba(255,255,255,0.1)' : `color-mix(in srgb, ${text} 12%, transparent)`,
-    textAuto: textOverride === '',
-    accentAuto: !hasAccentOverride,
+    ...flags,
+  };
+}
+
+/** Contrast of the readable roles against the surface (admin badges). */
+export function paletteContrast(palette) {
+  const round = (v) => Math.round(v * 10) / 10;
+  return {
+    text: round(contrastRatio(palette.text, palette.surface)),
+    muted: round(contrastRatio(palette.muted, palette.surface)),
+    link: round(contrastRatio(palette.link, palette.surface)),
+    accent: round(contrastRatio(palette.accent, palette.surface)),
   };
 }
 
@@ -511,6 +666,7 @@ export function themePairToCssVars(pair) {
     prefix(mode, 'link', palette.link),
     prefix(mode, 'link-hover', palette.linkHover),
     prefix(mode, 'surface-hover', palette.surfaceHover),
+    prefix(mode, 'bg', palette.bg || palette.shellBg),
     prefix(mode, 'shell-bg', palette.shellBg),
     prefix(mode, 'bg-overlay-color', palette.bgOverlayColor),
     prefix(mode, 'sidebar-bg', palette.sidebarBg),
@@ -539,7 +695,7 @@ export function themePairToCssVars(pair) {
  * One-click palette presets. Each entry defines surface + accent for both modes.
  * `id: 'default'` restores the built-in palette.
  */
-export const THEME_PRESETS = [
+const RAW_THEME_PRESETS = [
   { id: 'default', dark: { surface: LEGACY_SURFACE_DARK, accent: '' }, light: { surface: LEGACY_SURFACE_LIGHT, accent: '' } },
   { id: 'sepia', dark: { surface: '#2b2318', accent: '#c9a15a' }, light: { surface: '#f3e9d6', accent: '#a6741f' } },
   { id: 'midnight', dark: { surface: '#12151f', accent: '#5b8cff' }, light: { surface: '#eef1f8', accent: '#3b5bdb' } },
@@ -556,6 +712,15 @@ export const THEME_PRESETS = [
   { id: 'mint', dark: { surface: '#122420', accent: '#34d399' }, light: { surface: '#ecfdf5', accent: '#059669' } },
   { id: 'copper', dark: { surface: '#231812', accent: '#ea580c' }, light: { surface: '#fdf4ee', accent: '#c2410c' } },
 ];
+
+/** Preset accents nudged to AA contrast on their own surface (several light accents were ~3:1). */
+export const THEME_PRESETS = RAW_THEME_PRESETS.map((preset) => {
+  const fix = (mode) => ({
+    surface: preset[mode].surface,
+    accent: preset[mode].accent ? ensureContrast(preset[mode].accent, preset[mode].surface) : '',
+  });
+  return { id: preset.id, dark: fix('dark'), light: fix('light') };
+});
 
 export function getThemePresetById(id) {
   return THEME_PRESETS.find((preset) => preset.id === id) || null;

@@ -971,6 +971,8 @@ function attachCatalogFilters() {
     });
 }
 
+/* Three states like the Android app: light → dark → system. «System» = no saved preference,
+   the page follows prefers-color-scheme (also live, while the tab is open). */
 function attachThemeToggle() {
   const root = document.documentElement;
   const buttons = [...document.querySelectorAll('[data-theme-toggle]')];
@@ -978,51 +980,48 @@ function attachThemeToggle() {
     return;
   }
 
-  const getTheme = () => root.dataset.theme === 'light' ? 'light' : 'dark';
-  const getNextThemeLabel = (theme) => theme === 'light' ? uiT('app.themeDark') : uiT('app.themeLight');
+  const readPreference = () => {
+    try {
+      const saved = localStorage.getItem('theme-preference');
+      return saved === 'light' || saved === 'dark' ? saved : 'system';
+    } catch {
+      return 'system';
+    }
+  };
+  const systemTheme = () => (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  const resolve = (pref) => (pref === 'system' ? systemTheme() : pref);
+  const NEXT = { light: 'dark', dark: 'system', system: 'light' };
+  const LABEL = { light: 'app.themeLight', dark: 'app.themeDark', system: 'app.themeSystem' };
+
   const THEME_SUN_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
   const THEME_MOON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-
-  const getThemeIcon = (theme) => theme === 'light' ? THEME_MOON_SVG : THEME_SUN_SVG;
+  const THEME_AUTO_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>';
+  const ICON = { light: THEME_SUN_SVG, dark: THEME_MOON_SVG, system: THEME_AUTO_SVG };
 
   const render = () => {
-    const theme = getTheme();
+    const pref = readPreference();
+    const label = `${uiT(LABEL[pref])}. ${uiT('app.themeToggleHint')}`;
     for (const button of document.querySelectorAll('[data-theme-toggle]')) {
       const labelNode = button.querySelector('[data-theme-toggle-label]');
-      const label = getNextThemeLabel(theme);
       if (labelNode) {
-        labelNode.innerHTML = getThemeIcon(theme);
+        labelNode.innerHTML = ICON[pref];
       }
+      button.dataset.themePreference = pref;
       button.setAttribute('aria-label', label);
       button.setAttribute('title', label);
     }
   };
 
-  /* Автоопределение темы: ручной выбор в localStorage важнее системной настройки */
-  try {
-    const saved = localStorage.getItem('theme-preference');
-    if (saved === 'light' || saved === 'dark') {
-      root.dataset.theme = saved;
-    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-      root.dataset.theme = 'light';
-    }
-  } catch {
-    /* ignore storage errors */
-  }
-
+  root.dataset.theme = resolve(readPreference());
   render();
 
-  /* Следим за системной темой, пока пользователь не сделал ручной выбор.
+  /* Следим за системной темой, пока выбран режим «как в системе».
      Удаляем старый listener перед добавлением нового — при MPA matchMedia
      глобальна, а listeners накапливаются при переходе между страницами. */
   if (window.matchMedia) {
     const mq = window.matchMedia('(prefers-color-scheme: light)');
     const onChange = (e) => {
-      try {
-        if (localStorage.getItem('theme-preference')) return;
-      } catch {
-        return;
-      }
+      if (readPreference() !== 'system') return;
       document.documentElement.dataset.theme = e.matches ? 'light' : 'dark';
       render();
     };
@@ -1040,13 +1039,14 @@ function attachThemeToggle() {
 
   for (const button of buttons) {
     button.addEventListener('click', () => {
-      const nextTheme = getTheme() === 'light' ? 'dark' : 'light';
-      root.dataset.theme = nextTheme;
+      const next = NEXT[readPreference()];
       try {
-        localStorage.setItem('theme-preference', nextTheme);
+        if (next === 'system') localStorage.removeItem('theme-preference');
+        else localStorage.setItem('theme-preference', next);
       } catch {
         console.error('Could not persist theme preference');
       }
+      root.dataset.theme = resolve(next);
       render();
     });
   }
@@ -5805,47 +5805,9 @@ function attachUiAppearanceUpload() {
     const panelOpacity = previewGlassFillOpacity(hex, surfaceOpacity, isLight);
     const surface = String(hex || '').trim();
     if (!/^#[0-9a-fA-F]{6}$/.test(surface)) {
-      return `color-mix(in srgb, ${surface || '#f7f4ef'} ${panelOpacity}%, transparent)`;
+      return `color-mix(in srgb, ${surface || '#fff9f0'} ${panelOpacity}%, transparent)`;
     }
     return `color-mix(in srgb, ${surface} ${panelOpacity}%, transparent)`;
-  }
-
-  function derivePreviewPalette(hex, surfaceOpacity) {
-    const h = String(hex || '').replace('#', '');
-    if (h.length !== 6) return { text: '#ece6dc', muted: '#a89888', link: '#d4ac5c' };
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    const linear = [r, g, b].map((c) => {
-      c /= 255;
-      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    });
-    const lum = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-    const isDark = lum < 0.45;
-    const mixHex = (aHex, bHex, weightB) => {
-      const w = Math.min(1, Math.max(0, weightB));
-      const ar = parseInt(aHex.slice(1, 3), 16);
-      const ag = parseInt(aHex.slice(3, 5), 16);
-      const ab = parseInt(aHex.slice(5, 7), 16);
-      const br = parseInt(bHex.slice(1, 3), 16);
-      const bg = parseInt(bHex.slice(3, 5), 16);
-      const bb = parseInt(bHex.slice(5, 7), 16);
-      const toHex = (v) => Math.min(255, Math.max(0, Math.round(v))).toString(16).padStart(2, '0');
-      return `#${toHex(ar * (1 - w) + br * w)}${toHex(ag * (1 - w) + bg * w)}${toHex(ab * (1 - w) + bb * w)}`;
-    };
-    const base = {
-      text: isDark ? '#ece6dc' : '#2a2218',
-      muted: isDark ? '#a89888' : '#6e5e4c',
-      link: isDark ? '#d4ac5c' : '#8b5a12',
-    };
-    const opacity = Number(surfaceOpacity);
-    if (isDark || !Number.isFinite(opacity) || opacity >= 58) return base;
-    const factor = (58 - opacity) / 58;
-    return {
-      text: mixHex(base.text, '#000000', factor * 0.22),
-      muted: mixHex(base.muted, '#000000', factor * 0.12),
-      link: base.link,
-    };
   }
 
   function readSurfaceOpacity() {
@@ -5854,64 +5816,121 @@ function attachUiAppearanceUpload() {
     return Number.isFinite(value) ? value : 88;
   }
 
+  /* Auto colors come only from the server (POST /api/admin/ui/preview): one palette engine, no
+     client-side approximation that drifts from what the site really shows. */
+  const lastPalettes = { dark: null, light: null };
+  const COLOR_ROLES = ['surface', 'text', 'muted', 'link', 'accent'];
+
+  function colorRow(theme, role) {
+    return page.querySelector(`[data-ui-color-row="${role}"][data-ui-color-theme="${theme}"]`);
+  }
+
+  function rowIsAuto(row) {
+    return Boolean(row?.querySelector('[data-ui-color-auto]')?.checked);
+  }
+
+  function setRowColor(row, color) {
+    const input = row?.querySelector('[data-ui-color-input]');
+    if (!input || !/^#[0-9a-fA-F]{6}$/.test(String(color || ''))) return;
+    input.value = color;
+    const hex = row.querySelector('[data-ui-color-hex]');
+    if (hex) hex.textContent = color;
+  }
+
+  function setRowAuto(row, auto) {
+    if (!row) return;
+    const chk = row.querySelector('[data-ui-color-auto]');
+    const hidden = row.querySelector('[data-ui-color-auto-value]');
+    const input = row.querySelector('[data-ui-color-input]');
+    if (chk) chk.checked = auto;
+    if (hidden) hidden.value = auto ? '1' : '0';
+    if (input) input.disabled = auto;
+  }
+
+  function setRowContrast(row, ratio) {
+    const badge = row?.querySelector('[data-ui-contrast]');
+    if (!badge) return;
+    const value = Number(ratio);
+    if (!Number.isFinite(value)) {
+      badge.hidden = true;
+      return;
+    }
+    const low = value < 4.5;
+    badge.hidden = false;
+    badge.textContent = `${value}:1`;
+    badge.classList.toggle('is-low', low);
+    badge.title = uiT(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk');
+  }
+
   function syncGlassPreview(theme) {
     const panel = page.querySelector(`[data-ui-glass-preview-panel="${theme}"]`);
-    const glassInput = page.querySelector(`[data-ui-glass-color="${theme}"]`);
-    if (!panel || !glassInput) return;
-    const surfaceOpacity = readSurfaceOpacity();
-    const derived = derivePreviewPalette(glassInput.value, surfaceOpacity);
-    panel.style.background = buildPreviewPanelBackground(glassInput.value, surfaceOpacity, theme === 'light');
-    const autoFieldByRole = {
-      text: theme === 'dark' ? 'glassTextAutoDark' : 'glassTextAutoLight',
-      muted: theme === 'dark' ? 'glassMutedAutoDark' : 'glassMutedAutoLight',
-      link: theme === 'dark' ? 'glassLinkAutoDark' : 'glassLinkAutoLight',
+    if (!panel) return;
+    const palette = lastPalettes[theme];
+    const roleColor = (role) => {
+      const row = colorRow(theme, role);
+      const value = row?.querySelector('[data-ui-color-input]')?.value;
+      if (role === 'surface') return palette && row?.querySelector('[data-ui-color-input]')?.disabled ? palette.surface : value;
+      if (row && !rowIsAuto(row)) return value;
+      return palette?.[role] || value;
     };
-    page.querySelectorAll(`[data-ui-glass-pick-input][data-ui-glass-pick-theme="${theme}"]`).forEach((input) => {
-      const role = input.dataset.uiGlassPickInput;
-      const auto = input.dataset.uiGlassAuto === '1';
-      if (auto) input.value = derived[role] || input.value;
-      const span = input.closest('.ui-glass-preview-pick')?.querySelector('span');
-      if (role === 'text') {
-        panel.style.color = input.value;
-        panel.style.textShadow = '';
-      } else if (span) {
-        span.style.color = input.value;
+    const glassFill = buildPreviewPanelBackground(roleColor('surface'), readSurfaceOpacity(), theme === 'light');
+    const pageBg = palette?.bg || roleColor('surface');
+    panel.style.background = `linear-gradient(${glassFill}, ${glassFill}), ${pageBg}`;
+    panel.style.color = roleColor('text') || '';
+    const muted = panel.querySelector('[data-ui-preview-role="muted"]');
+    if (muted) muted.style.color = roleColor('muted') || '';
+    const link = panel.querySelector('[data-ui-preview-role="link"]');
+    if (link) link.style.color = roleColor('link') || '';
+    const accent = panel.querySelector('[data-ui-preview-role="accent"]');
+    if (accent) accent.style.setProperty('--preview-accent', roleColor('accent') || '');
+  }
+
+  function applyPreviewPalettes(palettes) {
+    if (!palettes) return;
+    for (const theme of ['dark', 'light']) {
+      const palette = palettes[theme];
+      if (!palette) continue;
+      lastPalettes[theme] = palette;
+      for (const role of COLOR_ROLES) {
+        const row = colorRow(theme, role);
+        if (!row) continue;
+        const input = row.querySelector('[data-ui-color-input]');
+        if (role === 'surface' ? input?.disabled : rowIsAuto(row)) setRowColor(row, palette[role]);
+        if (role !== 'surface') setRowContrast(row, palette.contrast?.[role]);
       }
-    });
-    Object.entries(autoFieldByRole).forEach(([role, fieldName]) => {
-      const input = page.querySelector(`[data-ui-glass-pick-input="${role}"][data-ui-glass-pick-theme="${theme}"]`);
-      const autoEl = page.querySelector(`[name="${fieldName}"]`);
-      if (autoEl && input) autoEl.value = input.dataset.uiGlassAuto === '1' ? '1' : '0';
-    });
+      syncGlassPreview(theme);
+    }
   }
 
-  function syncGlassHex(input) {
-    if (!input?.name) return;
-    const hexEl = page.querySelector(`[data-ui-glass-hex="${input.name}"]`);
-    if (hexEl) hexEl.textContent = input.value;
+  function markActivePreset(id) {
+    page.querySelectorAll('[data-ui-preset]').forEach((b) => {
+      const on = b.dataset.uiPreset === id;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    const custom = page.querySelector('[data-ui-preset-custom]');
+    if (custom) custom.hidden = id !== 'custom';
   }
 
-  page.querySelectorAll('[data-ui-glass-color]').forEach((input) => {
-    input.addEventListener('input', () => {
-      syncGlassHex(input);
-      syncGlassPreview(input.dataset.uiGlassColor);
+  page.querySelectorAll('[data-ui-color-row]').forEach((row) => {
+    const theme = row.dataset.uiColorTheme;
+    const input = row.querySelector('[data-ui-color-input]');
+    input?.addEventListener('input', () => {
+      setRowColor(row, input.value);
+      syncGlassPreview(theme);
+      markActivePreset('custom');
+      setResetWrapVisible('colors', true);
+      schedulePreview();
+    });
+    row.querySelector('[data-ui-color-auto]')?.addEventListener('change', (event) => {
+      setRowAuto(row, event.target.checked);
+      syncGlassPreview(theme);
+      markActivePreset('custom');
       setResetWrapVisible('colors', true);
       schedulePreview();
     });
   });
-  page.querySelectorAll('[data-ui-glass-pick-input]').forEach((input) => {
-    input.addEventListener('input', () => {
-      input.dataset.uiGlassAuto = '0';
-      syncGlassPreview(input.dataset.uiGlassPickTheme);
-      setResetWrapVisible('colors', true);
-      schedulePreview();
-    });
-  });
-  ['dark', 'light'].forEach((theme) => {
-    syncGlassPreview(theme);
-    const glassInput = page.querySelector(`[data-ui-glass-color="${theme}"]`);
-    if (glassInput) syncGlassHex(glassInput);
-  });
+  ['dark', 'light'].forEach((theme) => syncGlassPreview(theme));
 
   function syncDynamicBaseColorInputs() {
     const dynamic = page.querySelector('[name="dynamicThemeFromBg"]')?.checked;
@@ -5920,8 +5939,9 @@ function attachUiAppearanceUpload() {
     });
   }
 
-  page.querySelector('[name="dynamicThemeFromBg"]')?.addEventListener('change', () => {
+  page.querySelector('[name="dynamicThemeFromBg"]')?.addEventListener('change', (event) => {
     syncDynamicBaseColorInputs();
+    markActivePreset(event.target.checked ? '' : 'custom');
     setResetWrapVisible('colors', true);
     schedulePreview();
   });
@@ -6042,7 +6062,10 @@ function attachUiAppearanceUpload() {
       });
       if (!resp.ok) return;
       const data = await resp.json().catch(() => null);
-      if (data && data.ok) applyPreview(data, { showBar: showPreviewBar });
+      if (data && data.ok) {
+        applyPreview(data, { showBar: showPreviewBar });
+        applyPreviewPalettes(data.palettes);
+      }
     } catch { /* preview is best-effort */ }
   }
 
@@ -6097,7 +6120,6 @@ function attachUiAppearanceUpload() {
       });
     });
   }
-  bindAutoColor('data-ui-accent', 'data-ui-accent-auto', 'data-ui-accent-hex', 'ui-accent-auto', 'colors');
   bindAutoColor('data-ui-overlay', 'data-ui-overlay-auto', 'data-ui-overlay-hex', 'ui-overlay-auto', 'sliders');
 
   page.querySelector('[name="shadowPreset"]')?.addEventListener('change', () => {
@@ -6111,7 +6133,7 @@ function attachUiAppearanceUpload() {
     });
   });
 
-  // Theme presets: apply surface + accent to the color inputs, then preview.
+  // Theme presets: apply surface + accent, put text / muted / link back on auto, then preview.
   page.querySelectorAll('[data-ui-preset]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const map = [
@@ -6121,27 +6143,19 @@ function attachUiAppearanceUpload() {
       const dynamic = page.querySelector('[name="dynamicThemeFromBg"]');
       if (dynamic?.checked) { dynamic.checked = false; syncDynamicBaseColorInputs(); }
       for (const { theme, surface, accent } of map) {
-        const glass = page.querySelector(`[data-ui-glass-color="${theme}"]`);
-        if (glass && surface) {
-          glass.disabled = false;
-          glass.value = surface;
-          syncGlassHex(glass);
-          syncGlassPreview(theme);
+        const surfaceRow = colorRow(theme, 'surface');
+        if (surfaceRow && surface) {
+          surfaceRow.querySelector('[data-ui-color-input]').disabled = false;
+          setRowColor(surfaceRow, surface);
         }
-        const accentInput = page.querySelector(`[data-ui-accent="${theme}"]`);
-        const accentAuto = page.querySelector(`[data-ui-accent-auto="${theme}"]`);
-        const accentHidden = page.querySelector(`#ui-accent-auto-${theme}`);
-        const accentHex = page.querySelector(`[data-ui-accent-hex="${theme}"]`);
-        const hasAccent = accent && /^#[0-9a-fA-F]{6}$/.test(accent);
-        if (accentInput) {
-          accentInput.disabled = !hasAccent;
-          if (hasAccent) accentInput.value = accent;
-        }
-        if (accentAuto) accentAuto.checked = !hasAccent;
-        if (accentHidden) accentHidden.value = hasAccent ? '0' : '1';
-        if (accentHex && hasAccent) accentHex.textContent = accent;
+        for (const role of ['text', 'muted', 'link']) setRowAuto(colorRow(theme, role), true);
+        const accentRow = colorRow(theme, 'accent');
+        const hasAccent = Boolean(accent) && /^#[0-9a-fA-F]{6}$/.test(accent);
+        setRowAuto(accentRow, !hasAccent);
+        if (hasAccent) setRowColor(accentRow, accent);
+        syncGlassPreview(theme);
       }
-      page.querySelectorAll('[data-ui-preset]').forEach((b) => b.classList.toggle('is-active', b === btn));
+      markActivePreset(btn.dataset.uiPreset);
       setResetWrapVisible('colors', true);
       if (mainForm) mainForm.classList.add('is-dirty');
       schedulePreview();
@@ -6218,15 +6232,11 @@ function attachUiAppearanceUpload() {
     page.querySelector(`[data-ui-range-value="${name}"]`)?.replaceChildren(String(value));
   }
 
-  function setAccentOrOverlay(kind, theme, color, auto) {
-    const colorSel = kind === 'accent' ? 'data-ui-accent' : 'data-ui-overlay';
-    const autoSel = kind === 'accent' ? 'data-ui-accent-auto' : 'data-ui-overlay-auto';
-    const hexSel = kind === 'accent' ? 'data-ui-accent-hex' : 'data-ui-overlay-hex';
-    const hiddenId = kind === 'accent' ? `ui-accent-auto-${theme}` : `ui-overlay-auto-${theme}`;
-    const colorInput = page.querySelector(`[${colorSel}="${theme}"]`);
-    const autoChk = page.querySelector(`[${autoSel}="${theme}"]`);
-    const hidden = page.querySelector(`#${hiddenId}`);
-    const hexEl = page.querySelector(`[${hexSel}="${theme}"]`);
+  function setOverlayColor(theme, color, auto) {
+    const colorInput = page.querySelector(`[data-ui-overlay="${theme}"]`);
+    const autoChk = page.querySelector(`[data-ui-overlay-auto="${theme}"]`);
+    const hidden = page.querySelector(`#ui-overlay-auto-${theme}`);
+    const hexEl = page.querySelector(`[data-ui-overlay-hex="${theme}"]`);
     if (autoChk) autoChk.checked = auto;
     if (hidden) hidden.value = auto ? '1' : '0';
     if (colorInput) {
@@ -6234,13 +6244,6 @@ function attachUiAppearanceUpload() {
       if (!auto && color) colorInput.value = color;
     }
     if (hexEl && !auto && color) hexEl.textContent = color;
-  }
-
-  function setGlassPick(theme, role, color, auto) {
-    const input = page.querySelector(`[data-ui-glass-pick-input="${role}"][data-ui-glass-pick-theme="${theme}"]`);
-    if (!input) return;
-    input.value = color;
-    input.dataset.uiGlassAuto = auto ? '1' : '0';
   }
 
   function applySlidersState(st) {
@@ -6256,30 +6259,27 @@ function attachUiAppearanceUpload() {
   }
 
   function applyColorsState(st) {
-    page.querySelectorAll('[data-ui-preset]').forEach((b) => b.classList.remove('is-active'));
     const dynamic = page.querySelector('[name="dynamicThemeFromBg"]');
     if (dynamic) dynamic.checked = Boolean(st.dynamicThemeFromBg);
     syncDynamicBaseColorInputs();
     for (const theme of ['dark', 'light']) {
-      const glass = page.querySelector(`[data-ui-glass-color="${theme}"]`);
-      const surface = theme === 'dark' ? st.glassColorDark : st.glassColorLight;
-      if (glass && surface) {
-        glass.value = surface;
-        syncGlassHex(glass);
+      const sfx = theme === 'dark' ? 'Dark' : 'Light';
+      setRowColor(colorRow(theme, 'surface'), st[`glassColor${sfx}`]);
+      const roles = {
+        text: ['glassText', 'glassTextAuto'],
+        muted: ['glassMuted', 'glassMutedAuto'],
+        link: ['glassLink', 'glassLinkAuto'],
+        accent: ['glassAccent', 'glassAccentAuto'],
+      };
+      for (const [role, [colorKey, autoKey]] of Object.entries(roles)) {
+        const row = colorRow(theme, role);
+        setRowAuto(row, Boolean(st[`${autoKey}${sfx}`]));
+        setRowColor(row, st[`${colorKey}${sfx}`]);
       }
-      setGlassPick(theme, 'text', theme === 'dark' ? st.glassTextDark : st.glassTextLight, theme === 'dark' ? st.glassTextAutoDark : st.glassTextAutoLight);
-      setGlassPick(theme, 'muted', theme === 'dark' ? st.glassMutedDark : st.glassMutedLight, theme === 'dark' ? st.glassMutedAutoDark : st.glassMutedAutoLight);
-      setGlassPick(theme, 'link', theme === 'dark' ? st.glassLinkDark : st.glassLinkLight, theme === 'dark' ? st.glassLinkAutoDark : st.glassLinkAutoLight);
-      setAccentOrOverlay('accent', theme, theme === 'dark' ? st.glassAccentDark : st.glassAccentLight, theme === 'dark' ? st.glassAccentAutoDark : st.glassAccentAutoLight);
-      setAccentOrOverlay('overlay', theme, theme === 'dark' ? st.overlayColorDark : st.overlayColorLight, theme === 'dark' ? st.overlayColorAutoDark : st.overlayColorAutoLight);
+      setOverlayColor(theme, st[`overlayColor${sfx}`], Boolean(st[`overlayColorAuto${sfx}`]));
+      syncGlassPreview(theme);
     }
-    setHiddenFlag('glassTextAutoDark', st.glassTextAutoDark);
-    setHiddenFlag('glassTextAutoLight', st.glassTextAutoLight);
-    setHiddenFlag('glassMutedAutoDark', st.glassMutedAutoDark);
-    setHiddenFlag('glassMutedAutoLight', st.glassMutedAutoLight);
-    setHiddenFlag('glassLinkAutoDark', st.glassLinkAutoDark);
-    setHiddenFlag('glassLinkAutoLight', st.glassLinkAutoLight);
-    ['dark', 'light'].forEach((theme) => syncGlassPreview(theme));
+    markActivePreset(st.activePreset || '');
   }
 
   function applyShapeState(st) {
