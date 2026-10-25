@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initDb, createUser, db, rebuildActiveBooksView, getSetting, setSetting } from '../src/db.js';
+import {
+  initDb, createUser, db, rebuildActiveBooksView, getSetting, setSetting, setMeta,
+  catalogLangCountsReady, adjustCatalogCountsForBook
+} from '../src/db.js';
 import { searchCatalog, getAuthorBooksGrouped, listAuthors, listSeries, listGenres } from '../src/inpx.js';
 import {
   getUserContentLangs,
@@ -132,6 +135,31 @@ test('saved languages narrow catalog search and an author book list', async () =
   assert.equal(enGenres.items.find((row) => row.name === 'contentlanggenre')?.bookCount, 1);
   const deGenres = listGenres({ page: 1, pageSize: 50, sort: 'count', langs: ['de'] });
   assert.equal(deGenres.items.find((row) => row.name === 'contentlanggenre'), undefined);
+});
+
+test('precomputed language counts match counting the books and follow single-book changes', () => {
+  assert.equal(catalogLangCountsReady(), true, 'the counts worker fills catalog_lang_counts');
+  const lists = () => ['ru', 'en', 'de'].flatMap((lang) => [
+    listAuthors({ page: 1, pageSize: 50, sort: 'count', langs: [lang] }),
+    listAuthors({ page: 1, pageSize: 50, sort: 'name', letter: 'p', langs: [lang] }),
+    listSeries({ page: 1, pageSize: 50, sort: 'name', langs: [lang] }),
+    listGenres({ page: 1, pageSize: 50, sort: 'count', langs: [lang] }),
+    listAuthors({ query: 'pref author', page: 1, pageSize: 10, sort: 'count', langs: [lang] })
+  ]);
+  const precomputed = lists();
+  setMeta('catalog_lang_counts_ready', '0');
+  try {
+    assert.deepEqual(precomputed, lists());
+  } finally {
+    setMeta('catalog_lang_counts_ready', '1');
+  }
+
+  const enCount = () => listAuthors({ page: 1, pageSize: 50, sort: 'count', langs: ['en'] })
+    .items.find((row) => row.name === 'pref,author')?.bookCount;
+  adjustCatalogCountsForBook('pref-en', -1);
+  assert.equal(enCount(), undefined);
+  adjustCatalogCountsForBook('pref-en', 1);
+  assert.equal(enCount(), 1);
 });
 
 test('book cards and list rows show the language code', () => {

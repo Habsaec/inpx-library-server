@@ -3286,6 +3286,13 @@ export function adjustCatalogCountsForBook(bookId, delta) {
       WHERE id IN (SELECT series_id FROM book_series WHERE book_id = ?)`).run(delta, id);
     db.prepare(`UPDATE genres_catalog SET book_count = MAX(0, COALESCE(book_count, 0) + ?)
       WHERE id IN (SELECT genre_id FROM book_genres WHERE book_id = ?)`).run(delta, id);
+    const lang = db.prepare("SELECT COALESCE(lang, '') AS lang FROM books WHERE id = ?").get(id)?.lang ?? '';
+    for (const [kind, link, key] of [[CATALOG_LANG_KIND.authors, 'book_authors', 'author_id'], [CATALOG_LANG_KIND.series, 'book_series', 'series_id'], [CATALOG_LANG_KIND.genres, 'book_genres', 'genre_id']]) {
+      db.prepare(`INSERT OR IGNORE INTO catalog_lang_counts (kind, id, lang, book_count)
+        SELECT ?, ${key}, ?, 0 FROM ${link} WHERE book_id = ?`).run(kind, lang, id);
+      db.prepare(`UPDATE catalog_lang_counts SET book_count = MAX(0, book_count + ?)
+        WHERE kind = ? AND lang = ? AND id IN (SELECT ${key} FROM ${link} WHERE book_id = ?)`).run(delta, kind, lang, id);
+    }
   })();
   const snapshot = getLibraryStatsSnapshot();
   if (snapshot) {
@@ -3710,6 +3717,8 @@ export async function refreshCatalogBookCounts({ onProgress } = {}) {
     }
   }
 
+  /* Inline-путь не пишет catalog_lang_counts — списки с языками вернутся к подсчёту по книгам. */
+  setMeta('catalog_lang_counts_ready', '0');
   onProgress?.({ stage: 'catalog_authors', percent: 75 });
   db.transaction(() => {
     db.exec(`
@@ -4002,6 +4011,27 @@ db.exec(`
     UNIQUE(username, name)
   );
 `);
+
+/* Книги по языку для каждого автора / серии / жанра (kind: CATALOG_LANG_KIND). Пишет worker
+   пересчёта book_count; списки с языками профиля читают её вместо GROUP BY по всему каталогу
+   (авторы на 700k книг: ~50 с → миллисекунды). lang — как в books (сырой код, '' = без языка). */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS catalog_lang_counts (
+    kind INTEGER NOT NULL,
+    id INTEGER NOT NULL,
+    lang TEXT NOT NULL,
+    book_count INTEGER NOT NULL,
+    PRIMARY KEY (kind, id, lang)
+  ) WITHOUT ROWID;
+  CREATE INDEX IF NOT EXISTS idx_catalog_lang_counts_lang ON catalog_lang_counts(kind, lang, id, book_count);
+`);
+
+export const CATALOG_LANG_KIND = { authors: 1, series: 2, genres: 3 };
+
+/** Таблица заполнена полным пересчётом; до этого списки с языками считают по книгам. */
+export function catalogLangCountsReady() {
+  return getMeta('catalog_lang_counts_ready') === '1';
+}
 
 function ensureReadingPositionsSchema() {
   const columns = db.prepare(`PRAGMA table_info(reading_positions)`).all();

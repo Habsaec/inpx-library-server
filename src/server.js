@@ -62,7 +62,7 @@ import { startTelegramBot, stopTelegramBot, restartTelegramBot, isTelegramBotRun
 import {
   STATS_CACHE_TTL_MS, HOME_SECTIONS_CACHE_TTL_MS
 } from './constants.js';
-import { db, getUserByUsername, hasAdminUser, initDb, applyDbMemorySettings, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, isDbBreakdownFresh, storeDbBreakdownFromStatRows, markDbBreakdownUnsupported, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus, tryIdleWalTruncate, getLibraryStatsSnapshot } from './db.js';
+import { db, getUserByUsername, hasAdminUser, initDb, applyDbMemorySettings, ensureSchemaIndexes, analyzeDatabaseYielding, getSmtpSettings, getUserStats, getSetting, setSetting, getSources, decryptValue, getMeta, setMeta, rebuildBooksFtsFromContent, ensureBooksFtsTriggers, rebuildActiveBooksView, refreshCatalogBookCounts, countSuppressedBooks, countIndexedDeletedBooks, getDbBreakdown, isDbBreakdownFresh, storeDbBreakdownFromStatRows, markDbBreakdownUnsupported, getTelegramSettings, invalidateBooksFtsHealthCache, getBooksFtsStatus, tryIdleWalTruncate, getLibraryStatsSnapshot, catalogLangCountsReady } from './db.js';
 import { runDbMaintenance, stopDbMaintenance, shouldRunDbMaintenanceInThisProcess } from './services/db-maintenance.js';
 import {
   backfillCatalogSearchFields,
@@ -1385,6 +1385,11 @@ async function bootstrap() {
       // Full catalog recount is multi-second on huge libraries — only when filters changed.
       const fingerprint = `v2\n${getSetting('excluded_languages') || ''}\n${getSetting('excluded_genres') || ''}\n${getSetting('show_deleted_books') === '1' ? '1' : '0'}`;
       if (getMeta('active_books_filter_fp') === fingerprint) {
+        /* Старая база без catalog_lang_counts: один пересчёт в worker, иначе списки авторов /
+           серий / жанров с языками профиля считаются по всем книгам (десятки секунд). */
+        if (!catalogLangCountsReady() && getLibraryStatsSnapshot()?.totalBooks > 0) {
+          await refreshCatalogBookCounts();
+        }
         return;
       }
       await rebuildActiveBooksView();

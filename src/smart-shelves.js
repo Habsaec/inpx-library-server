@@ -3,11 +3,40 @@
  * Книги не хранятся — подбираются при открытии полки, поэтому полка «сама» пополняется после индексации.
  */
 import { db } from './db.js';
-import { parseGenreList, parseGenreMode, parseHasSeries, searchCatalog } from './inpx.js';
+import { getRuntimeQueryCacheGeneration, parseGenreList, parseGenreMode, parseHasSeries, searchCatalog } from './inpx.js';
 
 const SORTS = ['recent', 'title', 'author', 'series', 'rating'];
 const NAME_MAX = 100;
 const PREVIEW_COUNT = 8;
+/* Первая страница полки — поиск по каталогу (~0.5–1.5 с синхронно на полку в большой библиотеке),
+   а Android опрашивает список полок каждые 8 с и главную при каждом открытии. Ключ — запрос полки,
+   размер и языки (не пользователь), плюс поколение runtime-кешей каталога, чтобы переиндексация
+   сбрасывала кеш. */
+const FIRST_PAGE_TTL_MS = 5 * 60_000;
+const FIRST_PAGE_CACHE_MAX = 200;
+const firstPageCache = new Map();
+
+/** `getSmartShelfBooks` для первой страницы через кеш; вызывающий не должен менять результат. */
+export function getSmartShelfFirstPage(shelf, { pageSize = 24, langs = null } = {}) {
+  const langKey = Array.isArray(langs) ? langs.join(',') : '';
+  const key = `${getRuntimeQueryCacheGeneration()}|${pageSize}|${langKey}|${shelf.query}`;
+  const hit = firstPageCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  const value = getSmartShelfBooks(shelf, { page: 1, pageSize, langs });
+  firstPageCache.delete(key);
+  firstPageCache.set(key, { value, expiresAt: Date.now() + FIRST_PAGE_TTL_MS });
+  if (firstPageCache.size > FIRST_PAGE_CACHE_MAX) firstPageCache.delete(firstPageCache.keys().next().value);
+  return value;
+}
+
+function getSmartShelfPreview(shelf) {
+  try {
+    const { items, total } = getSmartShelfFirstPage(shelf, { pageSize: PREVIEW_COUNT });
+    return { bookCount: total, previewBookIds: items.map((book) => book.id) };
+  } catch {
+    return { bookCount: 0, previewBookIds: [] };
+  }
+}
 
 function readParams(input) {
   if (typeof input === 'string' || input instanceof URLSearchParams) {
@@ -85,14 +114,9 @@ export function listSmartShelves(username, { withPreview = false } = {}) {
   const shelves = db.prepare('SELECT * FROM smart_shelves WHERE username = ? ORDER BY name COLLATE NOCASE, id').all(username).map(toShelf);
   if (!withPreview) return shelves;
   for (const shelf of shelves) {
-    try {
-      const { items, total } = getSmartShelfBooks(shelf, { page: 1, pageSize: PREVIEW_COUNT });
-      shelf.bookCount = total;
-      shelf.previewBookIds = items.map((book) => book.id);
-    } catch {
-      shelf.bookCount = 0;
-      shelf.previewBookIds = [];
-    }
+    const { bookCount, previewBookIds } = getSmartShelfPreview(shelf);
+    shelf.bookCount = bookCount;
+    shelf.previewBookIds = [...previewBookIds];
   }
   return shelves;
 }

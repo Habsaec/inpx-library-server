@@ -92,7 +92,7 @@ import {
   listRecentSectionGenres
 } from '../inpx.js';
 import { getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
-import { listSmartShelves, getSmartShelfBooks } from '../smart-shelves.js';
+import { listSmartShelves, getSmartShelfFirstPage } from '../smart-shelves.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
 import {
@@ -295,7 +295,7 @@ export function getPinnedHomeShelves(username, limit) {
   for (const shelf of listSmartShelves(username)) {
     if (!shelf.onHome) continue;
     try {
-      result.push({ id: shelf.id, kind: 'smart', title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfBooks(shelf, { page: 1, pageSize: limit, langs: contentLangs }).items });
+      result.push({ id: shelf.id, kind: 'smart', title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfFirstPage(shelf, { pageSize: limit, langs: contentLangs }).items.map((book) => ({ ...book })) });
     } catch { /* битый фильтр не должен ломать главную */ }
   }
   return result.filter((shelf) => shelf.items.length).slice(0, HOME_SHELVES_MAX);

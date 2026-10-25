@@ -262,3 +262,21 @@ test('pinned home shelves (web home and /api/home/shelves) keep only pinned non-
 
   for (const shelf of listSmartShelves(USER)) deleteSmartShelf(shelf.id, USER);
 });
+
+test('smart shelf preview is cached until the catalog caches reset', async () => {
+  const { markLibraryDedupProjectionStale } = await import('../src/inpx.js');
+  const id = createSmartShelf(USER, 'Cached preview', { genre: 'smartdet' });
+  const preview = () => listSmartShelves(USER, { withPreview: true }).find((s) => s.id === id);
+  assert.equal(preview().bookCount, 1);
+
+  db.prepare("UPDATE books SET deleted = 1 WHERE id = ?").run(IDS[2]);
+  try {
+    assert.equal(preview().bookCount, 1, 'repeated polls reuse the cached preview');
+    markLibraryDedupProjectionStale();
+    assert.equal(preview().bookCount, 0, 'a catalog cache reset refreshes it');
+  } finally {
+    db.prepare("UPDATE books SET deleted = 0 WHERE id = ?").run(IDS[2]);
+    markLibraryDedupProjectionStale();
+    deleteSmartShelf(id, USER);
+  }
+});
