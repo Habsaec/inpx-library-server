@@ -147,3 +147,15 @@ test('saving default panel sliders does not switch glass panels on', () => {
   assert.equal(usesPanelGlass(), true);
   resetUiThemeSliders();
 });
+
+test('background picture is cropped and grown only while blurred; panel blur off at 0', async () => {
+  const { backgroundLayoutToCssVars, panelBackdropCssVar } = await import('../src/services/theme-engine.js');
+  const sharp = backgroundLayoutToCssVars('cover', 'center', 0);
+  assert.ok(sharp.includes('--ui-bg-transform:none'));
+  assert.ok(sharp.includes('--ui-bg-inset:0'));
+  const blurred = backgroundLayoutToCssVars('cover', 'center', 8);
+  assert.ok(blurred.includes('--ui-bg-transform:scale(1.06)'));
+  assert.ok(blurred.includes('--ui-bg-inset:-24px'));
+  assert.equal(panelBackdropCssVar(0), '--ui-panel-backdrop:none');
+  assert.equal(panelBackdropCssVar(6), '--ui-panel-backdrop:blur(6px)');
+});

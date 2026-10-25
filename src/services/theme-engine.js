@@ -499,23 +499,37 @@ export function fontSizeToCssVars(basePx = DEFAULT_FONT_SIZE_PX, headingScale = 
 export const BG_SIZE_PRESETS = ['cover', 'contain', 'tile'];
 export const BG_POSITION_PRESETS = ['center', 'top', 'bottom', 'left', 'right'];
 
-export function backgroundLayoutToCssVars(size = 'cover', position = 'center') {
+/**
+ * The picture is grown (inset −24px) and scaled only while it is blurred: the blur filter fades the
+ * edges, and that is the only reason to crop. Unblurred, the image shows exactly as uploaded.
+ */
+export function backgroundLayoutToCssVars(size = 'cover', position = 'center', blurPx = 0) {
   const sz = BG_SIZE_PRESETS.includes(size) ? size : 'cover';
   const pos = BG_POSITION_PRESETS.includes(position) ? position : 'center';
+  const blurred = Number(blurPx) > 0;
+  const inset = `--ui-bg-inset:${blurred ? '-24px' : '0'}`;
   if (sz === 'tile') {
     return [
       '--ui-bg-size:auto',
       '--ui-bg-repeat:repeat',
       `--ui-bg-position:${pos}`,
       '--ui-bg-transform:none',
+      inset,
     ];
   }
   return [
     `--ui-bg-size:${sz}`,
     '--ui-bg-repeat:no-repeat',
     `--ui-bg-position:${pos}`,
-    `--ui-bg-transform:${sz === 'contain' ? 'none' : 'scale(1.06)'}`,
+    `--ui-bg-transform:${sz === 'contain' || !blurred ? 'none' : 'scale(1.06)'}`,
+    inset,
   ];
+}
+
+/** Panel backdrop blur: `none` at 0 — `blur(0px)` still costs a compositing layer per panel. */
+export function panelBackdropCssVar(blurPx = 0) {
+  const blur = Math.max(0, Math.round(Number(blurPx) || 0));
+  return `--ui-panel-backdrop:${blur > 0 ? `blur(${blur}px)` : 'none'}`;
 }
 
 // ── Предустановки плотности ──

@@ -23,6 +23,7 @@ import {
   shadowTokensForPreset,
   fontSizeToCssVars,
   backgroundLayoutToCssVars,
+  panelBackdropCssVar,
   DEFAULT_FONT_SIZE_PX,
   MIN_FONT_SIZE_PX,
   MAX_FONT_SIZE_PX,
@@ -89,7 +90,9 @@ export {
 
 const UI_DIR = path.join(config.dataDir, 'ui');
 const BG_OVERLAY_MAX = 80;
-const DEFAULT_BG_CONTRAST = 5;
+/* «Видимость фона» by default: the picture shows at ~40% under the theme tint (the content veil keeps text
+   readable). It used to be 5, which hid a freshly uploaded picture almost completely (94% overlay). */
+const DEFAULT_BG_CONTRAST = 32;
 const BG_OVERLAY_DEFAULT_STRENGTH = BG_OVERLAY_MAX - DEFAULT_BG_CONTRAST;
 
 function bgContrastFromOverlayStrength(strength) {
@@ -998,6 +1001,7 @@ export function getThemeCssVars() {
     vars.push(
       `--ui-surface-opacity:${ui.surfaceOpacity}`,
       `--ui-surface-blur:${ui.surfaceBlur}px`,
+      panelBackdropCssVar(ui.surfaceBlur),
     );
   }
   if (ui.hasBackground) {
@@ -1005,7 +1009,7 @@ export function getThemeCssVars() {
       `--ui-bg-image:url("${ui.backgroundUrl}")`,
       `--ui-bg-blur:${ui.blur}px`,
       `--ui-bg-overlay:${ui.overlay}`,
-      ...backgroundLayoutToCssVars(ui.bgSize, ui.bgPosition),
+      ...backgroundLayoutToCssVars(ui.bgSize, ui.bgPosition, ui.blur),
     );
   }
   if (ui.hasHeader) {
@@ -1128,6 +1132,7 @@ export function getThemePreviewFromDraft(draft = {}) {
   vars.push(
     `--ui-surface-opacity:${surfaceOpacity}`,
     `--ui-surface-blur:${surfaceBlur}px`,
+    panelBackdropCssVar(surfaceBlur),
   );
   const panelGlass = hasBg || customSurface || surfaceOpacity !== 88 || surfaceBlur !== 0;
 
@@ -1141,7 +1146,7 @@ export function getThemePreviewFromDraft(draft = {}) {
       `--ui-bg-image:url("${saved.backgroundUrl}")`,
       `--ui-bg-blur:${blur}px`,
       `--ui-bg-overlay:${overlay}`,
-      ...backgroundLayoutToCssVars(bgSize, bgPosition),
+      ...backgroundLayoutToCssVars(bgSize, bgPosition, blur),
     );
   }
 

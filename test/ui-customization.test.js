@@ -250,8 +250,8 @@ test('resetUiThemeSliders clears saved slider settings', () => {
   assert.equal(hasUiThemeSlidersConfigured(), false);
   const ui = getUiCustomization();
   assert.equal(ui.blur, 0);
-  assert.equal(ui.overlay, 75);
-  assert.equal(ui.bgContrast, 5);
+  assert.equal(ui.overlay, 48);
+  assert.equal(ui.bgContrast, 32);
   assert.equal(ui.surfaceOpacity, 88);
   assert.equal(ui.surfaceBlur, 0);
 });

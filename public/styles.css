@@ -64,7 +64,7 @@
   --card-bg-hover: rgba(196, 163, 90, 0.07);
   --display-font: 'Source Serif 4', Georgia, 'Times New Roman', serif;
   --ease-premium: cubic-bezier(0.32, 0.72, 0, 1);
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px color-mix(in srgb, var(--accent) 65%, transparent);
+  --focus-ring: 0 0 0 2px var(--bg-solid, var(--bg)), 0 0 0 4px color-mix(in srgb, var(--accent) 65%, transparent);
   color-scheme: dark;
 }
 
@@ -1545,7 +1545,7 @@ form.is-dirty button[type="submit"]::after {
   top: 100%;
   height: 14px;
   pointer-events: none;
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 42%, transparent), transparent);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg-solid, var(--bg)) 42%, transparent), transparent);
 }
 
 .topbar .brand {
@@ -2414,8 +2414,8 @@ html[data-ui-sliders="1"] select optgroup {
     box-shadow: var(--shadow-lg);
     padding: 4px;
     color-scheme: dark;
-    backdrop-filter: blur(var(--ui-surface-blur, 0px));
-    -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+    backdrop-filter: var(--ui-panel-backdrop, none);
+    -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
   }
 
   html[data-theme="light"] select::picker(select) {
@@ -2583,7 +2583,7 @@ textarea:focus-visible {
   box-shadow: none;
   overflow: visible;
   --hero-card-bg:
-    linear-gradient(145deg, color-mix(in srgb, var(--surface) 86%, var(--accent) 14%) 0%, var(--surface) 52%, color-mix(in srgb, var(--bg) 90%, #000 10%) 100%);
+    linear-gradient(145deg, color-mix(in srgb, var(--surface) 86%, var(--accent) 14%) 0%, var(--surface) 52%, color-mix(in srgb, var(--bg-solid, var(--bg)) 90%, #000 10%) 100%);
 }
 
 /* Frameless gradient wash: same diagonal gradient as before, edges dissolve into the page */
@@ -2704,7 +2704,7 @@ textarea:focus-visible {
   width: 10px;
   height: calc(100% - 8px);
   border-radius: 2px 0 0 2px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 70%, #000 30%) 0%, color-mix(in srgb, var(--surface) 60%, #000 40%) 100%);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bg-solid, var(--bg)) 70%, #000 30%) 0%, color-mix(in srgb, var(--surface) 60%, #000 40%) 100%);
   transform: translateZ(-6px) rotateY(12deg);
   box-shadow: inset -1px 0 2px rgba(0, 0, 0, 0.35);
   pointer-events: none;
@@ -3830,8 +3830,8 @@ html[data-theme="light"] .card-series {
   max-width: min(90vw, 640px);
   position-area: bottom span-right;
   margin-top: 4px;
-  backdrop-filter: blur(var(--ui-surface-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
 }
 
 .author-popover-inner {
@@ -3891,8 +3891,8 @@ html[data-theme="light"] .card-series {
   max-width: min(90vw, 640px);
   position-area: bottom span-right;
   margin-top: 4px;
-  backdrop-filter: blur(var(--ui-surface-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
 }
 
 .series-popover-inner {
@@ -4346,8 +4346,8 @@ html[data-theme="light"] .card-series {
   border-radius: var(--radius-lg);
   background: var(--ui-glass-menu-bg, var(--ui-glass-panel-bg, var(--surface)));
   box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(var(--ui-surface-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
   animation: popover-enter 0.15s ease-out;
 }
 
@@ -6495,8 +6495,8 @@ html[data-theme="light"] .page-jump::after {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background-color: var(--ui-glass-panel-bg, var(--field-bg));
-  backdrop-filter: blur(var(--ui-surface-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239a8e7e' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 14px center;
@@ -6536,8 +6536,8 @@ html[data-theme="light"] .page-jump::after {
 
 .account-nav-tabs .button {
   background: var(--ui-glass-panel-bg, var(--button-bg));
-  backdrop-filter: blur(var(--ui-surface-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
   color: var(--muted);
 }
 
@@ -10493,9 +10493,17 @@ html[data-ui-header="1"][data-ui-header-fit="cover"] .site-header-banner img {
 }
 
 /* ?? UI customization (admin appearance) ?? */
+/* Layers over a background image, bottom to top (all in the root stacking context):
+   z -2  body::before  the picture (blur, size, position)
+   z -2  #main-content::before  content veil — keeps text outside panels readable
+   z -2  body::after   overlay tinted with the theme (last in tree order, so above both)
+   z -1  decorative washes (aurora, manuscript, blurred covers)
+   z  0  page content and glass panels */
 html[data-ui-bg="1"] {
   --shell-bg: transparent;
   --bg: transparent;
+  /* --bg is transparent here; things that need a real page color (focus ring gap, edge shades, book spines) use this. */
+  --bg-solid: var(--surface);
 }
 
 html[data-ui-bg="1"] body {
@@ -10505,14 +10513,15 @@ html[data-ui-bg="1"] body {
 html[data-ui-bg="1"] body::before {
   content: '';
   position: fixed;
-  inset: -24px;
+  /* Grown and scaled only while blurred, to hide the soft edges of the filter. */
+  inset: var(--ui-bg-inset, 0);
   z-index: -2;
   background-image: var(--ui-bg-image);
   background-size: var(--ui-bg-size, cover);
   background-position: var(--ui-bg-position, center);
   background-repeat: var(--ui-bg-repeat, no-repeat);
   filter: blur(var(--ui-bg-blur, 0px));
-  transform: var(--ui-bg-transform, scale(1.06));
+  transform: var(--ui-bg-transform, none);
   pointer-events: none;
 }
 
@@ -10520,8 +10529,25 @@ html[data-ui-bg="1"] body::after {
   content: '';
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: -2;
   pointer-events: none;
+}
+
+/* Content veil: the main column gets the panel glass too (a bit lighter), so headings and captions
+   that are not inside a card stay readable however vivid the picture is. Follows «Прозрачность панелей». */
+html[data-ui-bg="1"] #main-content {
+  position: relative;
+}
+
+html[data-ui-bg="1"] #main-content::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--ui-glass-bg, var(--surface)) calc(var(--ui-glass-fill-opacity, 88) * 0.75%), transparent);
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
 }
 
 html[data-ui-bg="1"][data-theme="dark"] body::after {
@@ -10640,8 +10666,8 @@ html[data-ui-sliders="1"] .login-card,
 html[data-ui-sliders="1"] .admin-card,
 html[data-ui-sliders="1"] .entity-list .table-row {
   background: var(--ui-glass-panel-bg);
-  backdrop-filter: blur(var(--ui-surface-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
 }
 
 html[data-ui-sliders="1"] .entity-list .table-row:hover:not(.table-row-stack):not(.profile-form-row) {
@@ -10654,8 +10680,8 @@ html[data-ui-sliders="1"] .catalog-page-intro:has(> .browse-filter) > .browse-fi
 html[data-ui-sliders="1"] .catalog-page-intro:has(> .browse-filter) > .actions .sort-control select,
 html[data-ui-sliders="1"] .catalog-page-intro:has(> .browse-filter) > .actions .sort-control-order {
   background: var(--ui-glass-panel-bg);
-  backdrop-filter: blur(var(--ui-surface-blur, 0px));
-  -webkit-backdrop-filter: blur(var(--ui-surface-blur, 0px));
+  backdrop-filter: var(--ui-panel-backdrop, none);
+  -webkit-backdrop-filter: var(--ui-panel-backdrop, none);
 }
 
 html[data-ui-sliders="1"] .catalog-page-intro:has(> .browse-filter) > .browse-filter .button:hover,
@@ -12340,7 +12366,7 @@ html[data-theme="light"] .card-cover-actions .download-menu-trigger:hover {
     bottom: 100%;
     height: 14px;
     pointer-events: none;
-    background: linear-gradient(to top, color-mix(in srgb, var(--bg) 42%, transparent), transparent);
+    background: linear-gradient(to top, color-mix(in srgb, var(--bg-solid, var(--bg)) 42%, transparent), transparent);
   }
 
   .bottom-nav-item {
@@ -12874,11 +12900,6 @@ html[data-theme="light"] .modal-form-submit:hover:not(:disabled) {
 .book-detail-shell {
   position: relative;
   overflow: visible;
-}
-
-/* Same layer as the background image: the veil must sit below z:-1 backdrops, not cover them */
-html[data-ui-bg="1"] body::after {
-  z-index: -2;
 }
 
 .book-detail-shell::before {
@@ -13875,5 +13896,20 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   .brand-home-link:hover .topbar-brand-logo {
     transform: scale(1.08);
     filter: drop-shadow(0 2px 10px color-mix(in srgb, var(--accent) 55%, transparent));
+  }
+}
+
+/* System «reduce transparency» / «more contrast» beat the admin glass settings: solid panels,
+   solid content veil, no backdrop blur. Higher specificity than html[data-ui-sliders="1"] rules. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-ui-sliders="1"],
+  html[data-ui-bg="1"] {
+    --ui-glass-fill-opacity: 100;
+    --ui-glass-menu-fill-opacity: 100;
+    --ui-panel-backdrop: none;
+  }
+
+  html[data-ui-bg="1"] #main-content::before {
+    background: var(--ui-glass-bg, var(--surface));
   }
 }
