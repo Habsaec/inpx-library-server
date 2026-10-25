@@ -3622,14 +3622,25 @@ function buildHasSeriesFilterSql(hasSeries = null) {
   };
 }
 
-/** Collect AND-able catalog filters (lang/format/year/minRate/hasSeries). Genre is separate. */
-function buildCatalogExtraFilters({ lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null } = {}) {
+/** «Скрыть прочитанное»: books the user marked read are left out (PK lookup on read_books). */
+function buildHideReadFilterSql(hideReadUser = '') {
+  const username = String(hideReadUser || '').trim();
+  if (!username) return null;
+  return {
+    where: `NOT EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = ? AND rb.book_id = active_books.id)`,
+    params: [username]
+  };
+}
+
+/** Collect AND-able catalog filters (lang/format/year/minRate/hasSeries/hideRead). Genre is separate. */
+function buildCatalogExtraFilters({ lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, hideReadUser = '' } = {}) {
   return [
     buildLanguageFilterSql(lang, langs),
     buildFormatFilterSql(format),
     buildYearFilterSql(year),
     buildMinRateFilterSql(minRate),
-    buildHasSeriesFilterSql(hasSeries)
+    buildHasSeriesFilterSql(hasSeries),
+    buildHideReadFilterSql(hideReadUser)
   ].filter(Boolean);
 }
 
@@ -4266,6 +4277,8 @@ function enabledSourcesHaveMixedSidecarFlag() {
 export function searchBooks({
   query = '', page = 1, pageSize = 24, field = 'all', sort = 'title', order = '',
   genre = '', letter = '', lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null,
+  /** username: leave out books this user marked read */
+  hideReadUser = '',
   /** 'and' = book must have all selected genres, 'or' (default) = at least one */
   genreMode = 'or',
   /** exact = full COUNT(*); capped = COUNT up to 10001 (hub); omit = skip COUNT (suggest) */
@@ -4277,7 +4290,7 @@ export function searchBooks({
   const offset = (page - 1) * pageSize;
   const orderBy = resolveSort(sort, order);
   const genreFilter = buildGenreFilterSql(genre, genreMode);
-  const extraFilters = buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries });
+  const extraFilters = buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries, hideReadUser });
   const parsedQuery = parseSearchOperator(query);
   const letterNorm = String(letter || '').trim().toLowerCase();
   const countCap = 10_001;
@@ -5139,7 +5152,8 @@ export function searchCatalog({
   genreMode = 'or',
   nameOnly = false,
   /** books: default capped COUNT for free-text (same as search hub) — exact COUNT on Flibusta is too slow */
-  totalMode = ''
+  totalMode = '',
+  hideReadUser = ''
 }) {
   const bookFields = new Set(['books', 'title', 'book-authors', 'book-series', 'genres', 'keywords']);
   const normalizedField = ['books', 'authors', 'series', 'title', 'book-authors', 'book-series', 'genres', 'keywords'].includes(field) ? field : 'books';
@@ -5168,7 +5182,7 @@ export function searchCatalog({
       : (String(query || '').trim() ? 'capped' : 'exact');
     const bookField = bookFields.has(normalizedField) ? bookFieldMap[normalizedField] : 'all';
     const langList = Array.isArray(langs) ? langs : [];
-    const warmed = (!langList.length && normalizedField === 'books' && bookField === 'all')
+    const warmed = (!langList.length && !hideReadUser && normalizedField === 'books' && bookField === 'all')
       ? takeWarmSearchBooksPage(query, {
         sort, page, pageSize, genre, letter, lang, format, year, minRate, hasSeries: seriesFlag
       })
@@ -5189,6 +5203,7 @@ export function searchCatalog({
       year,
       minRate,
       hasSeries: seriesFlag,
+      hideReadUser,
       totalMode: bookTotalMode,
       allowTypoRetry: false
     };
@@ -6547,10 +6562,10 @@ export function getBooksByFacetLight(facet, value, limit = 8, sort = 'rating') {
   return stmt.all(resolved, limit).map(mapBookListRow);
 }
 
-function buildFacetExtraWhere({ lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = '' } = {}) {
+function buildFacetExtraWhere({ lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = '', hideReadUser = '' } = {}) {
   const parts = [];
   const params = [];
-  for (const ef of buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries })) {
+  for (const ef of buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries, hideReadUser })) {
     parts.push(ef.where.replace(/active_books\./g, 'b.'));
     params.push(...ef.params);
   }
@@ -6568,10 +6583,10 @@ function buildFacetExtraWhere({ lang = '', langs = null, format = '', year = 0, 
 
 function getBooksByFacetFiltered({
   facet, value, page = 1, pageSize = 24, sort = 'title', order = '', author = '',
-  lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = ''
+  lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = '', hideReadUser = ''
 }) {
   const offset = (page - 1) * pageSize;
-  const extra = buildFacetExtraWhere({ lang, langs, format, year, minRate, hasSeries, genre });
+  const extra = buildFacetExtraWhere({ lang, langs, format, year, minRate, hasSeries, genre, hideReadUser });
   const rankOrder = "COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, ''), b.imported_at) DESC, b.imported_at DESC, b.id DESC";
   const listOrder = sort === 'recent'
     ? rankOrder
@@ -6635,7 +6650,7 @@ function getBooksByFacetFiltered({
 
 export function getBooksByFacet({
   facet, value, page = 1, pageSize = 24, sort = 'title', order = '', author = '',
-  lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = ''
+  lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = '', hideReadUser = ''
 } = {}) {
   if (facet === 'series') {
     value = resolveSeriesCatalogName(String(value || ''));
@@ -6645,8 +6660,8 @@ export function getBooksByFacet({
   const seriesFlag = hasSeries === 0 || hasSeries === 1 ? hasSeries : parseHasSeries(hasSeries);
   const genreKey = parseGenreList(genre).join(',');
   const langList = Array.isArray(langs) ? langs : [];
-  const extra = buildFacetExtraWhere({ lang, langs: langList, format, year, minRate, hasSeries: seriesFlag, genre: genreKey });
-  const filterKey = `${lang}|${langList.join(',')}|${format}|${year}|${minRate}|${seriesFlag ?? ''}|${genreKey}`;
+  const extra = buildFacetExtraWhere({ lang, langs: langList, format, year, minRate, hasSeries: seriesFlag, genre: genreKey, hideReadUser });
+  const filterKey = `${lang}|${langList.join(',')}|${format}|${year}|${minRate}|${seriesFlag ?? ''}|${genreKey}|r:${hideReadUser}`;
   const cacheKey = `${facet}|${value}|${sort}|${order}|${page}|${pageSize}|${author}|f:${filterKey}`;
   const cached = readTimedCache(facetBooksCache, cacheKey);
   if (cached) return cached;
@@ -6655,7 +6670,7 @@ export function getBooksByFacet({
   if (extra.active) {
     const result = getBooksByFacetFiltered({
       facet, value, page, pageSize, sort, order, author,
-      lang, langs: langList, format, year, minRate, hasSeries: seriesFlag, genre: genreKey
+      lang, langs: langList, format, year, minRate, hasSeries: seriesFlag, genre: genreKey, hideReadUser
     });
     writeTimedCache(facetBooksCache, cacheKey, result, FACET_CACHE_TTL_MS, 120);
     return result;
@@ -6707,7 +6722,7 @@ export function getBooksByFacet({
  */
 export async function getBooksByFacetCoalesced({
   facet, value, page = 1, pageSize = 24, sort = 'title', order = '', author = '',
-  lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = ''
+  lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = '', hideReadUser = ''
 } = {}) {
   let v = String(value || '');
   if (facet === 'series') {
@@ -6718,7 +6733,7 @@ export async function getBooksByFacetCoalesced({
   const seriesFlag = hasSeries === 0 || hasSeries === 1 ? hasSeries : parseHasSeries(hasSeries);
   const genreKey = parseGenreList(genre).join(',');
   const langList = Array.isArray(langs) ? langs : [];
-  const filterKey = `${lang}|${langList.join(',')}|${format}|${year}|${minRate}|${seriesFlag ?? ''}|${genreKey}`;
+  const filterKey = `${lang}|${langList.join(',')}|${format}|${year}|${minRate}|${seriesFlag ?? ''}|${genreKey}|r:${hideReadUser}`;
   const cacheKey = `${facet}|${v}|${sort}|${order}|${page}|${pageSize}|${author}|f:${filterKey}`;
   const cached = readTimedCache(facetBooksCache, cacheKey);
   if (cached) return cached;
@@ -6729,7 +6744,7 @@ export async function getBooksByFacetCoalesced({
         try {
           resolve(getBooksByFacet({
             facet, value: v, page, pageSize, sort, order, author,
-            lang, langs: langList, format, year, minRate, hasSeries: seriesFlag, genre: genreKey
+            lang, langs: langList, format, year, minRate, hasSeries: seriesFlag, genre: genreKey, hideReadUser
           }));
         } catch (err) {
           reject(err);
@@ -6854,12 +6869,19 @@ function orderAuthorSeriesGroups(series, sort, order = '') {
 }
 
 /** Книги автора: серии (по порядку каталога) и книги вне серий. */
-export function getAuthorBooksGrouped(authorName, sort = 'title', order = '', { page = 1, pageSize = 48, langs = null } = {}) {
+export function getAuthorBooksGrouped(authorName, sort = 'title', order = '', { page = 1, pageSize = 48, langs = null, hideReadUser = '' } = {}) {
   void page;
   void pageSize;
   const langList = Array.isArray(langs) ? langs : [];
-  const langClause = languageFilterClause('b.lang', '', langList);
-  const cacheKey = `${authorName}|${sort}|${order}|${langList.join(',')}`;
+  const hideRead = buildHideReadFilterSql(hideReadUser);
+  const clauses = [languageFilterClause('b.lang', '', langList), hideRead && {
+    where: hideRead.where.replace(/active_books\./g, 'b.'),
+    params: hideRead.params
+  }].filter(Boolean);
+  const langClause = clauses.length
+    ? { where: clauses.map((c) => c.where).join(' AND '), params: clauses.flatMap((c) => c.params) }
+    : null;
+  const cacheKey = `${authorName}|${sort}|${order}|${langList.join(',')}|r:${hideReadUser}`;
   const cached = readTimedCache(authorGroupedCache, cacheKey);
   if (cached) return cached;
   const langSql = langClause ? ` AND ${langClause.where}` : '';
@@ -6999,11 +7021,11 @@ export function getAuthorBooksGrouped(authorName, sort = 'title', order = '', { 
 /**
  * То же, что getAuthorBooksGrouped, но параллельные запросы с тем же ключом ждут один расчёт.
  */
-export async function getAuthorBooksGroupedCoalesced(authorName, sort = 'title', order = '', { page = 1, pageSize = 48, langs = null } = {}) {
+export async function getAuthorBooksGroupedCoalesced(authorName, sort = 'title', order = '', { page = 1, pageSize = 48, langs = null, hideReadUser = '' } = {}) {
   void page;
   void pageSize;
   const langList = Array.isArray(langs) ? langs : [];
-  const cacheKey = `${authorName}|${sort}|${order}|${langList.join(',')}`;
+  const cacheKey = `${authorName}|${sort}|${order}|${langList.join(',')}|r:${hideReadUser}`;
   const cached = readTimedCache(authorGroupedCache, cacheKey);
   if (cached) return cached;
   let shared = authorGroupedInflight.get(cacheKey);
@@ -7011,7 +7033,7 @@ export async function getAuthorBooksGroupedCoalesced(authorName, sort = 'title',
     shared = new Promise((resolve, reject) => {
       setImmediate(() => {
         try {
-          resolve(getAuthorBooksGrouped(authorName, sort, order, { page, pageSize, langs: langList }));
+          resolve(getAuthorBooksGrouped(authorName, sort, order, { page, pageSize, langs: langList, hideReadUser }));
         } catch (err) {
           reject(err);
         } finally {
@@ -7343,7 +7365,7 @@ function followingSeenKey(username) {
   return `following_seen:${username}`;
 }
 
-function followingCutoffDate() {
+export function followingCutoffDate() {
   const bounds = resolveRecentCatalogCutoff();
   if (!bounds?.maxDate) return null;
   const d = new Date(`${bounds.maxDate}T00:00:00Z`);
@@ -7376,11 +7398,11 @@ function followingSqlParts(username, cutoff, { lang = '', langs = null, newerTha
   return { cte, body, params };
 }
 
-export function getFollowingNewBooks(username, { page = 1, pageSize = 24, lang = '', langs = null } = {}) {
+export function getFollowingNewBooks(username, { page = 1, pageSize = 24, lang = '', langs = null, newerThan = '' } = {}) {
   const u = String(username || '').trim();
   const window = followingCutoffDate();
   if (!u || !window) return { total: 0, items: [] };
-  const { cte, body, params } = followingSqlParts(u, window.cutoff, { lang, langs });
+  const { cte, body, params } = followingSqlParts(u, window.cutoff, { lang, langs, newerThan });
   const total = db.prepare(`${cte} SELECT COUNT(*) AS count ${body}`).get(...params).count;
   const offset = (Math.max(1, page) - 1) * pageSize;
   const items = db.prepare(`${cte}
@@ -7449,7 +7471,8 @@ export function getRecentArrivals({
   format = '',
   year = 0,
   minRate = 0,
-  hasSeries = null
+  hasSeries = null,
+  hideReadUser = ''
 } = {}) {
   const offset = Math.max(0, (Math.max(1, page) - 1) * pageSize);
   const limit = Math.max(1, Math.min(100, Math.floor(Number(pageSize) || 24)));
@@ -7465,7 +7488,7 @@ export function getRecentArrivals({
     whereParts.push(genreFilter.where.replace(/active_books\./g, 'b.'));
     whereParams.push(...genreFilter.params);
   }
-  for (const ef of buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries })) {
+  for (const ef of buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries, hideReadUser })) {
     whereParts.push(ef.where.replace(/active_books\./g, 'b.'));
     whereParams.push(...ef.params);
   }
@@ -7612,6 +7635,7 @@ let _stmtReadSeriesCount = null;
 let _stmtReadSeriesItems = null;
 let _stmtReadViewCount = null;
 let _stmtWantViewCount = null;
+let _stmtRatedViewCount = null;
 let _stmtReadViewItems = null;
 let _stmtCachedBookAnnotation = null;
 
@@ -7648,7 +7672,8 @@ export function getLibraryView(view = 'recent', {
   format = '',
   year = 0,
   minRate = 0,
-  hasSeries = null
+  hasSeries = null,
+  hideReadUser = ''
 } = {}) {
   const offset = (page - 1) * pageSize;
 
@@ -7739,6 +7764,40 @@ export function getLibraryView(view = 'recent', {
     return { total, items };
   }
 
+  /* «Мои оценки»: books the user rated, best first; each item carries `myRating` (1–5). */
+  if (view === 'rated') {
+    const normalizedUsername = String(username || '').trim();
+    if (!normalizedUsername) {
+      return { total: 0, items: [] };
+    }
+    _stmtRatedViewCount ??= db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM book_ratings r
+      JOIN active_books b ON b.id = r.book_id
+      WHERE r.username = ?
+    `);
+    const total = _stmtRatedViewCount.get(normalizedUsername).count;
+    const orderBy = sort === 'title'
+      ? applyOrder('b.title_sort ASC, b.id ASC', order)
+      : sort === 'author'
+        ? applyOrder('b.author_sort ASC, b.title_sort ASC, b.id ASC', order)
+        : sort === 'recent'
+          ? applyOrder('r.created_at DESC, b.id DESC', order)
+          : applyOrder('r.rating DESC, r.created_at DESC, b.id DESC', order);
+    const items = db.prepare(`
+      SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted,
+        r.rating AS myRating
+      FROM book_ratings r
+      JOIN active_books b ON b.id = r.book_id
+      WHERE r.username = ?
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `).all(normalizedUsername, pageSize, offset).map((row) => ({ ...mapBookListRow(row), myRating: Number(row.myRating) || 0 }));
+    attachSeriesListsToBooks(items);
+    attachCachedAnnotationsToBooks(items);
+    return { total, items };
+  }
+
   if (view === 'read') {
     const normalizedUsername = String(username || '').trim();
     if (!normalizedUsername) {
@@ -7797,7 +7856,7 @@ export function getLibraryView(view = 'recent', {
   }
 
   // Новинки: окно по INPX date + те же additive-фильтры, что у /api/catalog.
-  return getRecentArrivals({ page, pageSize, sort, order, genre, genreMode, lang, langs, format, year, minRate, hasSeries });
+  return getRecentArrivals({ page, pageSize, sort, order, genre, genreMode, lang, langs, format, year, minRate, hasSeries, hideReadUser });
 }
 
 export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {
@@ -8518,6 +8577,37 @@ export function isSeriesFullyRead(username, seriesName) {
 export function getSeriesReadingProgress(username, seriesName, { langs = null } = {}) {
   const u = String(username || '').trim();
   if (!u || !seriesName) return null;
+  const volumes = listSeriesVolumes(u, seriesName, { langs });
+  const read = volumes.filter((v) => v.read).length;
+  const nextVol = volumes.find((v) => !v.read) || null;
+  const numbers = [...new Set(volumes.map((v) => v.number).filter((n) => n != null))];
+  return {
+    total: volumes.length,
+    read,
+    next: nextVol ? { id: nextVol.first.id, title: nextVol.first.title, seriesNo: normalizeSeriesNo(nextVol.first.seriesNo) } : null,
+    // Numbered volumes, for «Отметить прочитанным до тома N».
+    numbers
+  };
+}
+
+/**
+ * Mark every numbered volume ≤ upTo read (one edition per volume — editions of a volume count once
+ * in the progress anyway). Already-read volumes are skipped. → { added, total, read }.
+ */
+export function markSeriesReadUpTo(username, seriesName, upTo, { langs = null } = {}) {
+  const u = String(username || '').trim();
+  const limit = Number(upTo);
+  if (!u || !seriesName || !Number.isFinite(limit)) return { added: 0 };
+  const volumes = listSeriesVolumes(u, seriesName, { langs });
+  const ids = volumes
+    .filter((v) => !v.read && v.number != null && v.number <= limit)
+    .map((v) => v.first.id);
+  const result = ids.length ? addReadBooksIfMissing(u, ids) : { added: 0 };
+  return { added: result.added || 0 };
+}
+
+/** Volumes of a series for one user: editions with the same number + title count once; unnumbered last. */
+function listSeriesVolumes(u, seriesName, { langs = null } = {}) {
   const canonical = resolveSeriesCatalogName(String(seriesName));
   const langClause = languageFilterClause('b.lang', '', langs);
   const rows = db.prepare(`
@@ -8538,19 +8628,15 @@ export function getSeriesReadingProgress(username, seriesName, { langs = null } 
     const key = `${String(row.seriesNo || '').trim()}|${String(row.titleSort || row.title || '').trim().toLowerCase()}`;
     let vol = byKey.get(key);
     if (!vol) {
-      vol = { first: row, read: false };
+      const no = String(row.seriesNo || '').trim();
+      const number = /^\d+(\.\d+)?$/.test(no) ? Number(no) : null;
+      vol = { first: row, read: false, number };
       byKey.set(key, vol);
       volumes.push(vol);
     }
     if (row.isRead) vol.read = true;
   }
-  const read = volumes.filter((v) => v.read).length;
-  const nextVol = volumes.find((v) => !v.read) || null;
-  return {
-    total: volumes.length,
-    read,
-    next: nextVol ? { id: nextVol.first.id, title: nextVol.first.title, seriesNo: normalizeSeriesNo(nextVol.first.seriesNo) } : null
-  };
+  return volumes;
 }
 
 /** Read books per series name for one user (author page «прочитано N»); read_books of one user is small. */

@@ -653,7 +653,7 @@ app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 const json100kb = express.json({ limit: '100kb' });
 const jsonUsersImport = express.json({ limit: '2mb' });
 app.use((req, res, next) => {
-  if (req.method === 'POST' && req.path === '/api/operations/users-import') {
+  if (req.method === 'POST' && (req.path === '/api/operations/users-import' || req.path === '/api/import/reading')) {
     return jsonUsersImport(req, res, next);
   }
   return json100kb(req, res, next);
@@ -1435,6 +1435,12 @@ async function bootstrap() {
           console.warn('[telegram-bot] Ошибка запуска:', err.message);
           logSystemEvent('warn', 'telegram-bot', 'ошибка запуска', { error: err.message });
         });
+      }
+      // Weekly «Новое у любимых» digest: only where the bot polls (each pass checks it is running).
+      if (shouldRunTelegramBotInThisProcess()) {
+        import('./services/telegram-digest.js')
+          .then(({ startTelegramDigest }) => startTelegramDigest())
+          .catch((err) => console.warn('[telegram-digest]', err.message));
       }
     }
 

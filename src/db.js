@@ -304,6 +304,18 @@ function ensureUsersSchema() {
     db.exec(`ALTER TABLE users ADD COLUMN content_langs TEXT NOT NULL DEFAULT ''`);
   }
 
+  if (!columns.some((column) => column.name === 'hide_read')) {
+    db.exec(`ALTER TABLE users ADD COLUMN hide_read INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  if (!columns.some((column) => column.name === 'download_format')) {
+    db.exec(`ALTER TABLE users ADD COLUMN download_format TEXT NOT NULL DEFAULT ''`);
+  }
+
+  if (!columns.some((column) => column.name === 'telegram_digest')) {
+    db.exec(`ALTER TABLE users ADD COLUMN telegram_digest INTEGER NOT NULL DEFAULT 0`);
+  }
+
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
     ON users(email)
@@ -1129,7 +1141,7 @@ export function deleteUser(username) {
     db.prepare(`DELETE FROM smart_shelves WHERE username = ?`).run(normalizedUsername);
     /* Per-user tables without ON DELETE CASCADE that were left behind (read marks, ratings,
        reader notes, sync revisions). Some are created lazily, so skip a table an old DB lacks. */
-    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions', 'want_to_read']) {
+    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions', 'want_to_read', 'reading_goals']) {
       const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table);
       if (exists) db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(normalizedUsername);
     }
@@ -1144,6 +1156,7 @@ export function deleteUser(username) {
       db.prepare(`DELETE FROM meta WHERE key = ?`).run(row.key);
     }
     db.prepare(`DELETE FROM meta WHERE key = ?`).run(`following_seen:${normalizedUsername}`);
+    db.prepare(`DELETE FROM meta WHERE key = ?`).run(`telegram_digest_sent:${normalizedUsername}`);
     return db.prepare(`DELETE FROM users WHERE username = ?`).run(normalizedUsername).changes;
   })();
 }
@@ -1755,6 +1768,14 @@ WHERE rp.progress >= 99
       FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_want_to_read_username_created ON want_to_read(username, created_at);
+
+    /* Reading goal per calendar year (Profile → statistics, Android profile). */
+    CREATE TABLE IF NOT EXISTS reading_goals (
+      username TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      goal INTEGER NOT NULL CHECK(goal BETWEEN 1 AND 1000),
+      PRIMARY KEY (username, year)
+    );
 
     CREATE TABLE IF NOT EXISTS book_ratings (
       username TEXT NOT NULL,
@@ -4677,6 +4698,57 @@ export function setUserContentLangsRaw(username, value) {
   _stmtSetContentLangs.run(String(value || ''), username);
 }
 
+/* «Скрыть прочитанное» in catalog lists: one per-account switch, shared by the web and the Android app. */
+let _stmtGetHideRead = null;
+export function getUserHideRead(username) {
+  const name = String(username || '').trim();
+  if (!name) return false;
+  try {
+    _stmtGetHideRead ??= db.prepare('SELECT hide_read AS hideRead FROM users WHERE username = ?');
+    return Number(_stmtGetHideRead.get(name)?.hideRead) === 1;
+  } catch {
+    return false; // schema not migrated yet (initDb not run)
+  }
+}
+
+let _stmtSetHideRead = null;
+export function setUserHideRead(username, hide) {
+  _stmtSetHideRead ??= db.prepare('UPDATE users SET hide_read = ? WHERE username = ?');
+  _stmtSetHideRead.run(hide ? 1 : 0, String(username || ''));
+}
+
+/** Preferred download format (fb2, fb2zip, epub, …); '' = ask every time. */
+let _stmtGetDownloadFormat = null;
+export function getUserDownloadFormat(username) {
+  const name = String(username || '').trim();
+  if (!name) return '';
+  try {
+    _stmtGetDownloadFormat ??= db.prepare('SELECT download_format AS f FROM users WHERE username = ?');
+    return String(_stmtGetDownloadFormat.get(name)?.f || '');
+  } catch {
+    return '';
+  }
+}
+
+let _stmtSetDownloadFormat = null;
+export function setUserDownloadFormat(username, format) {
+  _stmtSetDownloadFormat ??= db.prepare('UPDATE users SET download_format = ? WHERE username = ?');
+  _stmtSetDownloadFormat.run(String(format || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12), String(username || ''));
+}
+
+/** Weekly Telegram digest of «Новое у любимых». */
+let _stmtGetTelegramDigest = null;
+export function getUserTelegramDigest(username) {
+  _stmtGetTelegramDigest ??= db.prepare('SELECT telegram_digest AS d FROM users WHERE username = ?');
+  return Number(_stmtGetTelegramDigest.get(String(username || ''))?.d) === 1;
+}
+
+let _stmtSetTelegramDigest = null;
+export function setUserTelegramDigest(username, on) {
+  _stmtSetTelegramDigest ??= db.prepare('UPDATE users SET telegram_digest = ? WHERE username = ?');
+  _stmtSetTelegramDigest.run(on ? 1 : 0, String(username || ''));
+}
+
 let _stmtSetBrowseViewPrefs = null;
 export function setUserBrowseViewPrefs(username, { homeView, catalogView } = {}) {
   const user = getUserByUsername(username);
@@ -4864,14 +4936,15 @@ function _ensureUserStatsStmt() {
           WHERE w.username = ?
             AND NOT EXISTS (SELECT 1 FROM read_books rb5 WHERE rb5.username = w.username AND rb5.book_id = w.book_id)
             AND NOT EXISTS (SELECT 1 FROM reading_history rh5 WHERE rh5.username = w.username AND rh5.book_id = w.book_id)
-        ) AS wantCount
+        ) AS wantCount,
+        (SELECT COUNT(*) FROM book_ratings br6 JOIN active_books ab6 ON ab6.id = br6.book_id WHERE br6.username = ?) AS ratedCount
     `);
   }
   return _stmtUserStats;
 }
 
 export function getUserStats(username) {
-  const row = _ensureUserStatsStmt().get(username, username, username, username, username, username, username, username, username, username);
+  const row = _ensureUserStatsStmt().get(username, username, username, username, username, username, username, username, username, username, username);
   return {
     readingCount: row?.readingCount || 0,
     bookmarkCount: row?.bookmarkCount || 0,
@@ -4882,6 +4955,7 @@ export function getUserStats(username) {
     readerBookmarksCount: row?.readerBookmarksCount || 0,
     readerAnnotationsCount: row?.readerAnnotationsCount || 0,
     wantCount: row?.wantCount || 0,
+    ratedCount: row?.ratedCount || 0,
     createdAt: row?.createdAt || null
   };
 }
@@ -4922,11 +4996,57 @@ export function getUserReadingStats(username) {
     ORDER BY count DESC, g.name
     LIMIT 5
   `);
+  const year = new Date().getFullYear();
+  _stmtReadByMonth ??= db.prepare(`
+    SELECT CAST(substr(rb.created_at, 6, 2) AS INTEGER) AS month, COUNT(*) AS count
+    FROM read_books rb
+    JOIN active_books b ON b.id = rb.book_id
+    WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+    GROUP BY month
+  `);
+  const byMonth = Array.from({ length: 12 }, () => 0);
+  for (const row of _stmtReadByMonth.all(username, String(year))) {
+    if (row.month >= 1 && row.month <= 12) byMonth[row.month - 1] = Number(row.count) || 0;
+  }
   return {
+    year,
+    goal: getReadingGoal(username, year),
+    readThisYear: byMonth.reduce((sum, n) => sum + n, 0),
+    byMonth,
     readByYear: _stmtReadByYear.all(username),
     topAuthors: _stmtReadTopAuthors.all(username),
     topGenres: _stmtReadTopGenres.all(username)
   };
+}
+
+let _stmtReadByMonth = null;
+let _stmtGetReadingGoal = null;
+let _stmtSetReadingGoal = null;
+let _stmtDeleteReadingGoal = null;
+
+/** Books-per-year goal; 0 = none. */
+export function getReadingGoal(username, year = new Date().getFullYear()) {
+  _stmtGetReadingGoal ??= db.prepare('SELECT goal FROM reading_goals WHERE username = ? AND year = ?');
+  return Number(_stmtGetReadingGoal.get(String(username || ''), Number(year))?.goal) || 0;
+}
+
+/** goal ≤ 0 removes it; clamps to 1–1000. */
+export function setReadingGoal(username, year, goal) {
+  const y = Math.floor(Number(year));
+  const g = Math.floor(Number(goal) || 0);
+  if (!Number.isFinite(y) || y < 1900 || y > 3000) throw new Error('Invalid year');
+  if (g <= 0) {
+    _stmtDeleteReadingGoal ??= db.prepare('DELETE FROM reading_goals WHERE username = ? AND year = ?');
+    _stmtDeleteReadingGoal.run(String(username || ''), y);
+    return 0;
+  }
+  const value = Math.min(1000, g);
+  _stmtSetReadingGoal ??= db.prepare(`
+    INSERT INTO reading_goals (username, year, goal) VALUES (?, ?, ?)
+    ON CONFLICT(username, year) DO UPDATE SET goal = excluded.goal
+  `);
+  _stmtSetReadingGoal.run(String(username || ''), y, value);
+  return value;
 }
 
 export function createUser({ username, password }) {

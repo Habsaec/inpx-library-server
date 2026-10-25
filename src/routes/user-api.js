@@ -9,6 +9,7 @@ import {
   getEreaderEmail, setEreaderEmail, setUserAccountEmail, getSmtpSettings, getUserByUsername, isEreaderEmailAllowedForUser,
   getMeta, setMeta, createAppPairingToken, consumeAppPairingToken,
   resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser,
+  getUserReadingStats, setReadingGoal, setBookRating, removeBookRating, getBookRating,
 } from '../db.js';
 import { resolvePublicBaseUrl } from '../services/password-reset.js';
 import { isPairingRedeemRateLimited, registerPairingRedeemAttempt } from '../services/rate-limiter.js';
@@ -19,7 +20,7 @@ import {
   isBookmarked, toggleBookmark, addBookmarksIfMissing, toggleWantToRead, removeWantToRead, getSeriesReadingProgress,
   toggleFavoriteAuthor, toggleFavoriteSeries, getAllBookIdsByFacet,
   toggleReadBook, addReadBooksIfMissing, isSeriesFullyRead, removeReadBooksForSeries,
-  removeReadBookIfPresent,
+  removeReadBookIfPresent, markSeriesReadUpTo,
 } from '../inpx.js';
 import { safePage } from '../utils/safe-int.js';
 import { resolveDownload } from '../conversion.js';
@@ -117,6 +118,40 @@ export function registerUserApiRoutes(app, deps) {
     res.json({ want: false });
   });
 
+  /* Personal book rating 1–5 («Мои оценки»): GET → { rating } (0 = none), POST { rating }, DELETE clears. */
+  app.get('/api/rating/:id', requireApiAuth, (req, res) => {
+    const book = getBookById(req.params.id);
+    if (!book) {
+      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    }
+    res.json({ rating: getBookRating(req.user.username, book.id) });
+  });
+
+  app.post('/api/rating/:id', requireApiAuth, (req, res) => {
+    const book = getBookById(req.params.id);
+    if (!book) {
+      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    }
+    const rating = Math.floor(Number(req.body?.rating));
+    if (!(rating >= 1 && rating <= 5)) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.error.unknown'));
+    }
+    setBookRating(req.user.username, book.id, rating);
+    invalidateUserPageCaches(req.user.username);
+    invalidateRecommendationsCache(req.user.username);
+    res.json({ rating });
+  });
+
+  app.delete('/api/rating/:id', requireApiAuth, (req, res) => {
+    const book = getBookById(req.params.id);
+    if (!book) {
+      return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+    }
+    removeBookRating(req.user.username, book.id);
+    invalidateUserPageCaches(req.user.username);
+    res.json({ rating: 0 });
+  });
+
   /* Series progress for the Android series screen (web renders the same block server-side):
      { total, read, next: { id, title, seriesNo } | null }; editions count once, profile languages apply. */
   app.get('/api/series-progress', requireApiAuth, (req, res) => {
@@ -125,7 +160,68 @@ export function registerUserApiRoutes(app, deps) {
       return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.error.unknown'));
     }
     const progress = getSeriesReadingProgress(req.user.username, name, { langs: effectiveContentLangs(req.user.username) });
-    res.json(progress || { total: 0, read: 0, next: null });
+    res.json(progress || { total: 0, read: 0, next: null, numbers: [] });
+  });
+
+  /* «Отметить прочитанным до тома N»: { name, upTo } → { added, progress } (web series page + Android). */
+  app.post('/api/series-read-up-to', requireApiAuth, (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    const upTo = Number(req.body?.upTo);
+    if (!name || !Number.isFinite(upTo) || upTo < 0) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.error.unknown'));
+    }
+    const username = req.user.username;
+    const langs = effectiveContentLangs(username);
+    const { added } = markSeriesReadUpTo(username, name, upTo, { langs });
+    if (added > 0) {
+      invalidateUserPageCaches(username);
+      invalidateRecommendationsCache(username);
+    }
+    res.json({ added, progress: getSeriesReadingProgress(username, name, { langs }) });
+  });
+
+  /* Goodreads / LiveLib CSV → «Прочитано», «Хочу прочитать», «Мои оценки». Body: { csv } (≤ 2 MB). */
+  const readingImportLocks = new Set();
+  app.post('/api/import/reading', requireApiAuth, async (req, res) => {
+    const csv = String(req.body?.csv || '');
+    if (!csv.trim()) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('import.reading.empty'));
+    }
+    const username = req.user.username;
+    if (readingImportLocks.has(username)) {
+      return apiFail(res, 429, ApiErrorCode.SEND_IN_PROGRESS, t('import.reading.busy'));
+    }
+    readingImportLocks.add(username);
+    try {
+      const { importReadingCsv } = await import('../services/reading-import.js');
+      const report = await importReadingCsv(username, csv);
+      invalidateUserPageCaches(username);
+      invalidateRecommendationsCache(username);
+      logSystemEvent('info', 'profile', 'reading list imported', { user: username, rows: report.rows, matched: report.matched });
+      res.json({ ok: true, ...report });
+    } catch (error) {
+      if (error?.code === 'IMPORT_NO_COLUMNS') {
+        return apiFail(res, 400, ApiErrorCode.VALIDATION, t('import.reading.noColumns'));
+      }
+      throw error;
+    } finally {
+      readingImportLocks.delete(username);
+    }
+  });
+
+  /* Reading statistics + yearly goal (web profile renders the same data server-side). */
+  app.get('/api/reading-stats', requireApiAuth, (req, res) => {
+    res.json(getUserReadingStats(req.user.username));
+  });
+
+  app.post('/api/reading-goal', requireApiAuth, (req, res) => {
+    const year = Number(req.body?.year) || new Date().getFullYear();
+    try {
+      setReadingGoal(req.user.username, year, req.body?.goal);
+    } catch {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.error.unknown'));
+    }
+    res.json(getUserReadingStats(req.user.username));
   });
 
   /* ── Read books ──────────────────────────────────────────────────── */

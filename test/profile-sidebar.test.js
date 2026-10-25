@@ -90,7 +90,15 @@ test('getUserReadingStats groups read books by year, author and genre', () => {
 
 test('getUserReadingStats is empty for a user without read books', () => {
   const rs = getUserReadingStats('nobody_here');
-  assert.deepEqual(rs, { readByYear: [], topAuthors: [], topGenres: [] });
+  assert.deepEqual(rs, {
+    year: new Date().getFullYear(),
+    goal: 0,
+    readThisYear: 0,
+    byMonth: Array.from({ length: 12 }, () => 0),
+    readByYear: [],
+    topAuthors: [],
+    topGenres: []
+  });
 });
 
 test('sidebar groups personal sections for a signed-in user', () => {

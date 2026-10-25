@@ -1654,6 +1654,205 @@ function attachMarkSeriesReadActions() {
 }
 
 /* «Хочу прочитать»: toggle on the book page; on /library/want a removed card disappears with undo. */
+/* «Скрыть прочитанное»: an account switch (the Android filter sheet flips the same one). */
+function attachHideReadToggle() {
+  for (const button of document.querySelectorAll('[data-hide-read-toggle]')) {
+    button.addEventListener('click', async () => {
+      const hideRead = button.dataset.hideReadToggle !== '1';
+      button.disabled = true;
+      try {
+        const csrf = getCsrfTokenFromPage();
+        const response = await fetch('/api/preferences', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+          body: JSON.stringify({ hideRead })
+        });
+        if (await handleAuthRequired(response)) return;
+        if (!response.ok) throw new Error(String(response.status));
+        // The list is server-rendered; drop ?page so the filtered list starts from the top.
+        const url = new URL(window.location.href);
+        url.searchParams.delete('page');
+        url.searchParams.delete('hideRead');
+        window.location.assign(url.toString());
+      } catch {
+        button.disabled = false;
+        showToast(uiT('app.errorPrefix'), 'error');
+      }
+    });
+  }
+}
+
+/* Profile → «Импорт из Goodreads / LiveLib»: the CSV goes up as text, the report comes back. */
+function attachReadingImport() {
+  const form = document.querySelector('[data-reading-import]');
+  if (!form) return;
+  const report = form.querySelector('[data-reading-import-report]');
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const file = form.querySelector('input[type="file"]')?.files?.[0];
+    const button = form.querySelector('button[type="submit"]');
+    if (!file) return;
+    if (file.size > 1.8 * 1024 * 1024) {
+      showToast(uiT('import.reading.tooLarge'), 'error');
+      return;
+    }
+    if (button) button.disabled = true;
+    if (report) { report.hidden = false; report.textContent = uiT('import.reading.running'); }
+    try {
+      const csrf = getCsrfTokenFromPage();
+      const response = await fetch('/api/import/reading', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+        body: JSON.stringify({ csv: await file.text() })
+      });
+      if (await handleAuthRequired(response)) return;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || uiT('app.errorPrefix'));
+      if (report) {
+        report.replaceChildren();
+        const summary = document.createElement('p');
+        summary.textContent = uiT('import.reading.done')
+          .replace('{{rows}}', String(data.rows))
+          .replace('{{matched}}', String(data.matched))
+          .replace('{{read}}', String(data.read))
+          .replace('{{want}}', String(data.want))
+          .replace('{{rated}}', String(data.rated));
+        report.append(summary);
+        if (data.unmatchedTotal) {
+          const head = document.createElement('p');
+          head.textContent = uiT('import.reading.unmatched').replace('{{n}}', String(data.unmatchedTotal));
+          const list = document.createElement('ul');
+          list.className = 'import-report-list';
+          for (const item of data.unmatched || []) {
+            const li = document.createElement('li');
+            li.textContent = item.author ? `${item.title} — ${item.author}` : item.title;
+            list.append(li);
+          }
+          report.append(head, list);
+        }
+      }
+      showToast(uiT('import.reading.toast'), 'success');
+    } catch (error) {
+      if (report) report.textContent = error.message || uiT('app.errorPrefix');
+      showToast(error.message || uiT('app.errorPrefix'), 'error');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+}
+
+/* Series page: «Отметить прочитанными тома до N». */
+function attachSeriesReadUpTo() {
+  for (const form of document.querySelectorAll('[data-series-read-up-to]')) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const upTo = Number(form.querySelector('[name="upTo"]')?.value);
+      const button = form.querySelector('button[type="submit"]');
+      if (!Number.isFinite(upTo)) return;
+      if (button) button.disabled = true;
+      try {
+        const csrf = getCsrfTokenFromPage();
+        const response = await fetch('/api/series-read-up-to', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+          body: JSON.stringify({ name: form.dataset.seriesReadUpTo, upTo })
+        });
+        if (await handleAuthRequired(response)) return;
+        if (!response.ok) throw new Error(String(response.status));
+        window.location.reload();
+      } catch {
+        if (button) button.disabled = false;
+        showToast(uiT('app.errorPrefix'), 'error');
+      }
+    });
+  }
+}
+
+/* Keyboard: «/» focuses search, Esc closes open menus, ←/→ turn catalog pages (not while typing). */
+function attachHotkeys() {
+  if (attachHotkeys._bound) return;
+  attachHotkeys._bound = true;
+  document.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target;
+    const typing = target instanceof HTMLElement
+      && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+    if (event.key === 'Escape') {
+      let closed = false;
+      for (const details of document.querySelectorAll('details[open]')) {
+        if (details.closest('.admin-appearance-layout')) continue;
+        details.open = false;
+        closed = true;
+      }
+      if (closed) event.preventDefault();
+      if (typing && target instanceof HTMLElement && target.matches('#global-search-input')) target.blur();
+      return;
+    }
+    if (typing) return;
+    if (event.key === '/') {
+      const search = document.getElementById('global-search-input');
+      if (search instanceof HTMLInputElement) {
+        event.preventDefault();
+        if (!search.offsetParent) document.querySelector('[data-topbar-search-toggle]')?.click();
+        search.focus();
+        search.select();
+      }
+      return;
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      if (document.querySelector('.modal-panel:not([hidden]), dialog[open]')) return;
+      const rel = event.key === 'ArrowLeft' ? 'prev' : 'next';
+      const link = document.querySelector(`.pagination a[rel="${rel}"]`);
+      if (link instanceof HTMLAnchorElement) {
+        event.preventDefault();
+        window.location.assign(link.href);
+      }
+    }
+  });
+}
+
+/* «Ваша оценка» on the book page: click a star to rate, click the current one again to clear. */
+function attachMyRating() {
+  for (const group of document.querySelectorAll('.book-my-rating')) {
+    const render = (value) => {
+      group.dataset.myRating = String(value);
+      for (const star of group.querySelectorAll('[data-my-rating-value]')) {
+        const on = Number(star.dataset.myRatingValue) <= value;
+        star.classList.toggle('is-on', on);
+        star.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    };
+    group.addEventListener('click', async (event) => {
+      const star = event.target instanceof Element ? event.target.closest('[data-my-rating-value]') : null;
+      if (!star) return;
+      const bookId = typeof resolveBookIdFromElement === 'function' ? resolveBookIdFromElement(group) : null;
+      if (!bookId) return;
+      const previous = Number(group.dataset.myRating) || 0;
+      const picked = Number(star.dataset.myRatingValue) || 0;
+      const next = picked === previous ? 0 : picked;
+      render(next);
+      try {
+        const csrf = getCsrfTokenFromPage();
+        const response = await fetch(apiRatingPath(bookId), {
+          method: next ? 'POST' : 'DELETE',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+          body: next ? JSON.stringify({ rating: next }) : undefined
+        });
+        if (await handleAuthRequired(response)) return;
+        if (!response.ok) throw new Error(String(response.status));
+        showToast(next ? uiT('book.ratingSaved') : uiT('book.ratingCleared'), 'success');
+      } catch {
+        render(previous);
+        showToast(uiT('app.errorPrefix'), 'error');
+      }
+    });
+  }
+}
+
 function attachWantActions() {
   const onWantPage = window.location.pathname === '/library/want';
   for (const button of document.querySelectorAll('[data-want-button]')) {
@@ -7697,6 +7896,11 @@ loadCardDetails();
 loadBookPageReview();
 attachBookmarkActions();
 attachWantActions();
+attachHideReadToggle();
+attachMyRating();
+attachSeriesReadUpTo();
+attachReadingImport();
+attachHotkeys();
 attachReadBookActions();
 
 /* Кнопка «Отмена» в редакторе метаданных книги: откатывает поля формы

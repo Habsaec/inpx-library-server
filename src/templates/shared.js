@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, parseGenreCodes } from '../genre-map.js';
 import { getAvailableDownloadFormats, getConfiguredDownloadFormats, FORMAT_LABELS, isDownloadFormatEnabled } from '../conversion.js';
-import { resolveTelegramRuntimeConfig } from '../db.js';
+import { resolveTelegramRuntimeConfig, getUserDownloadFormat } from '../db.js';
 import { config } from '../config.js';
 import { BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath, encodeBookRef, bookIdNeedsSafeUrl } from '../utils/book-ref.js';
@@ -479,14 +479,14 @@ export function renderPagination(basePath, page, pageSize, total, query = '') {
   const jumpField = `<form class="page-jump" method="get" action="${escapeHtml(jumpPath || '/')}" style="--page-digits:${String(page).length}">${jumpHidden}<input class="page-jump-input" type="number" name="page" min="1" max="${totalPages}" value="${page}" inputmode="numeric" enterkeyhint="go" aria-label="${escapeHtml(t('pagination.page'))}" aria-current="page" style="width:${Math.max(4, String(totalPages).length + 2)}ch"></form>`;
   return `
     <nav class="pagination" style="margin-top:20px;" aria-label="${escapeHtml(t('pagination.label'))}">
-      ${page > 1 ? `<a class="page-link page-link-prev" href="${pageHref(page - 1)}" aria-label="${escapeHtml(t('pagination.prev'))}">${escapeHtml(t('pagination.prev'))}</a>` : ''}
+      ${page > 1 ? `<a class="page-link page-link-prev" rel="prev" href="${pageHref(page - 1)}" aria-label="${escapeHtml(t('pagination.prev'))}">${escapeHtml(t('pagination.prev'))}</a>` : ''}
       ${pageNumbers.map((p) => p === '...'
     ? '<span class="page-ellipsis muted">…</span>'
     : p === page
       ? jumpField
       : `<a class="page-link" href="${pageHref(p)}">${p}</a>`
   ).join('')}
-      ${page < totalPages ? `<a class="page-link page-link-next" href="${pageHref(page + 1)}" aria-label="${escapeHtml(t('pagination.next'))}">${escapeHtml(t('pagination.next'))}</a>` : ''}
+      ${page < totalPages ? `<a class="page-link page-link-next" rel="next" href="${pageHref(page + 1)}" aria-label="${escapeHtml(t('pagination.next'))}">${escapeHtml(t('pagination.next'))}</a>` : ''}
     </nav>`;
 }
 
@@ -699,6 +699,21 @@ export function renderDownloadMenu(book, { compact = false, accent = false, user
     'download-menu-trigger',
     compact ? 'download-menu-trigger-compact' : ''
   ].filter(Boolean).join(' ');
+  const preferred = user?.username ? getUserDownloadFormat(user.username) : '';
+  const preferredPair = formats.length > 1 ? formats.find(([f]) => f === preferred) : null;
+  if (preferredPair) {
+    /* Profile → «Формат скачивания»: the button downloads that format, the caret opens the others. */
+    const [format, label] = preferredPair;
+    const text = compact ? t('download.label') : `${t('download.label')} ${label}`;
+    const others = formats.map(([f, l]) => `<a class="download-format-link${f === format ? ' is-preferred' : ''}" href="${downloadBookPath(book.id, `format=${encodeURIComponent(f)}`)}">${escapeHtml(l)}</a>`).join('');
+    return `<span class="download-split${compact ? ' download-split-compact' : ''}">
+      <a class="${triggerClass} download-direct-link download-split-main" href="${downloadBookPath(book.id, `format=${encodeURIComponent(format)}`)}" title="${escapeHtml(`${t('download.label')} ${label}`)}">${escapeHtml(text)}</a>
+      <details class="download-menu download-split-more">
+        <summary class="${triggerClass} download-split-caret" aria-label="${escapeHtml(t('download.otherFormats'))}" title="${escapeHtml(t('download.otherFormats'))}">▾</summary>
+        <div class="download-menu-popover">${others}</div>
+      </details>
+    </span>`;
+  }
   if (formats.length === 1) {
     const [format, label] = formats[0];
     // Single format: name it, so the button says what file arrives (cards stay short).
@@ -1608,7 +1623,7 @@ function renderThemeBootScript() {
 
 /** Личные разделы («Моя библиотека»): пункты сайдбара и активность хаба в нижней навигации. */
 const MY_LIBRARY_PATHS = [
-  '/library/my', '/library/continue', '/library/want', '/library/following', '/favorites', '/shelves',
+  '/library/my', '/library/continue', '/library/want', '/library/following', '/library/rated', '/favorites', '/shelves',
   '/library/read', '/library/bookmarks', '/library/notes'
 ];
 

@@ -131,7 +131,7 @@ export function invalidateUserLibraryViewCaches(username) {
   const u = String(username || '').trim();
   if (!u) return;
   for (const key of pageDataCache.keys()) {
-    if (key.startsWith(`library:continue:${u}:`) || key.startsWith(`library:read:${u}:`) || key.startsWith(`library:want:${u}:`) || key.startsWith(`library:following:${u}:`)) {
+    if (key.startsWith(`library:continue:${u}:`) || key.startsWith(`library:read:${u}:`) || key.startsWith(`library:want:${u}:`) || key.startsWith(`library:following:${u}:`) || key.startsWith(`library:rated:${u}:`)) {
       pageDataCache.delete(key);
     }
   }

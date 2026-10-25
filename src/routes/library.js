@@ -33,11 +33,13 @@ import {
 import {
   getUserShelves, getShelfById, getShelfBooks, setShelfOnHome, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats,
   getAllReaderBookmarksPage, queryReaderAnnotations, getReaderAnnotationFacets,
-  getUserByUsername, resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser
+  getUserByUsername, resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser,
+  getBookRating
 } from '../db.js';
 import { parseNotesFilter } from '../services/reader-notes.js';
 import { isListBrowseView, resolveAuthorFacetView, resolveFacetBookLayout } from '../browse-view-prefs.js';
 import { effectiveContentLangs, resolveContentLangFilter, contentLangCacheKey, listEnabledContentLangs } from '../user-content-langs.js';
+import { resolveHideReadUser } from '../hide-read.js';
 import {
   getBookById,
   getBooksByIds,
@@ -424,10 +426,11 @@ export function registerLibraryRoutes(app, deps) {
     const username = user?.username || '';
     const contentLangs = effectiveContentLangs(username);
     const langFilter = resolveContentLangFilter(username, lang);
-    const cacheKey = `catalog:v5:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}`;
+    const hideReadUser = resolveHideReadUser(req);
+    const cacheKey = `catalog:v5:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}:r:${hideReadUser}`;
     const result = getCachedPageData(cacheKey, () => searchCatalog({
       query, field, page, pageSize, sort, order, genre, genreMode, letter,
-      lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+      lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, hideReadUser
     }));
     const allLangs = listEnabledContentLangs();
     const langs = contentLangs.length
@@ -535,13 +538,13 @@ export function registerLibraryRoutes(app, deps) {
   });
 
   // --- Library views ---
-  app.get('/library/:view(recent|continue|read|recommended|want|following)', requireBrowseAuth, (req, res) => {
+  app.get('/library/:view(recent|continue|read|recommended|want|following|rated)', requireBrowseAuth, (req, res) => {
     const view = String(req.params.view || 'recent');
     const page = safePage(req.query.page);
     const pageSize = 24;
     const type = String(req.query.type || '').trim();
     const requestedSort = String(req.query.sort || '');
-    const defaultSort = view === 'recent' ? 'recent' : view === 'recommended' ? 'relevance' : 'title';
+    const defaultSort = view === 'recent' ? 'recent' : view === 'recommended' ? 'relevance' : view === 'rated' ? 'rating' : 'title';
     const allowedSorts = view === 'recommended'
       ? ['relevance', 'title', 'rating', 'author', 'recent']
       : ['recent', 'title', 'author', 'series', 'rating'];
@@ -556,7 +559,8 @@ export function registerLibraryRoutes(app, deps) {
       read: t('library.title.read'),
       recommended: t('library.title.recommended'),
       want: t('library.title.want'),
-      following: t('library.title.following')
+      following: t('library.title.following'),
+      rated: t('library.title.rated')
     };
     const subtitles = {
       recent: t('library.sub.recent'),
@@ -564,7 +568,8 @@ export function registerLibraryRoutes(app, deps) {
       read: t('library.sub.read'),
       recommended: t('library.sub.recommended'),
       want: t('library.sub.want'),
-      following: t('library.sub.following')
+      following: t('library.sub.following'),
+      rated: t('library.sub.rated')
     };
     const genres = parseGenreList(req.query.genre);
     const genre = genres.join(',');
@@ -577,11 +582,12 @@ export function registerLibraryRoutes(app, deps) {
     const username = user?.username || '';
     const contentLangs = effectiveContentLangs(username);
     const langFilter = resolveContentLangFilter(username, lang);
-    const filterKey = `${genre}:${genreMode}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries ?? ''}`;
+    const hideReadUser = view === 'recent' ? resolveHideReadUser(req) : '';
+    const filterKey = `${genre}:${genreMode}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries ?? ''}:r:${hideReadUser}`;
     const canUseSharedCache = view === 'recent';
     const libraryOpts = {
       page, pageSize, sort, order, genre, genreMode,
-      lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
+      lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, hideReadUser
     };
     const result = canUseSharedCache
       ? getStaleOrSchedule(
@@ -601,6 +607,10 @@ export function registerLibraryRoutes(app, deps) {
           PAGE_CACHE_TTL_MS,
           { total: 0, items: [] }
         );
+    // «Мои оценки»: the cover stars show the user's own rating, not the catalog one.
+    if (view === 'rated' && Array.isArray(result.items)) {
+      result.items = result.items.map((item) => ({ ...item, libRate: item.myRating || item.libRate }));
+    }
     // Opening «Новое у любимых» clears its sidebar badge (before the sidebar is rendered below).
     if (view === 'following' && user && page === 1) markFollowingSeen(user.username);
     const isReadSeriesList = view === 'read' && result.itemType === 'series';
@@ -763,7 +773,7 @@ export function registerLibraryRoutes(app, deps) {
       const bookLayout = resolveFacetBookLayout({ queryLayout: req.query.layout, username });
       const langState = facetLangState(username, req.query.lang);
       const grouped = await getAuthorBooksGroupedCoalesced(value, sort, order, {
-        page: p, pageSize, langs: langState.list
+        page: p, pageSize, langs: langState.list, hideReadUser: resolveHideReadUser(req)
       });
       const facetPath = `/facet/authors/${encodeURIComponent(value)}/outside-series`;
       res.send(
@@ -856,7 +866,7 @@ export function registerLibraryRoutes(app, deps) {
 
         const [grouped, fullSummary, authorPortraitUrl, authorBioHtml] = await Promise.all([
           getAuthorBooksGroupedCoalesced(value, authorSort, order, {
-            page: p, pageSize, langs: langState.list
+            page: p, pageSize, langs: langState.list, hideReadUser: resolveHideReadUser(req)
           }),
           Promise.resolve(getFacetSummary(facet, value)),
           flibSourceId != null
@@ -948,7 +958,7 @@ export function registerLibraryRoutes(app, deps) {
       }
       const result = await getBooksByFacetCoalesced({
         facet, value, page, pageSize, sort, order, author: authorFilter,
-        lang: langState.filter.lang, langs: langState.filter.langs
+        lang: langState.filter.lang, langs: langState.filter.langs, hideReadUser: resolveHideReadUser(req)
       });
       const summary = getFacetSummary(facet, value);
       const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
@@ -990,6 +1000,7 @@ export function registerLibraryRoutes(app, deps) {
       const bookmarked = username ? isBookmarked(username, book.id) : false;
       const isRead = username ? isBookRead(username, book.id) : false;
       const wantToRead = username && !isRead ? isWantToRead(username, book.id) : false;
+      const myRating = username ? getBookRating(username, book.id) : 0;
       const similarBooks = buildSimilarBooks(book);
       const tgRuntime = username ? resolveTelegramRuntimeConfig() : null;
       const telegramSendAvailable = Boolean(
@@ -998,7 +1009,7 @@ export function registerLibraryRoutes(app, deps) {
 
       res.send(
         renderBook({
-          book, details, bookmarked, isRead, wantToRead, user, telegramSendAvailable,
+          book, details, bookmarked, isRead, wantToRead, myRating, user, telegramSendAvailable,
           stats: getCachedStats(),
           indexStatus: getIndexStatus(),
           similarBooks, csrfToken: req.csrfToken || '',

@@ -283,7 +283,7 @@ async function tgPost(method, body) {
   return tgCall(method, body);
 }
 
-function sendText(chatId, text, extra = {}) {
+export function sendText(chatId, text, extra = {}) {
   return tgCall('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', ...extra });
 }
 

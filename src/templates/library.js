@@ -24,6 +24,18 @@ import {
 } from './shared.js';
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
 import { encodeBookRef } from '../utils/book-ref.js';
+import { getUserHideRead } from '../db.js';
+
+/** «Скрыть прочитанное»: account switch (also the Android filter sheet), toggled via POST /api/preferences. */
+function renderHideReadToggle(user) {
+  if (!user?.username) return '';
+  const on = getUserHideRead(user.username);
+  const label = on ? t('browse.showRead') : t('browse.hideRead');
+  const icon = on
+    ? '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><path d="M2.5 2.5l11 11"/></svg>'
+    : '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>';
+  return `<button type="button" class="button view-toggle hide-read-toggle${on ? ' is-active' : ''}" data-hide-read-toggle="${on ? '1' : '0'}" aria-pressed="${on ? 'true' : 'false'}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</button>`;
+}
 
 export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false, homeShelves = [] }) {
   const isAuthenticated = Boolean(user);
@@ -592,6 +604,7 @@ export function renderCatalog({
       </div>
       ${filterPanel}
       <div class="actions">
+        ${isBookField ? renderHideReadToggle(user) : ''}
         ${viewToggle}
         ${renderSortControl({
           action: '/catalog',
@@ -659,6 +672,14 @@ export function renderLibraryView({
       secondaryHref: '/series',
       secondaryLabel: t('library.empty.following.secondary')
     },
+    rated: {
+      title: t('library.empty.rated.title'),
+      text: t('library.empty.rated.text'),
+      actionHref: '/library/read',
+      actionLabel: t('library.title.read'),
+      secondaryHref: '/catalog',
+      secondaryLabel: t('favorites.toCatalog')
+    },
     want: {
       title: t('library.empty.want.title'),
       text: t('library.empty.want.text'),
@@ -682,7 +703,7 @@ export function renderLibraryView({
   const genreList = Array.isArray(genres) ? genres.filter(Boolean) : [];
   const showFilters = !isSeries && (view === 'recent' || view === 'recommended');
   const filterAction = `/library/${view}`;
-  const countHintLabel = ['continue', 'recommended', 'read', 'want', 'following'].includes(view) ? t('library.countInSection') : t('library.countInCatalog');
+  const countHintLabel = ['continue', 'recommended', 'read', 'want', 'following', 'rated'].includes(view) ? t('library.countInSection') : t('library.countInCatalog');
   const totalN = Math.max(0, Math.floor(Number(total) || 0));
   const totalNum = formatLocaleInt(totalN);
   const totalBookWord = isSeries ? plural('series', totalN) : plural('book', totalN);
@@ -759,7 +780,7 @@ export function renderLibraryView({
         ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ''}
       </div>
       ${filterPanel}
-      ${isSeries ? '' : `<div class="actions">${viewToggle}${sortControl}</div>`}
+      ${isSeries ? '' : `<div class="actions">${view === 'recent' ? renderHideReadToggle(user) : ''}${viewToggle}${sortControl}</div>`}
     </section>`;
   if (computing) {
     const content = `
@@ -812,12 +833,22 @@ export function renderLibraryView({
 }
 
 
+/** «Ваша оценка» under the book title: 5 stars, clicking the current one clears it (→ «Мои оценки»). */
+function renderMyRating(bookId, rating = 0) {
+  const value = Math.max(0, Math.min(5, Math.floor(Number(rating) || 0)));
+  const stars = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="my-rating-star${n <= value ? ' is-on' : ''}" data-my-rating-value="${n}" aria-pressed="${n <= value ? 'true' : 'false'}" aria-label="${escapeHtml(tp('book.rateStars', { n }))}" title="${escapeHtml(tp('book.rateStars', { n }))}">★</button>`).join('');
+  return `<div class="book-my-rating" ${bookIdDataAttr(bookId)} data-my-rating="${value}" role="group" aria-label="${escapeHtml(t('book.myRating'))}">
+            <span class="book-my-rating-label">${escapeHtml(t('book.myRating'))}</span>${stars}
+          </div>`;
+}
+
 export function renderBook({
   book,
   details,
   bookmarked,
   isRead = false,
   wantToRead = false,
+  myRating = 0,
   user,
   stats,
   indexStatus,
@@ -887,6 +918,7 @@ export function renderBook({
           ${Number(book.deleted) ? `<p class="muted book-deleted-note">${escapeHtml(t('book.deletedHint'))}</p>` : ''}
           <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 3, bookAuthors: book.authors, inlineExpand: true }) : escapeHtml(t('book.authorUnknown'))}</div>
           ${summaryBits.length ? `<div class="book-detail-summary">${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
+          ${isAuthenticated ? renderMyRating(book.id, myRating) : ''}
           ${
             details.annotationIsHtml && String(details.annotation || '').trim()
               ? `<div class="book-detail-annotation book-detail-annotation--html">${sanitizeHtml(details.annotation)}</div>`
@@ -1166,7 +1198,21 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
 }
 
 /** «Прочитано N из M» + «Читать следующую» on a series page (signed-in users, 2+ volumes). */
-function renderSeriesProgress(progress) {
+/** «Отметить прочитанными тома до N»: for starting a long cycle midway (numbered volumes only). */
+function renderSeriesReadUpTo(progress, seriesName) {
+  const numbers = Array.isArray(progress?.numbers) ? progress.numbers : [];
+  if (!progress?.next || numbers.length < 2) return '';
+  const nextNo = Number(progress.next.seriesNo);
+  const options = numbers.map((n) => `<option value="${escapeHtml(String(n))}"${Number.isFinite(nextNo) && n === nextNo ? ' selected' : ''}>${escapeHtml(String(n))}</option>`).join('');
+  return `<form class="series-read-up-to" data-series-read-up-to="${escapeHtml(seriesName)}">
+        <label>${escapeHtml(t('series.readUpTo'))}
+          <select name="upTo" aria-label="${escapeHtml(t('series.readUpTo'))}">${options}</select>
+        </label>
+        <button type="submit" class="button">${escapeHtml(t('series.readUpToBtn'))}</button>
+      </form>`;
+}
+
+function renderSeriesProgress(progress, seriesName = '') {
   if (!progress || progress.total < 2) return '';
   const pct = Math.round((progress.read / progress.total) * 100);
   const label = tp('series.progress', { read: formatLocaleInt(progress.read), total: formatLocaleInt(progress.total) });
@@ -1185,6 +1231,7 @@ function renderSeriesProgress(progress) {
         <a class="button button-primary" href="${readPagePath(next.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(nextLabel)}</a>
         <a class="series-progress-next-title" href="${bookPagePath(next.id)}">${escapeHtml(nextTitle)}</a>
       </div>` : ''}
+      ${seriesName ? renderSeriesReadUpTo(progress, seriesName) : ''}
     </div>`;
 }
 
@@ -1295,6 +1342,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
         ${facetAction}
         ${markSeriesReadBtn}
         ${scopeDownload}
+        ${isEntityView ? '' : renderHideReadToggle(user)}
         ${layoutToggle}
         ${langControl}
         ${renderSortControl({
@@ -1307,7 +1355,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
       </div>
     </section>
     ${viewTabs}
-    ${facet === 'series' && user ? renderSeriesProgress(seriesProgress) : ''}
+    ${facet === 'series' && user ? renderSeriesProgress(seriesProgress, facetValue) : ''}
     ${showBatch ? renderBatchDownloadToolbar(batchCtx, { user }) : ''}
     <div class="list-context-hint list-context-hint-spacious">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural(countLabelKey, total)}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
     ${bodyBlock}
@@ -1413,6 +1461,7 @@ export function renderAuthorFacetPage({
       <div class="page-intro-actions author-facet-controls-actions">
         ${facetAction}
         ${total > 0 ? renderScopeDownloadMenu({ facet: 'authors', value: facetValue }, { user }) : ''}
+        ${renderHideReadToggle(user)}
         ${renderViewToggle({ href: authorViewQuery(isListView ? 'series' : 'list'), isListView })}
         ${renderLangFilterControl({ action: facetPath, lang, langs, extraHidden: { view: authorViewValue, sort, order } })}
         ${renderSortControl({
@@ -1528,6 +1577,7 @@ export function renderAuthorOutsideSeriesPage({
       </div>
       <div class="page-intro-actions author-facet-controls-actions">
         ${facetAction}
+        ${renderHideReadToggle(user)}
         ${renderViewToggle({ href: layoutHref, isListView: listView })}
         ${renderLangFilterControl({ action: facetPath, lang, langs, extraHidden: { layout: bookLayout, sort, order } })}
         ${renderSortControl({
@@ -2315,6 +2365,7 @@ export function renderMyLibrary({ user, stats, indexStatus, userStats, csrfToken
     { href: '/favorites', title: t('nav.favorites'), count: favoritesTotal },
     { href: '/shelves', title: t('nav.shelves'), count: userStats.shelvesCount },
     { href: '/library/read', title: t('library.title.read'), count: userStats.readBooksCount },
+    { href: '/library/rated', title: t('library.title.rated'), count: userStats.ratedCount },
     { href: '/library/bookmarks', title: t('nav.bookmarks'), count: userStats.readerBookmarksCount },
     { href: '/library/notes', title: t('nav.notes'), count: userStats.readerAnnotationsCount }
   ];
@@ -2347,6 +2398,7 @@ export function renderProfile({ user, stats, indexStatus, userStats, readingStat
     { href: '/library/continue', label: t('nav.reading'), value: userStats.readingCount },
     { href: '/library/read', label: t('library.title.read'), value: userStats.readBooksCount },
     { href: '/library/want', label: t('nav.want'), value: userStats.wantCount },
+    { href: '/library/rated', label: t('library.title.rated'), value: userStats.ratedCount },
     { href: '/favorites?view=books', label: t('favorites.books'), value: userStats.bookmarkCount },
     { href: '/favorites?view=authors', label: t('favorites.authors'), value: userStats.favoriteAuthorsCount },
     { href: '/favorites?view=series', label: t('favorites.series'), value: userStats.favoriteSeriesCount },
@@ -2396,11 +2448,45 @@ export function renderProfile({ user, stats, indexStatus, userStats, readingStat
       </div>`
     : `<div class="profile-empty">${escapeHtml(t('profile.stats.empty'))}</div>`;
 
+  // Yearly goal + this year by month.
+  const year = Number(rs.year) || new Date().getFullYear();
+  const goal = Math.max(0, Math.floor(Number(rs.goal) || 0));
+  const readThisYear = Math.max(0, Math.floor(Number(rs.readThisYear) || 0));
+  const byMonth = Array.isArray(rs.byMonth) ? rs.byMonth : [];
+  const maxMonth = Math.max(1, ...byMonth.map((n) => Number(n) || 0));
+  const monthNames = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleString(getLocale(), { month: 'short' }));
+  const monthBars = byMonth.length ? `
+        <div class="profile-months" aria-label="${escapeHtml(tp('profile.goal.byMonth', { year }))}">
+          ${byMonth.map((n, i) => `<div class="profile-month" title="${escapeHtml(`${monthNames[i]}: ${count(n)}`)}">
+            <span class="profile-month-bar"><span style="height:${n ? Math.max(6, Math.round(((Number(n) || 0) / maxMonth) * 100)) : 0}%"></span></span>
+            <span class="profile-month-label">${escapeHtml(monthNames[i])}</span>
+          </div>`).join('')}
+        </div>` : '';
+  const goalPct = goal ? Math.min(100, Math.round((readThisYear / goal) * 100)) : 0;
+  const goalBlock = `
+      <section class="profile-section profile-section-wide profile-goal">
+        <div class="profile-section-head"><h3>${escapeHtml(tp('profile.goal.title', { year }))}</h3></div>
+        <p class="profile-goal-line">${goal
+          ? escapeHtml(tp('profile.goal.progress', { read: count(readThisYear), goal: count(goal) }))
+          : escapeHtml(tp('profile.goal.noGoal', { read: count(readThisYear) }))}</p>
+        ${goal ? `<div class="profile-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(readThisYear, goal)}"><span style="width:${goalPct}%"></span></div>` : ''}
+        ${monthBars}
+        <form method="post" action="/profile/reading-goal" class="profile-goal-form">
+          ${csrfHiddenField(csrfToken)}
+          <input type="hidden" name="year" value="${year}">
+          <label>${escapeHtml(t('profile.goal.set'))}
+            <input type="number" name="goal" min="0" max="1000" step="1" value="${goal || ''}" placeholder="${escapeHtml(t('profile.goal.placeholder'))}">
+          </label>
+          <button type="submit" class="button">${escapeHtml(t('profile.save'))}</button>
+        </form>
+      </section>`;
+
   const content = `
     <div class="profile-shell">
     ${renderProfileIdentityHeader(user, userStats)}
     ${renderProfileNav('stats')}
     <div class="profile-activity">
+      ${goalBlock}
       <section class="profile-section profile-section-wide">
         <div class="profile-section-head"><h3>${escapeHtml(t('profile.stats.collection'))}</h3></div>
         <div class="profile-stat-grid">${tilesHtml}
@@ -2453,6 +2539,7 @@ export function renderProfileSettings({
   homeView = 'grid', catalogView = 'grid',
   contentLangOptions = [], contentLangs = [],
   kosyncUrl = '', kosyncHasPassword = false,
+  hideRead = false, downloadFormat = '', downloadFormatOptions = [], telegramDigest = false,
   section = 'account'
 } = {}) {
   const fmtDate = (d) => formatLocaleDateLong(d);
@@ -2473,7 +2560,14 @@ export function renderProfileSettings({
           ${telegramId
             ? `<p style="margin:0 0 8px;">${escapeHtml(t('profile.telegram.linked'))} · ID <code>${escapeHtml(telegramId)}</code>${telegramLinkedAt ? `<span class="muted"> · ${escapeHtml(fmtDate(telegramLinkedAt))}</span>` : ''}</p>
                ${telegramBotAllowed
-                 ? `<form method="post" action="/profile/telegram/unlink" class="admin-inline-form" data-confirm="${escapeHtml(t('profile.telegram.unlinkConfirm'))}">
+                 ? `<form method="post" action="/profile/telegram/digest" class="vertical-form profile-digest-form">
+                      ${csrfHiddenField(csrfToken)}
+                      <input type="hidden" name="digest" value="0">
+                      <label class="admin-checkbox-label"><input type="checkbox" name="digest" value="1"${telegramDigest ? ' checked' : ''}> ${escapeHtml(t('profile.telegram.digest'))}</label>
+                      <p class="muted" style="margin:2px 0 8px;font-size:12px;">${escapeHtml(t('profile.telegram.digestHint'))}</p>
+                      <div class="actions"><button type="submit" class="button">${escapeHtml(t('profile.save'))}</button></div>
+                    </form>
+                    <form method="post" action="/profile/telegram/unlink" class="admin-inline-form" data-confirm="${escapeHtml(t('profile.telegram.unlinkConfirm'))}">
                       ${csrfHiddenField(csrfToken)}
                       <button type="submit" class="button-danger">${escapeHtml(t('profile.telegram.unlink'))}</button>
                     </form>`
@@ -2483,6 +2577,17 @@ export function renderProfileSettings({
               : telegramBotAvailable
                 ? `<a class="button" href="/profile/telegram/link">${escapeHtml(t('profile.telegram.link'))}</a>`
                 : `<p class="muted" style="margin:0;">${escapeHtml(t('profile.telegram.botUnavailable'))}</p>`}
+        </div>
+      </div>
+      <div class="table-row table-row-stack profile-form-row">
+        <div>
+          <strong>${escapeHtml(t('import.reading.title'))}</strong>
+          <p class="muted" style="margin:4px 0 8px;font-size:12px;">${escapeHtml(t('import.reading.hint'))}</p>
+          <form class="vertical-form" data-reading-import>
+            <div><input type="file" name="csv" accept=".csv,text/csv,text/plain" required></div>
+            <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('import.reading.button'))}</button></div>
+            <div class="import-report muted" data-reading-import-report hidden></div>
+          </form>
         </div>
       </div>
       <div class="table-row table-row-stack profile-form-row">
@@ -2568,7 +2673,19 @@ export function renderProfileSettings({
                   <option value="list"${catalogView === 'list' ? ' selected' : ''}>${escapeHtml(t('browse.viewList'))}</option>
                 </select>
               </label>
+              <label class="profile-view-pref">
+                <span>${escapeHtml(t('profile.downloadFormat'))}</span>
+                <select name="downloadFormat" aria-label="${escapeHtml(t('profile.downloadFormat'))}">
+                  <option value=""${downloadFormat ? '' : ' selected'}>${escapeHtml(t('profile.downloadFormat.ask'))}</option>
+                  ${downloadFormatOptions.map(([code, label]) => `<option value="${escapeHtml(code)}"${downloadFormat === code ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+                </select>
+              </label>
             </div>
+            <label class="admin-checkbox-label" style="margin-top:8px;">
+              <input type="hidden" name="hideRead" value="0">
+              <input type="checkbox" name="hideRead" value="1"${hideRead ? ' checked' : ''}> ${escapeHtml(t('browse.hideRead'))}
+            </label>
+            <p class="muted" style="margin:2px 0 0;font-size:12px;">${escapeHtml(t('profile.downloadFormat.hint'))} ${escapeHtml(t('profile.hideRead.hint'))}</p>
             <div class="actions"><button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button></div>
           </form>
         </div>

@@ -24,8 +24,17 @@ import {
   createPasswordResetToken,
   validatePasswordResetToken,
   completePasswordReset,
-  getOidcSettings, isOidcRegistrationBlocked
+  getOidcSettings, isOidcRegistrationBlocked,
+  getUserHideRead, setUserHideRead, getUserDownloadFormat, setUserDownloadFormat,
+  getUserTelegramDigest, setUserTelegramDigest, setReadingGoal
 } from '../db.js';
+import { getConfiguredDownloadFormats, isDownloadFormatEnabled, FORMAT_LABELS } from '../download-formats.js';
+import { invalidateUserPageCaches } from '../services/cache.js';
+
+/** Last value of a form field that may come twice (hidden 0 + checkbox 1). */
+function lastFormValue(value) {
+  return String([].concat(value ?? '').pop() ?? '');
+}
 import { isOidcConfigured } from '../services/oidc.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolvePublicBaseUrl, sendPasswordResetEmail } from '../services/password-reset.js';
@@ -140,6 +149,12 @@ export function registerAuthRoutes(app, deps) {
       telegramBotAllowed: fullUser ? isTelegramBotAllowedForUser(fullUser) : true,
       ereaderEmailAllowed: fullUser ? isEreaderEmailAllowedForUser(fullUser) : true,
       hasLocalPassword: Number(fullUser?.hasLocalPassword ?? 1) !== 0,
+      hideRead: getUserHideRead(user.username),
+      downloadFormat: getUserDownloadFormat(user.username),
+      downloadFormatOptions: getConfiguredDownloadFormats()
+        .filter((format) => isDownloadFormatEnabled(format))
+        .map((format) => [format, FORMAT_LABELS[format] || format.toUpperCase()]),
+      telegramDigest: getUserTelegramDigest(user.username),
       flash,
       csrfToken,
       ...extra
@@ -381,6 +396,15 @@ export function registerAuthRoutes(app, deps) {
     res.send(renderProfile(buildProfileData(req.user, '', req.csrfToken || '')));
   });
 
+  app.post('/profile/reading-goal', requireWebAuth, (req, res) => {
+    try {
+      setReadingGoal(req.user.username, Number(req.body?.year) || new Date().getFullYear(), req.body?.goal);
+    } catch {
+      /* invalid year — keep the page as it was */
+    }
+    res.redirect('/profile');
+  });
+
   function profileSettingsSection(req) {
     return String(req.query.section || req.body?.section || '') === 'view' ? 'view' : 'account';
   }
@@ -474,6 +498,14 @@ export function registerAuthRoutes(app, deps) {
         homeView: req.body.homeView,
         catalogView: req.body.catalogView
       });
+      if (req.body.downloadFormat !== undefined) {
+        const format = lastFormValue(req.body.downloadFormat).toLowerCase();
+        setUserDownloadFormat(req.user.username, getConfiguredDownloadFormats().includes(format) ? format : '');
+      }
+      if (req.body.hideRead !== undefined) {
+        setUserHideRead(req.user.username, lastFormValue(req.body.hideRead) === '1');
+        invalidateUserPageCaches(req.user.username);
+      }
       res.send(renderSettingsPage(req, t('profile.viewPrefsSaved'), req.csrfToken || '', 'view'));
     } catch (error) {
       res.status(500).send(renderSettingsPage(req, translateKnownErrorMessage(error.message), req.csrfToken || '', 'view'));
@@ -528,6 +560,11 @@ export function registerAuthRoutes(app, deps) {
     } catch (error) {
       res.redirect('/profile/settings?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
+  });
+
+  app.post('/profile/telegram/digest', requireWebAuth, (req, res) => {
+    setUserTelegramDigest(req.user.username, lastFormValue(req.body?.digest) === '1');
+    res.redirect('/profile/settings?flash=' + encodeURIComponent(t('profile.telegram.digestSaved')));
   });
 
   app.post('/profile/telegram/unlink', requireWebAuth, (req, res) => {
