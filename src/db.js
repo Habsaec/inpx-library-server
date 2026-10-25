@@ -4160,7 +4160,7 @@ export function getReaderSyncIndex(username, bookIds) {
 
   const activity = getUserReaderActivitySyncMeta(u);
   if (ids.length === 0) {
-    return { activity, books: [] };
+    return { activity, books: [], unknownIds: [] };
   }
 
   const placeholders = ids.map(() => '?').join(',');
@@ -4202,7 +4202,14 @@ export function getReaderSyncIndex(username, bookIds) {
     };
   });
 
-  return { activity, books };
+  // Ids this catalog does not have (book downloaded from another server, or a source added
+  // again under a new id). The client maps them with POST /api/books/resolve.
+  const knownIds = new Set(
+    db.prepare(`SELECT id FROM active_books WHERE id IN (${placeholders})`).all(...ids).map((r) => String(r.id)),
+  );
+  const unknownIds = ids.filter((id) => !knownIds.has(id) && !/^local:[a-f0-9]{64}$/.test(id));
+
+  return { activity, books, unknownIds };
 }
 
 export function getUserReaderActivitySyncMeta(username) {
@@ -4428,6 +4435,21 @@ export function setReadingPositionCas(
     IDLE_SQL_MODIFIER,
   );
   return saved ? getReadingPosition(username, bookId) : null;
+}
+
+/**
+ * A reader that closes gives up its hold: the next open (a new sessionId, on this or another
+ * device) may write at once instead of getting 409 until the closed session turns idle (4 min).
+ * Only the holder's own session can release; coordinates and revision are untouched.
+ */
+export function releaseReadingPositionSession(username, bookId, sessionId) {
+  const id = String(sessionId || '').trim();
+  if (!id) return false;
+  const info = db.prepare(`
+    UPDATE reading_positions SET last_user_activity_at = NULL
+    WHERE username = ? AND book_id = ? AND holder_session_id = ? AND last_user_activity_at IS NOT NULL
+  `).run(username, bookId, id);
+  return info.changes > 0;
 }
 
 export function setReadingPositionIdleSteal(

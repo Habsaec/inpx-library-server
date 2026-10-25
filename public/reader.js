@@ -1652,6 +1652,37 @@ import {
     }
   }
 
+  let pendingPositionSave = null;
+
+  /**
+   * Tab closed / navigated away: give up this session's hold on the position, otherwise the
+   * next open (here or in the Android app) gets 409 until this session turns idle (4 min).
+   * A save still waiting for its debounce is sent now, with `releaseSession`.
+   */
+  function releasePositionSessionOnLeave() {
+    const base = globalThis.apiBookPath ? globalThis.apiBookPath(bookId) : `/api/books/${encodeURIComponent(bookId)}`;
+    const pending = syncTimer ? pendingPositionSave : null;
+    clearTimeout(syncTimer);
+    syncTimer = null;
+    pendingPositionSave = null;
+    const path = pending ? '/position' : '/position/release';
+    const body = pending
+      ? { ...pending.body, baseRevision: pending.baseRevision, releaseSession: true }
+      : { sessionId: readerSessionId };
+    try {
+      void fetch(base + path, {
+        method: 'POST',
+        credentials: 'same-origin',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).catch(() => {});
+    } catch { /* ignore */ }
+  }
+  window.addEventListener('pagehide', (e) => {
+    if (!e.persisted) releasePositionSessionOnLeave();
+  });
+
   function savePositionPayload(payload, reason) {
     if (positionSaveSuppression.isSuppressed()) return;
     noteUserPositionActivity(reason);
@@ -1663,8 +1694,10 @@ import {
     writePosSeenCtx(dirty);
     if (isReaderSessionIdle()) return;
     const baseRevision = dirty.baseRevision;
+    pendingPositionSave = { body, baseRevision };
     syncTimer = setTimeout(() => {
       syncTimer = null;
+      pendingPositionSave = null;
       if (isReaderSessionIdle()) return;
       positionSaveChain = positionSaveChain
         .then(() => {

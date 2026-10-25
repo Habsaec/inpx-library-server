@@ -11,6 +11,7 @@ import { asyncHandler } from '../utils/async-handler.js';
 import { safePage } from '../utils/safe-int.js';
 import {
   getReadingPosition, migrateReadingPositionToV4, setReadingPositionCas, setReadingPositionIdleSteal,
+  releaseReadingPositionSession,
   getReaderBookmarks, addReaderBookmark, deleteReaderBookmark, updateReaderBookmarkTitle,
   getAllReaderBookmarksPage, getAllReaderAnnotationsPage,
   getReaderAnnotations, addReaderAnnotation, updateReaderAnnotation, deleteReaderAnnotation,
@@ -18,6 +19,7 @@ import {
   getReaderBookSyncMeta, getUserReaderActivitySyncMeta, getReaderSyncIndex,
 } from '../db.js';
 import { invalidateUserPageCaches, clearPageDataCache } from '../services/cache.js';
+import { BOOK_RESOLVE_MAX_REFS, resolveBookRefs } from '../book-resolve.js';
 import {
   isBookRead,
   getBookById,
@@ -90,6 +92,18 @@ export function registerReaderRoutes(app) {
     res.json(getReaderSyncIndex(req.user.username, ids));
   }));
 
+  /**
+   * Map book ids from another catalog onto this one (Android books downloaded from another
+   * server or before a source was re-added). Body `{ books: [{ id, title, authors, ext, libId? }] }`.
+   */
+  app.post('/api/books/resolve', requireApiAuth, asyncHandler(async (req, res) => {
+    const books = req.body?.books;
+    if (!Array.isArray(books) || books.length > BOOK_RESOLVE_MAX_REFS) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, 'books[] required (max ' + BOOK_RESOLVE_MAX_REFS + ')');
+    }
+    res.json({ items: resolveBookRefs(books) });
+  }));
+
   app.post('/api/books/:id/position', requireApiAuth, asyncHandler(async (req, res) => {
     const {
       position,
@@ -107,6 +121,7 @@ export function registerReaderRoutes(app) {
       positionVersion,
       baseRevision,
       sessionId,
+      releaseSession,
     } = req.body;
     const bookId = req.params.id;
     const username = req.user.username;
@@ -195,6 +210,8 @@ export function registerReaderRoutes(app) {
         { current: getReadingPosition(username, bookId) },
       );
     }
+    // Last save of a closing reader (web pagehide): write and give up the hold in one request.
+    if (releaseSession === true && sessionId) releaseReadingPositionSession(username, bookId, sessionId);
     invalidateUserPageCaches(username);
     // Auto-mark as read when progress reaches 99%+
     let markedRead = false;
@@ -218,6 +235,16 @@ export function registerReaderRoutes(app) {
       textQuote: saved.textQuote,
       textSectionLength: saved.textSectionLength,
     });
+  }));
+
+  /** Reader closed: release its session hold (`{ sessionId }`, only the current holder's). */
+  app.post('/api/books/:id/position/release', requireApiAuth, asyncHandler(async (req, res) => {
+    const sessionId = String(req.body?.sessionId || '').trim();
+    if (!sessionId || sessionId.length > 128) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, 'sessionId required');
+    }
+    const released = releaseReadingPositionSession(req.user.username, req.params.id, sessionId);
+    res.json({ ok: true, released });
   }));
 
   /* ── Auto-mark as read when finished ────────────────────────── */
