@@ -1150,13 +1150,38 @@ function beginIndexControlState(mode = 'all', sourceId = null) {
 
 const INDEX_HEARTBEAT_INTERVAL_MS = 5_000;
 const INDEX_HEARTBEAT_STALE_MS = 30_000;
+/* Живой владелец с остановленным event loop (тяжёлый синхронный SQL) тоже перестаёт обновлять heartbeat.
+   Пока его pid жив, lock не отбираем — иначе две индексации пишут в одну БД. Через 10 минут тишины
+   отбираем всё равно: после рестарта контейнера тот же pid может достаться уже другому процессу. */
+const INDEX_HEARTBEAT_DEAD_OWNER_MS = 10 * 60_000;
+
+function isProcessAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  if (n === process.pid) return true;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+function isIndexLockStale(heartbeat, lockPid) {
+  if (!heartbeat) return true;
+  const age = Date.now() - new Date(heartbeat).getTime();
+  if (!(age > INDEX_HEARTBEAT_STALE_MS)) return false;
+  if (age > INDEX_HEARTBEAT_DEAD_OWNER_MS) return true;
+  return !isProcessAlive(lockPid);
+}
+
 let _indexHeartbeatTimer = null;
 
 function isClusterIndexActive() {
   if (getMeta('index_active') !== '1') return false;
   const hb = getMeta('index_heartbeat');
   if (!hb) return false;
-  if (Date.now() - new Date(hb).getTime() > INDEX_HEARTBEAT_STALE_MS) {
+  if (isIndexLockStale(hb, getMeta('index_pid'))) {
     clearClusterIndexState();
     return false;
   }
@@ -1183,14 +1208,8 @@ function tryClaimClusterIndexLock() {
   const myPid = String(process.pid);
   const claimed = db.transaction(() => {
     if (getMeta('index_active') === '1') {
-      const hb = getMeta('index_heartbeat');
-      if (hb) {
-        const age = Date.now() - new Date(hb).getTime();
-        if (age <= INDEX_HEARTBEAT_STALE_MS) {
-          const lockPid = getMeta('index_pid');
-          if (lockPid && lockPid !== myPid) return false;
-        }
-      }
+      const lockPid = getMeta('index_pid');
+      if (lockPid && lockPid !== myPid && !isIndexLockStale(getMeta('index_heartbeat'), lockPid)) return false;
     }
     setMeta('index_active', '1');
     setMeta('index_pid', myPid);
@@ -2846,6 +2865,7 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
      архивов в один), сохраняет id. Удалить её сразу — каскадом стереть позиции/«прочитано»/полки,
      а через минуту вставить ту же книгу заново уже без пользовательских данных. */
   const pendingOrphanIds = new Set();
+  const oversizedInpPaths = new Set();
   /* .inp, чьи кандидаты ещё не удалены: до конца прохода в meta остаётся их старый отпечаток,
      чтобы прерванная индексация нашла их снова, а не оставила книги-сироты навсегда. */
   const unsettledInpPaths = new Set();
@@ -2863,7 +2883,8 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
     if (!incremental) return 0;
     let added = 0;
     for (const id of listBookIdsForArchive(archiveName)) {
-      if (!seenIds.has(id)) {
+      // Скрытый дубль (suppressed_books) пропущен при разборе нарочно — он не «исчез» из .inp.
+      if (!seenIds.has(id) && !suppressedIds.has(id)) {
         pendingOrphanIds.add(id);
         added += 1;
       }
@@ -3075,7 +3096,9 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         uncompressedBytes: uc,
         limit: MAX_INP_ENTRY_BYTES
       });
-      newSizes[entry.path] = inpEntryFingerprint(entry);
+      /* Отпечаток не запоминаем: иначе после поднятия лимита (обновление) .inp считался бы
+         неизменённым и так и не попал бы в индекс. */
+      oversizedInpPaths.add(entry.path);
       indexState.processedArchives += 1;
       continue;
     }
@@ -3248,7 +3271,7 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
 
   if (!incremental) {
     for (const entry of inpEntries) {
-      newSizes[entry.path] = inpEntryFingerprint(entry);
+      if (!oversizedInpPaths.has(entry.path)) newSizes[entry.path] = inpEntryFingerprint(entry);
     }
   }
 

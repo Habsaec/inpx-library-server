@@ -676,32 +676,46 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
   console.log(`[folder-index] ${allFiles.length} paths to stat (loose + inside archives)`);
   const filesToProcess = [];
   const currentFiles = {};
+  /* fullPath → { mtimeMs, size } | null (сбой stat). Записи одного архива делят его stat.
+     Асинхронный stat окнами: statSync на SMB/NFS держал event loop на каждом файле. */
   const statCache = new Map();
+  const STAT_WINDOW = 2500;
+  const STAT_CONCURRENCY = 8;
 
   for (let fi = 0; fi < allFiles.length; fi++) {
     throwIfCancelled();
     await waitIfPaused();
     const file = allFiles[fi];
-    if (fi > 0 && fi % 2500 === 0) {
-      await yieldEventLoop();
-      onProgress?.({
-        processed: fi,
-        total: allFiles.length,
-        imported: 0,
-        currentArchive: `${sourceLabel}: проверка mtime/size ${fi}/${allFiles.length}`
+    if (fi % STAT_WINDOW === 0) {
+      if (fi > 0) {
+        await yieldEventLoop();
+        onProgress?.({
+          processed: fi,
+          total: allFiles.length,
+          imported: 0,
+          currentArchive: `${sourceLabel}: проверка mtime/size ${fi}/${allFiles.length}`
+        });
+      }
+      const pending = new Set();
+      for (let j = fi; j < Math.min(fi + STAT_WINDOW, allFiles.length); j++) {
+        const p = allFiles[j].fullPath;
+        if (!statCache.has(p)) pending.add(p);
+      }
+      await asyncMapLimit([...pending], STAT_CONCURRENCY, async (p) => {
+        try {
+          const st = await fs.promises.stat(p);
+          statCache.set(p, { mtimeMs: st.mtimeMs, size: st.size });
+        } catch {
+          statCache.set(p, null);
+        }
       });
     }
-    let stat = statCache.get(file.fullPath);
+    const stat = statCache.get(file.fullPath);
     if (!stat) {
-      try {
-        stat = fs.statSync(file.fullPath);
-        statCache.set(file.fullPath, stat);
-      } catch {
-        /* Сбой stat (SMB/NFS) — не «файл удалён»: иначе чистка ниже удалит книгу каскадом
-           вместе с пользовательскими данными. Оставляем прежний отпечаток, файл не переобрабатываем. */
-        if (previousFiles[file.relativePath]) currentFiles[file.relativePath] = previousFiles[file.relativePath];
-        continue;
-      }
+      /* Сбой stat (SMB/NFS) — не «файл удалён»: иначе чистка ниже удалит книгу каскадом
+         вместе с пользовательскими данными. Оставляем прежний отпечаток, файл не переобрабатываем. */
+      if (previousFiles[file.relativePath]) currentFiles[file.relativePath] = previousFiles[file.relativePath];
+      continue;
     }
     const key = file.relativePath;
     const mtimeMs = String(stat.mtimeMs);

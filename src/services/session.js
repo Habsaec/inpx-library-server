@@ -10,18 +10,22 @@ function signValue(value) {
   return crypto.createHmac('sha256', config.sessionSecret).update(value).digest('hex');
 }
 
+/* v2 carries the issue time, so a copied cookie stops working after SESSION_MAX_AGE_MS on the server too,
+   not only in the browser. Old cookies without it stay valid until the next login (no mass logout). */
+const SESSION_V2_PREFIX = 'v2|';
+
 /** Create a signed session cookie value. */
-export function createSessionValue(username, sessionGen = 0) {
-  const payload = `${username}:${sessionGen}`;
+export function createSessionValue(username, sessionGen = 0, issuedAt = Date.now()) {
+  const payload = `${SESSION_V2_PREFIX}${Math.floor(issuedAt / 1000)}|${username}:${sessionGen}`;
   return `${payload}.${signValue(payload)}`;
 }
 
 /** Parse and verify a session cookie value. Returns { username, sessionGen } or null. */
-export function parseSession(value) {
+export function parseSession(value, now = Date.now()) {
   if (!value || !value.includes('.')) return null;
 
   const lastDot = value.lastIndexOf('.');
-  const payload = value.slice(0, lastDot);
+  let payload = value.slice(0, lastDot);
   const signature = value.slice(lastDot + 1);
   if (!payload || !signature) return null;
 
@@ -30,6 +34,16 @@ export function parseSession(value) {
   const expectedBuf = Buffer.from(expected, 'hex');
   if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
     return null;
+  }
+
+  if (payload.startsWith(SESSION_V2_PREFIX)) {
+    const sep = payload.indexOf('|', SESSION_V2_PREFIX.length);
+    if (sep === -1) return null;
+    const issuedAtMs = Number(payload.slice(SESSION_V2_PREFIX.length, sep)) * 1000;
+    if (!Number.isFinite(issuedAtMs)) return null;
+    const maxAgeMs = Number(config.sessionMaxAgeMs) || 0;
+    if (maxAgeMs > 0 && now - issuedAtMs > maxAgeMs) return null;
+    payload = payload.slice(sep + 1);
   }
 
   const colonIndex = payload.lastIndexOf(':');

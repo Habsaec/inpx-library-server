@@ -66,3 +66,34 @@ test('incremental INPX keeps user data of a book that moved to another .inp', as
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('incremental INPX does not purge a suppressed duplicate of a changed .inp', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inpx-suppressed-'));
+  const inpxPath = path.join(dir, 'lib.inpx');
+  const dup = { author: 'Лем,Станислав', title: 'Эдем', libId: '301' };
+  const other = { author: 'Лем,Станислав', title: 'Непобедимый', libId: '302' };
+  let source;
+  try {
+    await writeInpx(inpxPath, { 'main.inp': [dup] });
+    source = addSource({ name: 'Suppressed', type: 'inpx', path: inpxPath });
+    await rebuildIndex(inpxPath, false, source.id);
+    const dupId = `${source.id}:301`;
+    db.prepare('INSERT INTO suppressed_books(book_id) VALUES(?)').run(dupId);
+    db.prepare('INSERT INTO read_books(username, book_id) VALUES(?, ?)').run('mover', dupId);
+
+    await writeInpx(inpxPath, { 'main.inp': [dup, other] });
+    await rebuildIndex(inpxPath, true, source.id);
+
+    assert.ok(db.prepare('SELECT 1 FROM books WHERE id = ?').get(dupId), 'suppressed row kept');
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM read_books WHERE book_id = ?').get(dupId).c, 1);
+    assert.ok(db.prepare('SELECT 1 FROM books WHERE id = ?').get(`${source.id}:302`));
+  } finally {
+    if (source) {
+      db.prepare('DELETE FROM suppressed_books WHERE book_id LIKE ?').run(`${source.id}:%`);
+      db.prepare('DELETE FROM books WHERE source_id = ?').run(source.id);
+      db.prepare('DELETE FROM sources WHERE id = ?').run(source.id);
+    }
+    db.prepare("DELETE FROM read_books WHERE username = 'mover'").run();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
