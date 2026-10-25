@@ -10495,7 +10495,7 @@ html[data-ui-header="1"][data-ui-header-fit="cover"] .site-header-banner img {
 /* ?? UI customization (admin appearance) ?? */
 /* Layers over a background image, bottom to top (all in the root stacking context):
    z -2  body::before  the picture (blur, size, position)
-   z -2  #main-content::before  content veil — keeps text outside panels readable
+   z -2  .main-wrap::after  content veil under the whole right column — keeps text outside panels readable
    z -2  body::after   overlay tinted with the theme (last in tree order, so above both)
    z -1  decorative washes (aurora, manuscript, blurred covers)
    z  0  page content and glass panels */
@@ -10533,13 +10533,10 @@ html[data-ui-bg="1"] body::after {
   pointer-events: none;
 }
 
-/* Content veil: the main column gets the panel glass too (a bit lighter), so headings and captions
-   that are not inside a card stay readable however vivid the picture is. Follows «Прозрачность панелей». */
-html[data-ui-bg="1"] #main-content {
-  position: relative;
-}
-
-html[data-ui-bg="1"] #main-content::before {
+/* Content veil: the whole right column (breadcrumbs, index status, alerts, page) gets the panel glass too,
+   a bit lighter, so headings and captions that are not inside a card stay readable however vivid the
+   picture is — and there is no seam between the breadcrumbs and the page. Follows «Прозрачность панелей». */
+html[data-ui-bg="1"] .main-wrap::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -13909,7 +13906,7 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
     --ui-panel-backdrop: none;
   }
 
-  html[data-ui-bg="1"] #main-content::before {
+  html[data-ui-bg="1"] .main-wrap::after {
     background: var(--ui-glass-bg, var(--surface));
   }
 }
