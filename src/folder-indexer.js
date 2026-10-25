@@ -16,6 +16,9 @@ import {
   reattachDetachedUserData,
   stashUserDataRefsForSource,
   runWithForeignKeysOff,
+  stashMovedFolderBookRef,
+  hasMovedFolderBookRefs,
+  reattachMovedFolderUserData,
   dropBooksFtsTriggers,
   ensureBooksFtsTriggers,
   rebuildBooksFtsFromContent,
@@ -768,19 +771,24 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
       const deleteBookSeries = db.prepare('DELETE FROM book_series WHERE book_id = ?');
       const deleteBookGenres = db.prepare('DELETE FROM book_genres WHERE book_id = ?');
       const deleteBookCache = db.prepare('DELETE FROM book_details_cache WHERE book_id = ?');
+      const deleteBookReviews = db.prepare('DELETE FROM book_reviews WHERE book_id = ?');
       const DEL_CHUNK = 100;
       for (let j = 0; j < deletedKeys.length; j += DEL_CHUNK) {
         const slice = deletedKeys.slice(j, j + DEL_CHUNK);
-        db.transaction(() => {
+        // Пропавший файл мог быть переименован/перенесён: книги с пользовательскими данными запоминаем
+        // (stashMovedFolderBookRef) и удаляем без FK-каскада — данные переедут на новый id в конце прохода.
+        runWithForeignKeysOff(() => db.transaction(() => {
           for (const key of slice) {
             const bookId = makeBookId(source.id, key);
+            stashMovedFolderBookRef(bookId, source.id);
             deleteBookCache.run(bookId);
+            deleteBookReviews.run(bookId);
             deleteBookAuthors.run(bookId);
             deleteBookSeries.run(bookId);
             deleteBookGenres.run(bookId);
             deleteBook.run(bookId, source.id);
           }
-        })();
+        })());
         await yieldEventLoop();
       }
     }
@@ -849,6 +857,8 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
       existingBookIds.add(row.id);
     }
   }
+  // Книги, появившиеся в этом проходе, — кандидаты на «переезд» пропавших файлов (только если такие есть).
+  const newBookIds = incremental && hasMovedFolderBookRefs(source.id) ? [] : null;
 
   function resolveAuthorId(name) {
     if (authorIdCache.has(name)) return authorIdCache.get(name);
@@ -952,7 +962,10 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
         if (!row || suppressedIds.has(row.id)) continue;
         row.sourceId = source.id;
         insertBook.run(row);
-        if (incremental && !existingBookIds.has(row.id)) bumpIndexNewBooks();
+        if (incremental && !existingBookIds.has(row.id)) {
+          bumpIndexNewBooks();
+          newBookIds?.push(row.id);
+        }
         if (incremental) existingBookIds.add(row.id);
 
         if (incremental && !batchSeenIds.has(row.id)) {
@@ -1048,6 +1061,7 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
   updateSourceBookCount(source.id);
   updateSourceIndexedAt(source.id);
   reattachDetachedUserData(source.id);
+  if (incremental) reattachMovedFolderUserData(source.id, newBookIds || []);
 
   const resolvedSidecarRoot = path.resolve(source.path);
   try {
