@@ -12,7 +12,7 @@ import { resolveTelegramRuntimeConfig, getUserDownloadFormat } from '../db.js';
 import { config } from '../config.js';
 import { BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath, encodeBookRef, bookIdNeedsSafeUrl } from '../utils/book-ref.js';
-import { formatSingleAuthorName, splitAuthorValues, getFollowingNewCount } from '../inpx.js';
+import { formatSingleAuthorName, splitAuthorValues, getFollowingNewCount, getInProgressBookMap } from '../inpx.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
 import {
   t,
@@ -1772,6 +1772,20 @@ function renderAdminSidebar(currentPath = '/admin', { user = null, csrfToken = '
     <div class="sidebar-overlay" data-sidebar-overlay></div>`;
 }
 
+/* Started books → percent; app.js adds the bar to cards, list rows and the book page. */
+function renderReadProgressJson(user, isAdmin) {
+  if (!user?.username || isAdmin) return '';
+  let map = {};
+  try {
+    map = getInProgressBookMap(user.username);
+  } catch {
+    return '';
+  }
+  return Object.keys(map).length
+    ? `<script type="application/json" id="ui-read-progress">${JSON.stringify(map).replace(/</g, '\\u003c')}</script>`
+    : '';
+}
+
 export function pageShell({ title, content, user, query = '', field = 'all', stats, flash = '', indexStatus, breadcrumbs = [], mode = 'user', currentPath = '', csrfToken = '', readBookIds = null }) {
   const isAdmin = mode === 'admin';
   const isAuthenticated = Boolean(user);
@@ -1810,6 +1824,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
   <script>!function(){var b=document.getElementById('nav-progress');if(!b)return;function done(){b.classList.remove('active')}done();window.addEventListener('pageshow',done);window.addEventListener('popstate',done);document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.charAt(0)==='#'||a.target==='_blank'||e.ctrlKey||e.metaKey||e.shiftKey)return;b.classList.add('active')});document.addEventListener('submit',function(){b.classList.add('active')})}()</script>
   <script src="${clientI18nScriptUrl()}" defer></script>
   ${readBookIds && readBookIds.size ? `<script type="application/json" id="ui-read-ids">${JSON.stringify([...readBookIds])}</script>` : ''}
+  ${renderReadProgressJson(user, isAdmin)}
   <a class="skip-to-content" href="#main-content">${escapeHtml(t('skipToContent'))}</a>
   <div class="shell">
     ${isAdmin

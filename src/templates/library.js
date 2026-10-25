@@ -849,6 +849,7 @@ export function renderBook({
   isRead = false,
   wantToRead = false,
   myRating = 0,
+  readProgress = 0,
   user,
   stats,
   indexStatus,
@@ -909,8 +910,8 @@ export function renderBook({
         </div></div>
         <div class="book-detail-content">
           ${isAuthenticated ? `<div class="book-detail-corner-actions">
-            <button class="book-detail-icon-action book-detail-read-action ${isRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-read-button="1" aria-pressed="${isRead ? 'true' : 'false'}" aria-label="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}" title="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7"/></svg></button>
             ${isRead ? '' : `<button class="book-detail-icon-action book-detail-want-action ${wantToRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-want-button="1" aria-pressed="${wantToRead ? 'true' : 'false'}" aria-label="${escapeHtml(wantToRead ? t('book.inWant') : t('book.addWant'))}" title="${escapeHtml(wantToRead ? t('book.inWant') : t('book.addWant'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.8h10a.8.8 0 0 1 .8.8v15.6L12 16.4l-5.8 3.8V4.6a.8.8 0 0 1 .8-.8z"/></svg></button>`}
+            <button class="book-detail-icon-action book-detail-read-action ${isRead ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-read-button="1" aria-pressed="${isRead ? 'true' : 'false'}" aria-label="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}" title="${escapeHtml(isRead ? t('book.markedRead') : t('book.markRead'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7"/></svg></button>
             <button class="book-detail-icon-action book-detail-bookmark-action ${bookmarked ? 'is-active' : ''}" type="button" ${bookIdDataAttr(book.id)} data-bookmark-button="1" aria-pressed="${bookmarked ? 'true' : 'false'}" aria-label="${escapeHtml(bookmarked ? t('book.inFavorite') : t('book.addFavorite'))}" title="${escapeHtml(bookmarked ? t('book.inFavorite') : t('book.addFavorite'))}" ${bookmarked ? 'data-active-favorite="true"' : ''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.4s-6.8-4.2-6.8-8.8A3.8 3.8 0 0 1 12 8.1a3.8 3.8 0 0 1 6.8 3.5c0 4.6-6.8 8.8-6.8 8.8z"/></svg></button>
             <button class="book-detail-icon-action book-detail-shelf-action" type="button" ${bookIdDataAttr(book.id)} data-add-to-shelf="1" aria-label="${escapeHtml(t('book.toShelf'))}" title="${escapeHtml(t('book.toShelf'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16"/><path d="M6.5 19V8.2c0-.7.6-1.2 1.3-1.2H10V19"/><path d="M10 19V6.2c0-.7.6-1.2 1.3-1.2H14V19"/><path d="M14 19V9.2c0-.7.6-1.2 1.3-1.2H18V19"/></svg></button>
           </div>` : ''}
@@ -919,6 +920,7 @@ export function renderBook({
           <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 3, bookAuthors: book.authors, inlineExpand: true }) : escapeHtml(t('book.authorUnknown'))}</div>
           ${summaryBits.length ? `<div class="book-detail-summary">${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
           ${isAuthenticated ? renderMyRating(book.id, myRating) : ''}
+          ${readProgress > 0 && !isRead ? `<div class="book-detail-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(readProgress)}%"></div></div><span class="read-progress-label">${escapeHtml(tp('book.progressLabel', { n: Math.round(readProgress) }))}</span></div>` : ''}
           ${
             details.annotationIsHtml && String(details.annotation || '').trim()
               ? `<div class="book-detail-annotation book-detail-annotation--html">${sanitizeHtml(details.annotation)}</div>`
@@ -933,7 +935,7 @@ export function renderBook({
               : ''
           }
           <div class="actions actions-primary">
-            <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${escapeHtml(t('home.heroReadBook'))}</a>
+            <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${escapeHtml(readProgress > 0 && !isRead ? t('home.shelfContinue') : t('home.heroReadBook'))}</a>
             ${renderDownloadMenu(book, { accent: true, user })}
             ${(() => {
               const sendItems = [
@@ -1197,41 +1199,44 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
 }
 
-/** «Прочитано N из M» + «Читать следующую» on a series page (signed-in users, 2+ volumes). */
-/** «Отметить прочитанными тома до N»: for starting a long cycle midway (numbered volumes only). */
-function renderSeriesReadUpTo(progress, seriesName) {
-  const numbers = Array.isArray(progress?.numbers) ? progress.numbers : [];
-  if (!progress?.next || numbers.length < 2) return '';
-  const nextNo = Number(progress.next.seriesNo);
-  const options = numbers.map((n) => `<option value="${escapeHtml(String(n))}"${Number.isFinite(nextNo) && n === nextNo ? ' selected' : ''}>${escapeHtml(String(n))}</option>`).join('');
-  return `<form class="series-read-up-to" data-series-read-up-to="${escapeHtml(seriesName)}">
-        <label>${escapeHtml(t('series.readUpTo'))}
-          <select name="upTo" aria-label="${escapeHtml(t('series.readUpTo'))}">${options}</select>
-        </label>
-        <button type="submit" class="button">${escapeHtml(t('series.readUpToBtn'))}</button>
-      </form>`;
+/** Series page icon buttons, same look and order as the book page corner (want → read → favorite → shelf). */
+function renderSeriesIconActions({ name, hasBooks, favorite, seriesRead, want }) {
+  const attr = escapeHtml(name);
+  const btn = (cls, active, label, data, svg) => `<button class="book-detail-icon-action ${cls}${active ? ' is-active' : ''}" type="button" ${data} aria-pressed="${active ? 'true' : 'false'}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${svg}</button>`;
+  return `<div class="book-detail-corner-actions series-icon-actions">
+          ${hasBooks && !seriesRead ? btn('book-detail-want-action', want, want ? t('series.inWant') : t('series.addWant'), `data-series-want="${attr}"`, '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.8h10a.8.8 0 0 1 .8.8v15.6L12 16.4l-5.8 3.8V4.6a.8.8 0 0 1 .8-.8z"/></svg>') : ''}
+          ${hasBooks ? btn('book-detail-read-action', seriesRead, seriesRead ? t('facet.seriesMarkedRead') : t('facet.markSeriesRead'), `data-mark-series-read="${attr}"`, '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7"/></svg>') : ''}
+          ${btn('book-detail-bookmark-action', favorite, favorite ? t('facet.inFavorite') : t('facet.addFavorite'), `data-favorite-series="${attr}"${favorite ? ' data-active-favorite="true"' : ''}`, '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.4s-6.8-4.2-6.8-8.8A3.8 3.8 0 0 1 12 8.1a3.8 3.8 0 0 1 6.8 3.5c0 4.6-6.8 8.8-6.8 8.8z"/></svg>')}
+          ${hasBooks ? `<button class="book-detail-icon-action book-detail-shelf-action" type="button" data-add-series-to-shelf="${attr}" aria-label="${escapeHtml(t('series.toShelf'))}" title="${escapeHtml(t('series.toShelf'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16"/><path d="M6.5 19V8.2c0-.7.6-1.2 1.3-1.2H10V19"/><path d="M10 19V6.2c0-.7.6-1.2 1.3-1.2H14V19"/><path d="M14 19V9.2c0-.7.6-1.2 1.3-1.2H18V19"/></svg></button>` : ''}
+        </div>`;
 }
 
-function renderSeriesProgress(progress, seriesName = '') {
+/** «Прочитано N из M» + one «Продолжить» / «Читать следующую» button on a series page (signed-in users, 2+ volumes). */
+function renderSeriesProgress(progress) {
   if (!progress || progress.total < 2) return '';
   const pct = Math.round((progress.read / progress.total) * 100);
   const label = tp('series.progress', { read: formatLocaleInt(progress.read), total: formatLocaleInt(progress.total) });
   const next = progress.next;
-  const nextLabel = next
-    ? (progress.read === 0 ? t('series.startReading') : t('series.readNext'))
-    : '';
+  const current = progress.current;
+  // One button: «Продолжить» for a started volume, otherwise «Читать следующую» right after a read volume.
+  const showNext = Boolean(!current && next?.prevRead);
   const nextTitle = next ? `${next.seriesNo ? `${next.seriesNo}. ` : ''}${next.title}` : '';
+  const currentTitle = current ? `${current.seriesNo ? `${current.seriesNo}. ` : ''}${current.title}` : '';
   return `<div class="series-progress">
       <div class="series-progress-head">
         <span class="series-progress-label">${escapeHtml(label)}</span>
         ${next ? '' : `<span class="series-progress-done">${escapeHtml(t('series.allRead'))}</span>`}
       </div>
       <div class="series-progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(label)}"><span style="width:${pct}%"></span></div>
-      ${next ? `<div class="series-progress-next">
-        <a class="button button-primary" href="${readPagePath(next.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(nextLabel)}</a>
+      ${current ? `<div class="series-progress-next">
+        <a class="button button-primary" href="${readPagePath(current.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('series.continue'))}</a>
+        <a class="series-progress-next-title" href="${bookPagePath(current.id)}">${escapeHtml(currentTitle)}</a>
+        <span class="read-progress-label">${escapeHtml(`${Math.round(current.progress)}%`)}</span>
+      </div>` : ''}
+      ${showNext ? `<div class="series-progress-next">
+        <a class="button button-primary" href="${readPagePath(next.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('series.readNext'))}</a>
         <a class="series-progress-next-title" href="${bookPagePath(next.id)}">${escapeHtml(nextTitle)}</a>
       </div>` : ''}
-      ${seriesName ? renderSeriesReadUpTo(progress, seriesName) : ''}
     </div>`;
 }
 
@@ -1239,12 +1244,13 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
   const isGenre = facet === 'genres';
   const isLang = facet === 'languages';
   const isEntityView = (isGenre || isLang) && (view === 'authors' || view === 'series');
-  const facetAction = user && (facet === 'authors' || facet === 'series')
-    ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" ${facet === 'authors' ? `data-favorite-author="${escapeHtml(facetValue)}"` : `data-favorite-series="${escapeHtml(facetValue)}"`} ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
+  const facetAction = user && facet === 'authors'
+    ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
     : '';
-  const markSeriesReadBtn = user && facet === 'series' && items.length
-    ? `<button class="button${seriesRead ? ' is-active' : ''}" type="button" data-mark-series-read="${escapeHtml(facetValue)}">${seriesRead ? escapeHtml(t('facet.seriesMarkedRead')) : escapeHtml(t('facet.markSeriesRead'))}</button>`
-    : '';
+  // Series: the book page icon set in the same order (хочу → прочитано → избранное → полка).
+  const seriesActions = user && facet === 'series' ? renderSeriesIconActions({
+    name: facetValue, hasBooks: items.length > 0, favorite, seriesRead, want: Boolean(seriesProgress?.want)
+  }) : '';
   const batchCtx = facet === 'series' && facetValue !== '' ? { facet: 'series', value: facetValue } : null;
   const showBatch = !isEntityView && Boolean(batchCtx && items.length && canDownloadInUi(user));
   const scopeDownload = !isEntityView && Boolean(batchCtx && total > 0)
@@ -1333,14 +1339,32 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
       extraHidden: { ...sortExtraHidden, lang: '', sort, order }
     });
 
-  const facetBatchInner = `
-    <section class="page-intro page-intro-slim">
-      <div class="page-intro-copy">
-        <h1>${escapeHtml(title)}</h1>
+  // Series: a hero like the book page (first volume cover, corner icons, progress); controls go in a row below.
+  const seriesHeroBookId = facet === 'series' && !isEntityView ? (seriesProgress?.current?.id || seriesProgress?.next?.id || items[0]?.id || '') : '';
+  const seriesHero = seriesHeroBookId ? `
+    <section class="book-detail-shell series-facet-hero" style="--detail-cover:url('${escapeHtml(apiBookPath(seriesHeroBookId, 'cover'))}')">
+      <div class="book-detail-main card-detail-panel">
+        <div class="book-detail-cover">
+          <div class="cover">
+            <img class="cover-image" src="${apiBookPath(seriesHeroBookId, 'cover')}" alt="${escapeHtml(title)}">
+          </div>
+        </div>
+        <div class="book-detail-content">
+          ${seriesActions}
+          <h1 class="book-detail-title">${escapeHtml(title)}</h1>
+          <div class="muted author-facet-count-line">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural('book', total)}</div>
+          ${user ? renderSeriesProgress(seriesProgress) : ''}
+        </div>
       </div>
+    </section>` : '';
+  const facetBatchInner = `
+    ${seriesHero}
+    <section class="page-intro page-intro-slim${seriesHero ? ' author-facet-controls' : ''}">
+      ${seriesHero ? '' : `<div class="page-intro-copy">
+        <h1>${escapeHtml(title)}</h1>
+      </div>`}
       <div class="page-intro-actions">
         ${facetAction}
-        ${markSeriesReadBtn}
         ${scopeDownload}
         ${isEntityView ? '' : renderHideReadToggle(user)}
         ${layoutToggle}
@@ -1355,7 +1379,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
       </div>
     </section>
     ${viewTabs}
-    ${facet === 'series' && user ? renderSeriesProgress(seriesProgress, facetValue) : ''}
+    ${!seriesHero && facet === 'series' && user ? renderSeriesProgress(seriesProgress) : ''}
     ${showBatch ? renderBatchDownloadToolbar(batchCtx, { user }) : ''}
     <div class="list-context-hint list-context-hint-spacious">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural(countLabelKey, total)}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
     ${bodyBlock}

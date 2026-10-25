@@ -65,7 +65,7 @@ import {
   markFollowingSeen,
   getFollowingNewCount,
   getFollowingNewBooks,
-  getSeriesReadingProgress,
+  getSeriesReadingProgress, getSeriesCatalogDisplayName, getInProgressBookMap,
   getSeriesReadCounts,
   isSeriesFullyRead,
   isFavoriteAuthor,
@@ -841,7 +841,9 @@ export function registerLibraryRoutes(app, deps) {
           ? formatLanguageLabel(value)
           : facet === 'genres'
             ? formatGenreLabel(value)
-            : value;
+            : facet === 'series'
+              ? getSeriesCatalogDisplayName(value)
+              : value;
       const username = req.user?.username || '';
       const favorite = facet === 'authors'
         ? (username ? isFavoriteAuthor(username, value) : false)
@@ -1001,6 +1003,7 @@ export function registerLibraryRoutes(app, deps) {
       const isRead = username ? isBookRead(username, book.id) : false;
       const wantToRead = username && !isRead ? isWantToRead(username, book.id) : false;
       const myRating = username ? getBookRating(username, book.id) : 0;
+      const readProgress = username && !isRead ? (getInProgressBookMap(username)[book.id] || 0) : 0;
       const similarBooks = buildSimilarBooks(book);
       const tgRuntime = username ? resolveTelegramRuntimeConfig() : null;
       const telegramSendAvailable = Boolean(
@@ -1009,7 +1012,7 @@ export function registerLibraryRoutes(app, deps) {
 
       res.send(
         renderBook({
-          book, details, bookmarked, isRead, wantToRead, myRating, user, telegramSendAvailable,
+          book, details, bookmarked, isRead, wantToRead, myRating, readProgress, user, telegramSendAvailable,
           stats: getCachedStats(),
           indexStatus: getIndexStatus(),
           similarBooks, csrfToken: req.csrfToken || '',

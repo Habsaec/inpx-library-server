@@ -20,7 +20,7 @@ import {
   isBookmarked, toggleBookmark, addBookmarksIfMissing, toggleWantToRead, removeWantToRead, getSeriesReadingProgress,
   toggleFavoriteAuthor, toggleFavoriteSeries, getAllBookIdsByFacet,
   toggleReadBook, addReadBooksIfMissing, isSeriesFullyRead, removeReadBooksForSeries,
-  removeReadBookIfPresent, markSeriesReadUpTo,
+  removeReadBookIfPresent, markSeriesReadUpTo, toggleSeriesWantToRead,
 } from '../inpx.js';
 import { safePage } from '../utils/safe-int.js';
 import { resolveDownload } from '../conversion.js';
@@ -38,6 +38,9 @@ import { decodeBookRef } from '../utils/book-ref.js';
 /**
  * User-facing API routes: bookmarks, shelves, favorites, e-reader, history.
  */
+/** «На полку» for a whole series: generous cap, series are short but some «series» are publisher lines. */
+const SERIES_SHELF_MAX = 2000;
+
 export function registerUserApiRoutes(app, deps) {
   const { batchEmailLocks } = deps;
 
@@ -97,6 +100,19 @@ export function registerUserApiRoutes(app, deps) {
   });
 
   /* ── «Хочу прочитать» ─────────────────────────────────────────────── */
+
+  /* Series «Хочу прочитать» toggle: { name } → { want, added, removed } (web series page + Android).
+     Registered before /api/want/:id so «series» is not taken for a book id. */
+  app.post('/api/want/series', requireApiAuth, (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    if (!name) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.error.unknown'));
+    }
+    const username = req.user.username;
+    const result = toggleSeriesWantToRead(username, name, { langs: effectiveContentLangs(username) });
+    invalidateUserPageCaches(username);
+    res.json(result);
+  });
 
   app.post('/api/want/:id', requireApiAuth, (req, res) => {
     const book = getBookById(req.params.id);
@@ -307,23 +323,26 @@ export function registerUserApiRoutes(app, deps) {
     const shelfRaw = Array.isArray(body.shelfIds) ? body.shelfIds : [];
     const bookRaw = Array.isArray(body.bookIds) ? body.bookIds : [];
     const shelfIds = [...new Set(shelfRaw.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))];
-    const bookIds = [...new Set(bookRaw.map((x) => String(x).trim()).filter(Boolean))];
+    // Additive `series`: the whole series («На полку» on the series page), resolved here — may exceed the client id cap.
+    const seriesName = String(body.series || '').trim();
+    const bookIds = seriesName
+      ? getAllBookIdsByFacet('series', seriesName).slice(0, SERIES_SHELF_MAX).map(String)
+      : [...new Set(bookRaw.map((x) => String(x).trim()).filter(Boolean))];
     if (!shelfIds.length) {
       return apiFail(res, 400, ApiErrorCode.BATCH_NO_SHELVES, t('api.batch.noShelves'));
     }
     if (!bookIds.length) {
       return apiFail(res, 400, ApiErrorCode.BATCH_NO_BOOKS, t('api.batch.noBooks'));
     }
-    if (bookIds.length > BATCH_DOWNLOAD_MAX) {
+    if (!seriesName && bookIds.length > BATCH_DOWNLOAD_MAX) {
       return apiFail(res, 400, ApiErrorCode.BATCH_MAX_BOOKS, tp('api.batch.maxBooks', { max: BATCH_DOWNLOAD_MAX }));
     }
     if (shelfIds.length > BATCH_DOWNLOAD_MAX) {
       return apiFail(res, 400, ApiErrorCode.BATCH_MAX_SHELVES, tp('api.batch.maxShelves', { max: BATCH_DOWNLOAD_MAX }));
     }
     // Предварительно валидируем bookIds ОДНИМ запросом вместо N×M точечных SELECT-ов.
-    const placeholders = bookIds.map(() => '?').join(',');
-    const validIds = new Set(
-      db.prepare(`SELECT id FROM active_books WHERE id IN (${placeholders})`).all(...bookIds).map((r) => r.id)
+    const validIds = seriesName ? new Set(bookIds) : new Set(
+      db.prepare(`SELECT id FROM active_books WHERE id IN (${bookIds.map(() => '?').join(',')})`).all(...bookIds).map((r) => r.id)
     );
     let added = 0;
     const addBatch = db.transaction((shelfId, ids) => {

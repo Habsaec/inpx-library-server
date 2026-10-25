@@ -1284,14 +1284,15 @@ function syncAuthorSeriesFavoriteButtonUi(button, favorite) {
     if (!button.classList.contains('account-list-remove')) {
       button.textContent = uiT('profile.removeTitle');
     }
-  } else {
-    button.textContent = favorite ? uiT('book.inFavorite') : uiT('book.addFavorite');
   }
   button.classList.toggle('is-active', Boolean(favorite));
   if (favorite) {
     button.dataset.activeFavorite = 'true';
   } else {
     delete button.dataset.activeFavorite;
+  }
+  if (!isFavoriteEntityListButton(button)) {
+    setBookActionCaption(button, favorite ? uiT('book.inFavorite') : uiT('book.addFavorite'));
   }
 }
 
@@ -1634,11 +1635,16 @@ function attachMarkSeriesReadActions() {
         btn.disabled = false;
         if (data.action === 'removed') {
           btn.classList.remove('is-active');
-          btn.textContent = uiT('facet.markSeriesRead');
+          setBookActionCaption(btn, uiT('facet.markSeriesRead'));
           showToast(uiTp('facet.seriesReadRemoved', { n: data.removed }), 'success');
         } else {
           btn.classList.add('is-active');
-          btn.textContent = uiT('facet.seriesMarkedRead');
+          setBookActionCaption(btn, uiT('facet.seriesMarkedRead'));
+          // The server drops read books from «Хочу прочитать».
+          document.querySelectorAll('[data-series-want].is-active').forEach((w) => {
+            w.classList.remove('is-active');
+            setBookActionCaption(w, uiT('series.addWant'));
+          });
           if (data.added > 0) {
             showToast(uiTp('facet.seriesReadAdded', { n: data.added }), 'success');
           } else {
@@ -1743,34 +1749,6 @@ function attachReadingImport() {
   });
 }
 
-/* Series page: «Отметить прочитанными тома до N». */
-function attachSeriesReadUpTo() {
-  for (const form of document.querySelectorAll('[data-series-read-up-to]')) {
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const upTo = Number(form.querySelector('[name="upTo"]')?.value);
-      const button = form.querySelector('button[type="submit"]');
-      if (!Number.isFinite(upTo)) return;
-      if (button) button.disabled = true;
-      try {
-        const csrf = getCsrfTokenFromPage();
-        const response = await fetch('/api/series-read-up-to', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
-          body: JSON.stringify({ name: form.dataset.seriesReadUpTo, upTo })
-        });
-        if (await handleAuthRequired(response)) return;
-        if (!response.ok) throw new Error(String(response.status));
-        window.location.reload();
-      } catch {
-        if (button) button.disabled = false;
-        showToast(uiT('app.errorPrefix'), 'error');
-      }
-    });
-  }
-}
-
 /* Keyboard: «/» focuses search, Esc closes open menus, ←/→ turn catalog pages (not while typing). */
 function attachHotkeys() {
   if (attachHotkeys._bound) return;
@@ -1848,6 +1826,42 @@ function attachMyRating() {
       } catch {
         render(previous);
         showToast(uiT('app.errorPrefix'), 'error');
+      }
+    });
+  }
+}
+
+/* Series page «Хочу прочитать»: one edition of every unread volume; pressed again → the series leaves the list. */
+function attachSeriesWantActions() {
+  for (const button of document.querySelectorAll('[data-series-want]')) {
+    button.addEventListener('click', async (e) => {
+      e.preventDefault();
+      button.disabled = true;
+      try {
+        const csrf = getCsrfTokenFromPage();
+        const response = await fetch('/api/want/series', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+          body: JSON.stringify({ name: button.dataset.seriesWant })
+        });
+        if (await handleAuthRequired(response)) return;
+        if (!response.ok) {
+          showToast(uiT('app.wantError'), 'error');
+          return;
+        }
+        const data = await response.json();
+        button.classList.toggle('is-active', Boolean(data.want));
+        setBookActionCaption(button, data.want ? uiT('series.inWant') : uiT('series.addWant'));
+        pulseUi(button);
+        if (data.want) showToast(uiTp('series.wantAdded', { n: data.added }), 'success');
+        else if (data.removed > 0) showToast(uiT('series.wantRemoved'), 'success');
+        else showToast(uiT('series.wantNothing'), 'info');
+      } catch (err) {
+        console.error('Series want-to-read error', err);
+        showToast(uiT('app.networkError'), 'error');
+      } finally {
+        button.disabled = false;
       }
     });
   }
@@ -3749,6 +3763,37 @@ function getReadBookIdSet() {
   return _readBookIdSet;
 }
 
+/* Started books → percent (pageShell `ui-read-progress`): bar on cover cards, «N%» on list rows.
+   Cards come from a shared HTML cache, so the per-user progress is added here. */
+function applyReadProgressMarks() {
+  let map = null;
+  try {
+    const el = document.getElementById('ui-read-progress');
+    if (el) map = JSON.parse(el.textContent);
+  } catch (_) { /* ignore */ }
+  if (!map) return;
+  const idOf = (el) => (typeof resolveBookIdFromElement === 'function' ? resolveBookIdFromElement(el) : el.dataset.bookId);
+  for (const card of document.querySelectorAll('.card[data-book-id], .card[data-book-id-ref]')) {
+    const pct = Math.round(Number(map[idOf(card)]) || 0);
+    const meta = card.querySelector('.meta');
+    if (!pct || !meta || card.querySelector('.card-read-progress')) continue;
+    const box = document.createElement('div');
+    box.className = 'card-read-progress';
+    box.innerHTML = `<div class="read-progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${pct}%"></div></div><span class="read-progress-label">${pct}%</span>`;
+    const actions = meta.querySelector('.card-actions');
+    meta.insertBefore(box, actions || null);
+  }
+  for (const row of document.querySelectorAll('.author-flibusta-book')) {
+    const pct = Math.round(Number(map[idOf(row)]) || 0);
+    if (!pct || row.querySelector('.author-flibusta-progress')) continue;
+    const label = document.createElement('span');
+    label.className = 'read-progress-label author-flibusta-progress';
+    label.textContent = `${pct}%`;
+    label.title = uiTp('book.progressLabel', { n: pct });
+    row.insertBefore(label, row.querySelector('.author-flibusta-actions'));
+  }
+}
+
 function uiNormalizeAuthorToken(value = '') {
   return String(value || '')
     .replace(/\s+/g, ' ')
@@ -4932,13 +4977,13 @@ function confirmAction(message, { danger = false } = {}) {
   });
 }
 
-async function openAddToShelfPicker(bookIds) {
+async function openAddToShelfPicker(bookIds, { series = '' } = {}) {
   const ids = [...new Set(bookIds.map(String).filter(Boolean))];
-  if (!ids.length) return;
+  if (!ids.length && !series) return;
 
   try {
     let shelves;
-    if (ids.length === 1) {
+    if (!isMulti) {
       const res = await fetch(`/api/book-shelves/${ids[0]}`, { credentials: 'same-origin' });
       if (!res.ok) {
         showToast(uiT('app.shelvesLoadFail'), 'error');
@@ -4956,8 +5001,10 @@ async function openAddToShelfPicker(bookIds) {
     }
 
     const initialShelfState = new Map(shelves.map((s) => [String(s.id), Boolean(s.hasBook)]));
-    const isMulti = ids.length > 1;
-    const hint = isMulti
+    const isMulti = Boolean(series) || ids.length > 1;
+    const hint = series
+      ? `<p class="modal-shelf-hint muted">${escapeHtml(uiT('series.shelfHint'))}</p>`
+      : isMulti
       ? `<p class="modal-shelf-hint muted">${uiTp('app.shelfModalMultiHint', { n: ids.length })}</p>`
       : `<p class="modal-shelf-hint muted">${escapeHtml(uiT('app.shelfModalHint'))}</p>`;
 
@@ -5010,7 +5057,7 @@ async function openAddToShelfPicker(bookIds) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            body: JSON.stringify({ shelfIds, bookIds: ids })
+            body: JSON.stringify(series ? { shelfIds, series } : { shelfIds, bookIds: ids })
           });
           if (await handleAuthRequired(r)) return false;
           if (!r.ok) {
@@ -5109,7 +5156,7 @@ async function openAddToShelfPicker(bookIds) {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'same-origin',
-              body: JSON.stringify({ shelfIds: [data.id], bookIds: ids })
+              body: JSON.stringify(series ? { shelfIds: [data.id], series } : { shelfIds: [data.id], bookIds: ids })
             })
           : await fetch(`/api/shelves/${data.id}/books`, {
               method: 'POST',
@@ -5147,6 +5194,9 @@ function attachAddToShelfButtons() {
       if (!bookId) return;
       await openAddToShelfPicker([bookId]);
     });
+  }
+  for (const btn of document.querySelectorAll('[data-add-series-to-shelf]')) {
+    btn.addEventListener('click', () => openAddToShelfPicker([], { series: btn.dataset.addSeriesToShelf }));
   }
 }
 
@@ -7896,9 +7946,10 @@ loadCardDetails();
 loadBookPageReview();
 attachBookmarkActions();
 attachWantActions();
+attachSeriesWantActions();
+applyReadProgressMarks();
 attachHideReadToggle();
 attachMyRating();
-attachSeriesReadUpTo();
 attachReadingImport();
 attachHotkeys();
 attachReadBookActions();

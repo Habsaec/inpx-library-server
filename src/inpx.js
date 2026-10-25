@@ -678,6 +678,15 @@ function ensureSeriesStmts() {
   }
 }
 
+/** Readable series name (`series_catalog.display_name`) for a URL / lowercase catalog key. */
+let _stmtSeriesDisplay;
+export function getSeriesCatalogDisplayName(requested) {
+  const name = resolveSeriesCatalogName(requested);
+  if (!name) return String(requested || '');
+  _stmtSeriesDisplay ??= db.prepare('SELECT display_name FROM series_catalog WHERE name = ?');
+  return _stmtSeriesDisplay.get(name)?.display_name || name;
+}
+
 export function resolveSeriesCatalogName(requested) {
   const raw = normalizeText(requested);
   if (!raw) return '';
@@ -8581,13 +8590,51 @@ export function getSeriesReadingProgress(username, seriesName, { langs = null } 
   const read = volumes.filter((v) => v.read).length;
   const nextVol = volumes.find((v) => !v.read) || null;
   const numbers = [...new Set(volumes.map((v) => v.number).filter((n) => n != null))];
+  // Started, unread volume read most recently («Продолжить» instead of the first unread one).
+  const curVol = volumes
+    .filter((v) => !v.read && v.progress > 0)
+    .sort((a, b) => String(b.progressAt).localeCompare(String(a.progressAt)))[0] || null;
   return {
     total: volumes.length,
     read,
-    next: nextVol ? { id: nextVol.first.id, title: nextVol.first.title, seriesNo: normalizeSeriesNo(nextVol.first.seriesNo) } : null,
+    // prevRead: the volume right before `next` is read («Читать следующую» only then).
+    next: nextVol ? { id: nextVol.first.id, title: nextVol.first.title, seriesNo: normalizeSeriesNo(nextVol.first.seriesNo), prevRead: volumes.indexOf(nextVol) > 0 } : null,
     // Numbered volumes, for «Отметить прочитанным до тома N».
-    numbers
+    numbers,
+    // Some volume is in «Хочу прочитать» (series «Хочу прочитать» button state).
+    want: volumes.some((v) => v.want),
+    current: curVol
+      ? { id: curVol.progressId, title: curVol.first.title, seriesNo: normalizeSeriesNo(curVol.first.seriesNo), progress: Math.round(curVol.progress * 10) / 10 }
+      : null
   };
+}
+
+/**
+ * Series «Хочу прочитать»: when a volume of the series is already in the list → remove every edition;
+ * otherwise add one edition of each unread volume. → { want, added, removed }.
+ */
+export function toggleSeriesWantToRead(username, seriesName, { langs = null } = {}) {
+  const u = String(username || '').trim();
+  if (!u || !seriesName) return { want: false, added: 0, removed: 0 };
+  const volumes = listSeriesVolumes(u, seriesName, { langs });
+  if (volumes.some((v) => v.want)) {
+    const removed = db.prepare(`
+      DELETE FROM want_to_read WHERE username = ? AND book_id IN (
+        SELECT bs.book_id FROM book_series bs JOIN series_catalog sc ON sc.id = bs.series_id WHERE sc.name = ?
+      )
+    `).run(u, resolveSeriesCatalogName(String(seriesName))).changes;
+    return { want: false, added: 0, removed };
+  }
+  const ids = volumes.filter((v) => !v.read).map((v) => v.first.id);
+  let added = 0;
+  if (ids.length) {
+    db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(u);
+    const insert = db.prepare('INSERT OR IGNORE INTO want_to_read(username, book_id) VALUES(?, ?)');
+    db.transaction(() => {
+      for (const id of ids) added += insert.run(u, id).changes;
+    })();
+  }
+  return { want: ids.length > 0, added, removed: 0 };
 }
 
 /**
@@ -8613,15 +8660,18 @@ function listSeriesVolumes(u, seriesName, { langs = null } = {}) {
   const rows = db.prepare(`
     SELECT b.id, b.title, b.title_sort AS titleSort,
            COALESCE(NULLIF(bs.series_no, ''), b.series_no) AS seriesNo,
-           EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = ? AND rb.book_id = b.id) AS isRead
+           EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = ? AND rb.book_id = b.id) AS isRead,
+           EXISTS (SELECT 1 FROM want_to_read w WHERE w.username = ? AND w.book_id = b.id) AS isWant,
+           rp.progress AS progress, rp.updated_at AS progressAt
     FROM series_catalog sc
     JOIN book_series bs ON bs.series_id = sc.id
     JOIN active_books b ON b.id = bs.book_id
+    LEFT JOIN reading_positions rp ON rp.username = ? AND rp.book_id = b.id
     WHERE sc.name = ?${langClause ? ` AND ${langClause.where}` : ''}
     -- unnumbered volumes (omnibus, companions) go last so «next» follows the numbering
     ORDER BY CASE WHEN COALESCE(NULLIF(bs.series_no, ''), NULLIF(b.series_no, '')) IS NULL THEN 1 ELSE 0 END ASC,
              COALESCE(CAST(NULLIF(bs.series_no, '') AS REAL), b.series_index) ASC, b.title_sort ASC, b.id ASC
-  `).all(u, canonical, ...(langClause ? langClause.params : []));
+  `).all(u, u, u, canonical, ...(langClause ? langClause.params : []));
   const volumes = [];
   const byKey = new Map();
   for (const row of rows) {
@@ -8630,11 +8680,18 @@ function listSeriesVolumes(u, seriesName, { langs = null } = {}) {
     if (!vol) {
       const no = String(row.seriesNo || '').trim();
       const number = /^\d+(\.\d+)?$/.test(no) ? Number(no) : null;
-      vol = { first: row, read: false, number };
+      vol = { first: row, read: false, want: false, number, progress: 0, progressAt: '', progressId: null };
       byKey.set(key, vol);
       volumes.push(vol);
     }
     if (row.isRead) vol.read = true;
+    if (row.isWant) vol.want = true;
+    // The edition actually being read carries the volume progress.
+    if (Number(row.progress) > 0 && String(row.progressAt || '') > vol.progressAt) {
+      vol.progress = Number(row.progress);
+      vol.progressAt = String(row.progressAt || '');
+      vol.progressId = row.id;
+    }
   }
   return volumes;
 }
@@ -8677,6 +8734,27 @@ export function toggleBookmark(username, bookId) {
   db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
   db.prepare('INSERT OR IGNORE INTO bookmarks(username, book_id) VALUES(?, ?)').run(username, bookId);
   return true;
+}
+
+/**
+ * Started, not finished books of one user → { [bookId]: percent } (most recent first, capped).
+ * Web pages embed it so every card / list row / book page shows the reading progress.
+ */
+let _stmtInProgress = null;
+export function getInProgressBookMap(username, limit = 1000) {
+  const u = String(username || '').trim();
+  if (!u) return {};
+  _stmtInProgress ??= db.prepare(`
+    SELECT rp.book_id AS id, rp.progress AS progress
+    FROM reading_positions rp
+    WHERE rp.username = ? AND rp.progress > 0 AND rp.progress < 99
+      AND NOT EXISTS (SELECT 1 FROM read_books rb WHERE rb.username = rp.username AND rb.book_id = rp.book_id)
+    ORDER BY rp.updated_at DESC
+    LIMIT ?
+  `);
+  const out = {};
+  for (const row of _stmtInProgress.all(u, limit)) out[row.id] = Math.round(Number(row.progress) * 10) / 10;
+  return out;
 }
 
 /* ── «Хочу прочитать» ── a book leaves the list once it is opened or marked read. */

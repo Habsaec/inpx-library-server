@@ -7,7 +7,8 @@ import {
 } from '../src/db.js';
 import {
   parseLine, enrichBookRow, getLibraryView, searchBooks, getBooksByFacet, getAuthorBooksGrouped,
-  toggleReadBook, isBookRead, isWantToRead, markSeriesReadUpTo, getSeriesReadingProgress
+  toggleReadBook, isBookRead, isWantToRead, markSeriesReadUpTo, getSeriesReadingProgress, toggleSeriesWantToRead,
+  getInProgressBookMap, getSeriesCatalogDisplayName
 } from '../src/inpx.js';
 import { parseCsv, importReadingCsv } from '../src/services/reading-import.js';
 import { resolveHideReadUser } from '../src/hide-read.js';
@@ -128,6 +129,33 @@ test('series: mark read up to volume N', () => {
   assert.ok(isBookRead(USER, ids.v1) && isBookRead(USER, ids.v2));
   assert.ok(!isBookRead(USER, ids.v3));
   assert.equal(getSeriesReadingProgress(USER, 'usab cycle').next.id, ids.v3);
+  assert.equal(getSeriesReadingProgress(USER, 'usab cycle').next.prevRead, true);
+});
+
+test('started books: progress map, series «Продолжить», readable series name', () => {
+  db.prepare("INSERT OR REPLACE INTO reading_positions (username, book_id, progress, updated_at) VALUES (?, ?, 8.03, datetime('now'))").run(USER, ids.v3);
+  db.prepare("INSERT OR REPLACE INTO reading_positions (username, book_id, progress) VALUES (?, ?, 40)").run(USER, ids.v1);
+  const map = getInProgressBookMap(USER);
+  assert.equal(map[ids.v3], 8);
+  assert.equal(map[ids.v1], undefined, 'read books are not «in progress»');
+  const current = getSeriesReadingProgress(USER, 'usab cycle').current;
+  assert.equal(current.id, ids.v3);
+  assert.equal(current.progress, 8);
+  db.prepare('DELETE FROM reading_positions WHERE username = ?').run(USER);
+  assert.equal(getSeriesReadingProgress(USER, 'usab cycle').current, null);
+  assert.equal(getSeriesCatalogDisplayName('usab cycle'), 'Usab Cycle');
+  assert.equal(getSeriesCatalogDisplayName('USAB CYCLE'), 'Usab Cycle');
+});
+
+test('series «Хочу прочитать»: adds unread volumes, second press removes the series', () => {
+  // v1, v2 are read by the previous test; only v3 is unread.
+  const added = toggleSeriesWantToRead(USER, 'usab cycle');
+  assert.deepEqual(added, { want: true, added: 1, removed: 0 });
+  assert.ok(isWantToRead(USER, ids.v3) && !isWantToRead(USER, ids.v1));
+  assert.equal(getSeriesReadingProgress(USER, 'usab cycle').want, true);
+  const removed = toggleSeriesWantToRead(USER, 'usab cycle');
+  assert.deepEqual(removed, { want: false, added: 0, removed: 1 });
+  assert.equal(getSeriesReadingProgress(USER, 'usab cycle').want, false);
 });
 
 test('CSV import: Goodreads columns, series suffix, statuses, ratings, unmatched list', async () => {
