@@ -2082,13 +2082,15 @@ export function startBackgroundIndexing(force = false, incremental = true) {
   indexAllSources(force, useIncremental)
     .then(async () => {
       try {
+        /* Как в startSourceIndexing: счётчики до снятия active/lock и до onIndexComplete,
+           иначе наблюдатель папок запускает новую индексацию параллельно с потоком счётчиков. */
+        await refreshCatalogBookCounts();
         indexState.ready = true;
         indexState.active = false;
         indexState.finishedAt = new Date().toISOString();
         persistIndexNewBooksCount();
         emitIndexCompleted();
         clearClusterIndexState();
-        await refreshCatalogBookCounts();
         invalidateAllRecommendations();
         resetIndexControlState();
       } catch (err) {
@@ -2698,7 +2700,8 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
         db.exec('DELETE FROM books');
       })());
     }
-    db.exec('VACUUM');
+    /* Без VACUUM: он синхронно переписывает всю library.db (минуты блокировки event loop и ×2 места
+       на диске), а освобождённые страницы и так сразу займёт импорт ниже. */
     await yieldEventLoop();
   }
 
@@ -2839,16 +2842,45 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
     diagnostics.purgedRows = (diagnostics.purgedRows || 0) + 1;
   }
 
-  function purgeAllBooksInArchive(archiveName, diagnostics) {
-    for (const id of listBookIdsForArchive(archiveName)) {
-      purgeInpxBook(id, diagnostics);
+  /* Кандидаты на удаление копим до конца прохода: книга, переехавшая в другой .inp (сборка дневных
+     архивов в один), сохраняет id. Удалить её сразу — каскадом стереть позиции/«прочитано»/полки,
+     а через минуту вставить ту же книгу заново уже без пользовательских данных. */
+  const pendingOrphanIds = new Set();
+  /* .inp, чьи кандидаты ещё не удалены: до конца прохода в meta остаётся их старый отпечаток,
+     чтобы прерванная индексация нашла их снова, а не оставила книги-сироты навсегда. */
+  const unsettledInpPaths = new Set();
+
+  function persistIncrementalSizes() {
+    const snapshot = { ...newSizes };
+    for (const p of unsettledInpPaths) {
+      if (p in previousSizes) snapshot[p] = previousSizes[p];
+      else delete snapshot[p];
     }
+    setMeta(sizesKey, JSON.stringify(snapshot));
   }
 
-  function reconcileArchiveOrphans(archiveName, seenIds, diagnostics) {
-    if (!incremental) return;
+  function reconcileArchiveOrphans(archiveName, seenIds) {
+    if (!incremental) return 0;
+    let added = 0;
     for (const id of listBookIdsForArchive(archiveName)) {
-      if (!seenIds.has(id)) purgeInpxBook(id, diagnostics);
+      if (!seenIds.has(id)) {
+        pendingOrphanIds.add(id);
+        added += 1;
+      }
+    }
+    return added;
+  }
+
+  async function purgePendingOrphans(diagnostics) {
+    const ids = [...pendingOrphanIds].filter((id) => !seenUniqueBookIds.has(id));
+    pendingOrphanIds.clear();
+    const PURGE_CHUNK = 500;
+    for (let i = 0; i < ids.length; i += PURGE_CHUNK) {
+      const slice = ids.slice(i, i + PURGE_CHUNK);
+      db.transaction(() => {
+        for (const id of slice) purgeInpxBook(id, diagnostics);
+      })();
+      await yieldEventLoop();
     }
   }
 
@@ -2858,8 +2890,9 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
       if (!currentPaths.has(oldPath)) {
         delete newSizes[oldPath];
         const removedArchive = resolveArchiveNameForInp(archiveRoot, oldPath);
-        purgeAllBooksInArchive(removedArchive, diagnosticsTotal);
-        console.log(`[index] INPX incremental: removed .inp ${oldPath} → purged ${removedArchive}`);
+        for (const id of listBookIdsForArchive(removedArchive)) pendingOrphanIds.add(id);
+        unsettledInpPaths.add(oldPath);
+        console.log(`[index] INPX incremental: removed .inp ${oldPath} → purge candidates from ${removedArchive}`);
       }
     }
   }
@@ -3157,7 +3190,7 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
     }
     flush();
     addIndexDiagnostics(diagnosticsTotal, archiveDiagnostics);
-    reconcileArchiveOrphans(archiveName, archiveSeenIds, diagnosticsTotal);
+    if (reconcileArchiveOrphans(archiveName, archiveSeenIds) > 0) unsettledInpPaths.add(entry.path);
     indexState.currentArchive = `${archiveName} … готово ${lineCount} строк (${chunkSeq} чанков)`;
     console.log(`[index] INPX: ${archiveName} готово: ${lineCount} строк, чанков импорта ${chunkSeq}`);
     console.log(`[index] INPX diagnostics ${archiveName}: ${JSON.stringify(archiveDiagnostics)}`);
@@ -3167,12 +3200,17 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
 
     newSizes[entry.path] = inpEntryFingerprint(entry);
     if (incremental) {
-      setMeta(sizesKey, JSON.stringify(newSizes));
+      persistIncrementalSizes();
     }
     indexState.processedArchives += 1;
     authorIdCache.clear();
     seriesIdCache.clear();
     genreIdCache.clear();
+  }
+
+  if (incremental) {
+    await purgePendingOrphans(diagnosticsTotal);
+    unsettledInpPaths.clear();
   }
 
   logSystemEvent('info', 'index', 'INPX import pass completed', {

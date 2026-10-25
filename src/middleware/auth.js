@@ -7,6 +7,7 @@ import { getUserByUsername, getSetting, getMeta } from '../db.js';
 import { verifyPassword } from '../auth.js';
 import { parseSession, csrfTokenForSession, verifyCsrfToken } from '../services/session.js';
 import { trackUser } from '../services/online-tracker.js';
+import { isRateLimited, registerFailedLogin } from '../services/rate-limiter.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { CSRF_EXEMPT_PATHS, DUMMY_PASSWORD_HASH, SESSION_USER_CACHE_TTL_MS, SESSION_USER_CACHE_MAX } from '../constants.js';
 import { t } from '../i18n.js';
@@ -24,14 +25,47 @@ import { ApiErrorCode } from '../api-errors.js';
  *   'no-credentials' | 'unknown-user' | 'no-password-hash' | 'blocked' | 'wrong-password'
  * Никаких side-effects на response — это решает caller.
  */
+/* OPDS-клиенты и приложение шлют Basic на каждый запрос, а scryptSync держит event loop десятки мс
+   (на Raspberry Pi — больше). Успешную проверку помним недолго; ключ включает текущий хеш пароля,
+   так что смена пароля сразу делает запись бесполезной. Блокировка проверяется по строке users каждый раз. */
+const BASIC_AUTH_OK_TTL_MS = 5 * 60_000;
+const BASIC_AUTH_OK_MAX = 1000;
+const basicAuthOkCache = new Map();
+
+function basicAuthCacheKey(username, password, passwordHash) {
+  return crypto.createHash('sha256').update(`${username}\u0000${password}\u0000${passwordHash}`).digest('hex');
+}
+
+function verifyBasicPassword(username, password, passwordHash) {
+  const key = basicAuthCacheKey(username, password, passwordHash);
+  const expiresAt = basicAuthOkCache.get(key);
+  if (expiresAt && expiresAt > Date.now()) return true;
+  if (expiresAt) basicAuthOkCache.delete(key);
+  if (!verifyPassword(password, passwordHash)) return false;
+  if (basicAuthOkCache.size >= BASIC_AUTH_OK_MAX) {
+    basicAuthOkCache.delete(basicAuthOkCache.keys().next().value);
+  }
+  basicAuthOkCache.set(key, Date.now() + BASIC_AUTH_OK_TTL_MS);
+  return true;
+}
+
 function tryOpdsBasicAuth(req) {
   const credentials = basicAuth(req);
   if (!credentials) return { ok: false, reason: 'no-credentials' };
+  /* attachSessionUser уже проверил этот заголовок — не считаем scrypt второй раз. */
+  if (req.authMethod === 'basic' && req.user?.username === credentials.name) {
+    return { ok: true, user: { username: req.user.username, role: req.user.role || 'user' } };
+  }
+  /* Basic проверяется на любом URL — без лимита это перебор паролей в обход формы входа. */
+  if (isRateLimited(req)) {
+    return { ok: false, reason: 'rate-limited', username: credentials.name };
+  }
   const basicUser = getUserByUsername(credentials.name);
   if (!basicUser) {
     /* Всё равно вычисляем хеш дамми-пароля чтобы не было timing-side-channel
        («есть пользователь / нет»). Результат игнорируем. */
     verifyPassword(credentials.pass, DUMMY_PASSWORD_HASH);
+    registerFailedLogin(req);
     return { ok: false, reason: 'unknown-user', username: credentials.name };
   }
   if (!basicUser.passwordHash) {
@@ -40,8 +74,9 @@ function tryOpdsBasicAuth(req) {
   if (basicUser.blocked) {
     return { ok: false, reason: 'blocked', username: basicUser.username };
   }
-  const valid = verifyPassword(credentials.pass, basicUser.passwordHash);
+  const valid = verifyBasicPassword(basicUser.username, credentials.pass, basicUser.passwordHash);
   if (!valid) {
+    registerFailedLogin(req);
     return { ok: false, reason: 'wrong-password', username: basicUser.username };
   }
   return {
@@ -176,7 +211,13 @@ export function csrfGuard(req, res, next) {
       : undefined;
   const token = headerToken || bodyToken;
 
-  if (req.authMethod === 'basic' || req.authMethod === 'device') return next();
+  if (req.authMethod === 'device') return next();
+  /* Браузер сам подставляет запомненный Basic и в чужие формы — для межсайтового запроса
+     нужен CSRF-токен. KOReader/приложение заголовок Sec-Fetch-Site не шлют. */
+  if (req.authMethod === 'basic') {
+    const fetchSite = String(req.get('sec-fetch-site') || '');
+    if (!fetchSite || fetchSite === 'same-origin' || fetchSite === 'none') return next();
+  }
 
   if (!verifyCsrfToken(req.user.username, req.user.sessionGen || 0, token)) {
     const wantsJson = reqPath.startsWith('/api/') || String(req.get('accept') || '').includes('application/json');

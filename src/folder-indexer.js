@@ -697,6 +697,9 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
         stat = fs.statSync(file.fullPath);
         statCache.set(file.fullPath, stat);
       } catch {
+        /* Сбой stat (SMB/NFS) — не «файл удалён»: иначе чистка ниже удалит книгу каскадом
+           вместе с пользовательскими данными. Оставляем прежний отпечаток, файл не переобрабатываем. */
+        if (previousFiles[file.relativePath]) currentFiles[file.relativePath] = previousFiles[file.relativePath];
         continue;
       }
     }
