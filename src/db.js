@@ -2643,6 +2643,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_detached_book_refs_match
     ON detached_book_refs(lib_id, archive_name, file_name, ext);
 `);
+// source_id NULL — ссылка от удаления источника / полной переиндексации (ждёт повторной индексации);
+// source_id задан — файл папочного источника пропал при инкрементальной индексации: size + title_key
+// переживают переименование/перенос файла (id книги = sha256 пути), см. reattachMovedFolderUserData.
+{
+  const names = new Set(db.prepare('PRAGMA table_info(detached_book_refs)').all().map((c) => c.name));
+  if (!names.has('source_id')) db.exec('ALTER TABLE detached_book_refs ADD COLUMN source_id INTEGER');
+  if (!names.has('size')) db.exec('ALTER TABLE detached_book_refs ADD COLUMN size INTEGER NOT NULL DEFAULT 0');
+  if (!names.has('title_key')) db.exec("ALTER TABLE detached_book_refs ADD COLUMN title_key TEXT NOT NULL DEFAULT ''");
+  db.exec('CREATE INDEX IF NOT EXISTS idx_detached_book_refs_source ON detached_book_refs(source_id) WHERE source_id IS NOT NULL');
+}
 
 const isAllSources = (sourceId) => sourceId == null || sourceId === '';
 
@@ -2702,6 +2712,7 @@ export function reattachDetachedUserData(sourceId) {
      AND d.archive_name = COALESCE(b.archive_name, '')
      AND d.file_name = COALESCE(b.file_name, '')
      AND d.ext = COALESCE(b.ext, '')
+     AND (d.source_id IS NULL OR d.source_id = b.source_id)
     WHERE ${all ? '1' : 'b.source_id = ?'}
     GROUP BY d.old_book_id
   `);
@@ -2711,18 +2722,141 @@ export function reattachDetachedUserData(sourceId) {
   const dropRef = db.prepare('DELETE FROM detached_book_refs WHERE old_book_id = ?');
   db.transaction(() => {
     for (const { oldId, newId } of matches) {
-      if (oldId !== newId) {
-        for (const table of USER_BOOK_TABLES) {
-          // OR IGNORE: у пользователя уже может быть запись по новой книге — она приоритетнее.
-          db.prepare(`UPDATE OR IGNORE ${table} SET book_id = ? WHERE book_id = ?`).run(newId, oldId);
-          db.prepare(`DELETE FROM ${table} WHERE book_id = ?`).run(oldId);
-        }
-      }
+      if (oldId !== newId) moveUserBookRows(oldId, newId);
       dropRef.run(oldId);
     }
   })();
   console.log(`[db] reattached user data for ${matches.length} book(s) of source ${all ? 'ALL' : sid}`);
   return matches.length;
+}
+
+function moveUserBookRows(oldId, newId) {
+  for (const table of USER_BOOK_TABLES) {
+    // OR IGNORE: у пользователя уже может быть запись по новой книге — она приоритетнее.
+    db.prepare(`UPDATE OR IGNORE ${table} SET book_id = ? WHERE book_id = ?`).run(newId, oldId);
+    db.prepare(`DELETE FROM ${table} WHERE book_id = ?`).run(oldId);
+  }
+}
+
+/** Сколько ждёт «переезда» книга, пропавшая при инкрементальной индексации папки; потом её данные удаляются. */
+const MOVED_BOOK_REF_TTL_DAYS = 30;
+const TITLE_KEY_SQL = "lower(trim(COALESCE(b.title, ''))) || char(31) || lower(trim(COALESCE(b.authors, '')))";
+const EMPTY_TITLE_KEY = String.fromCharCode(31);
+let stashMovedRefStmt = null;
+
+/**
+ * Инкрементальная индексация папки: файл пропал (удалён, переименован или перенесён). Если по книге есть
+ * пользовательские данные — запоминает отпечаток, переживающий перенос (size + ext + title/authors + имя файла),
+ * и возвращает true. Вызывать до удаления книги; удалять — без FK-каскада (runWithForeignKeysOff).
+ */
+export function stashMovedFolderBookRef(bookId, sourceId) {
+  // Лениво: books и reader_* создаются позже загрузки модуля.
+  stashMovedRefStmt ||= db.prepare(`
+    INSERT OR IGNORE INTO detached_book_refs(old_book_id, lib_id, archive_name, file_name, ext, source_id, size, title_key)
+    SELECT b.id, COALESCE(b.lib_id, ''), COALESCE(b.archive_name, ''), COALESCE(b.file_name, ''), COALESCE(b.ext, ''),
+           b.source_id, COALESCE(b.size, 0), ${TITLE_KEY_SQL}
+    FROM books b
+    WHERE b.id = ? AND b.source_id = ?
+      AND (${USER_BOOK_TABLES.map((t) => `EXISTS (SELECT 1 FROM ${t} WHERE book_id = b.id)`).join(' OR ')})
+  `);
+  return stashMovedRefStmt.run(bookId, Number(sourceId)).changes > 0;
+}
+
+export function hasMovedFolderBookRefs(sourceId) {
+  return !!db.prepare('SELECT 1 FROM detached_book_refs WHERE source_id = ? LIMIT 1').get(Number(sourceId));
+}
+
+const fileBaseName = (fileName) => String(fileName || '').split('/').pop().toLowerCase();
+
+/**
+ * Переносит пользовательские данные пропавших файлов источника на книги, появившиеся в этом проходе
+ * (newBookIds). Ступени от точной к грубой: size+ext+title/authors → size+ext+имя файла → size+ext.
+ * Пара принимается, только если отпечаток однозначен с обеих сторон (одна старая книга и одна новая) —
+ * не угадываем, ссылка ждёт следующего прохода. Для файла в zip/7z size — размер контейнера (общий
+ * у всех его книг), поэтому ступень «только size+ext» — лишь для отдельных файлов.
+ * Ссылки старше MOVED_BOOK_REF_TTL_DAYS — файл удалён насовсем: данные удаляются (отложенный каскад).
+ */
+export function reattachMovedFolderUserData(sourceId, newBookIds = []) {
+  const sid = Number(sourceId);
+  if (!Number.isFinite(sid)) return 0;
+  const refs = db.prepare(`
+    SELECT old_book_id AS id, archive_name AS archiveName, file_name AS fileName, ext, size, title_key AS titleKey
+    FROM detached_book_refs WHERE source_id = ?
+  `).all(sid);
+  let moved = 0;
+  if (refs.length && newBookIds.length) {
+    const refIds = new Set(refs.map((r) => r.id));
+    let restCands = [];
+    const CHUNK = 500;
+    for (let i = 0; i < newBookIds.length; i += CHUNK) {
+      const slice = newBookIds.slice(i, i + CHUNK);
+      const rows = db.prepare(`
+        SELECT b.id, COALESCE(b.archive_name, '') AS archiveName, COALESCE(b.file_name, '') AS fileName,
+               COALESCE(b.ext, '') AS ext, COALESCE(b.size, 0) AS size, ${TITLE_KEY_SQL} AS titleKey
+        FROM books b WHERE b.source_id = ? AND b.id IN (${slice.map(() => '?').join(',')})
+      `).all(sid, ...slice);
+      for (const row of rows) if (!refIds.has(row.id)) restCands.push(row);
+    }
+    const tiers = [
+      (r) => (r.size > 0 && r.titleKey !== EMPTY_TITLE_KEY ? `${r.size}|${r.ext}|t|${r.titleKey}` : null),
+      (r) => (r.size > 0 && fileBaseName(r.fileName) ? `${r.size}|${r.ext}|n|${fileBaseName(r.fileName)}` : null),
+      (r) => (r.size > 0 && !r.archiveName ? `${r.size}|${r.ext}` : null)
+    ];
+    const groupBy = (items, keyOf) => {
+      const map = new Map();
+      for (const item of items) {
+        const key = keyOf(item);
+        if (key == null) continue;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(item);
+      }
+      return map;
+    };
+    let restRefs = refs;
+    const pairs = [];
+    for (const keyOf of tiers) {
+      if (!restRefs.length || !restCands.length) break;
+      const candsByKey = groupBy(restCands, keyOf);
+      const used = new Set();
+      for (const [key, rs] of groupBy(restRefs, keyOf)) {
+        const cs = candsByKey.get(key);
+        if (rs.length !== 1 || cs?.length !== 1) continue;
+        pairs.push([rs[0].id, cs[0].id]);
+        used.add(rs[0].id).add(cs[0].id);
+      }
+      restRefs = restRefs.filter((r) => !used.has(r.id));
+      restCands = restCands.filter((c) => !used.has(c.id));
+    }
+    if (pairs.length) {
+      const dropRef = db.prepare('DELETE FROM detached_book_refs WHERE old_book_id = ?');
+      db.transaction(() => {
+        for (const [oldId, newId] of pairs) {
+          moveUserBookRows(oldId, newId);
+          dropRef.run(oldId);
+        }
+      })();
+      moved = pairs.length;
+      console.log(`[db] moved/renamed files: reattached user data for ${moved} book(s) of source ${sid}`);
+    }
+  }
+
+  const expired = db.prepare(`
+    SELECT old_book_id AS id FROM detached_book_refs
+    WHERE source_id = ? AND detached_at < datetime('now', ?)
+  `).all(sid, `-${MOVED_BOOK_REF_TTL_DAYS} days`);
+  if (expired.length) {
+    const bookExists = db.prepare('SELECT 1 FROM books WHERE id = ?');
+    const dropRef = db.prepare('DELETE FROM detached_book_refs WHERE old_book_id = ?');
+    db.transaction(() => {
+      for (const { id } of expired) {
+        if (!bookExists.get(id)) {
+          for (const table of USER_BOOK_TABLES) db.prepare(`DELETE FROM ${table} WHERE book_id = ?`).run(id);
+        }
+        dropRef.run(id);
+      }
+    })();
+  }
+  return moved;
 }
 
 export async function deleteSourceProgressive(
