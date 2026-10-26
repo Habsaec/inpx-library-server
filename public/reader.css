@@ -1034,6 +1034,155 @@ body.chrome-hidden .reader-toast{
   background:var(--r-accent);color:var(--r-bg);border-color:transparent;
 }
 
+/* ================================================================
+   TOOLBAR (slim): back · title / chapter · % · bookmark
+   ================================================================ */
+.reader-toolbar .tb-meta{flex:1 1 auto}
+.reader-toolbar .tb-chapter{font-size:11.5px;opacity:.5;line-height:1.2}
+.reader-toolbar .tb-right{flex:0 0 auto;gap:6px}
+.reader-toolbar .tb-progress{opacity:.5}
+@media(max-width:640px){
+  .reader-toolbar .tb-meta{max-width:none}
+  .reader-toolbar .tb-chapter{font-size:10.5px}
+}
+
+/* ================================================================
+   TILE MENU — tap in the middle (AlReader-style), above the footer
+   ================================================================ */
+.reader-quick{
+  position:fixed;left:0;right:0;z-index:199;
+  bottom:var(--r-footer-h);
+  padding:10px calc(10px + var(--r-safe-right)) 6px calc(10px + var(--r-safe-left));
+  background:var(--r-bg);
+  border-top:1px solid var(--r-border);
+  box-shadow:0 -8px 24px rgba(0,0,0,.08);
+  color:var(--r-fg);
+}
+body.chrome-hidden .reader-quick{transform:translateY(calc(100% + var(--r-footer-h)))}
+/* Pinned bars: the tile menu shows only after a tap in the middle */
+html[data-chrome-pinned="1"] .reader-quick,
+body.chrome-pinned .reader-quick{display:none}
+html[data-chrome-pinned="1"] body.quick-open .reader-quick,
+body.chrome-pinned.quick-open .reader-quick{display:block;transform:none;opacity:1;pointer-events:auto}
+.rq-tiles{
+  display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;
+  max-width:760px;margin:0 auto;
+}
+.rq-tile{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  min-height:58px;padding:6px 2px;border:none;border-radius:12px;background:none;
+  color:var(--r-fg);font:inherit;font-size:11px;line-height:1.15;cursor:pointer;
+  transition:background .15s;
+}
+.rq-tile[hidden]{display:none}
+.rq-tile:hover,.rq-tile.is-active{background:var(--r-hover)}
+.rq-tile:focus-visible{outline:2px solid var(--r-accent);outline-offset:-2px}
+.rq-tile svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rq-tile .tts-main-icon .tts-main-path{fill:currentColor;stroke:none}
+.rq-ico{display:inline-flex}
+.rq-label{opacity:.75;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rq-row{
+  display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;
+  padding:6px 0 2px;max-width:760px;margin:0 auto;
+}
+.rq-step{display:inline-flex;align-items:center;border:1px solid var(--r-border);border-radius:999px;overflow:hidden}
+.rq-step-btn{
+  min-width:48px;min-height:38px;padding:0 12px;border:none;background:none;
+  color:var(--r-fg);font:inherit;font-size:14px;font-weight:600;cursor:pointer;
+}
+.rq-step-btn-lg{font-size:17px}
+.rq-step-btn:hover{background:var(--r-hover)}
+.rq-step-val{min-width:30px;text-align:center;font-size:13px;font-variant-numeric:tabular-nums;opacity:.75}
+.rq-themes{display:flex;gap:8px}
+.rq-themes .rs-theme-dot{width:30px;height:30px}
+.rq-themes .rs-dot-label{display:none}
+@media(max-width:640px){
+  .rq-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .rq-row{gap:10px}
+}
+/* TTS dock sits above the tile menu while the menu is shown */
+body:not(.chrome-hidden):not(.chrome-pinned) .reader-tts-dock,
+body.chrome-pinned.quick-open .reader-tts-dock{
+  bottom:calc(var(--r-footer-h) + var(--r-quick-h, 0px));
+}
+.rs-theme-dot[data-set-theme="eink"]{background:#fff;box-shadow:inset 0 0 0 2px #000}
+
+/* ================================================================
+   SETTINGS SHEET — list of sections → section page
+   ================================================================ */
+.panel-overlay.is-settings .panel-tabs{display:none}
+.panel-back{
+  flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+  width:36px;height:36px;margin-left:-8px;border:none;border-radius:999px;
+  background:none;color:var(--r-fg);cursor:pointer;
+}
+.panel-back[hidden]{display:none}
+.panel-back:hover{background:var(--r-hover)}
+.panel-back svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.panel-header .panel-heading{flex:1 1 auto}
+.rs-body{padding-top:4px}
+.rs-root{display:flex;flex-direction:column}
+.rs-root[hidden],.rs-page[hidden]{display:none !important}
+.rs-root-row{
+  display:flex;align-items:center;gap:12px;width:100%;min-height:52px;
+  padding:10px 4px;border:none;border-bottom:1px solid var(--r-border);
+  background:none;color:var(--r-fg);font:inherit;font-size:14.5px;text-align:left;cursor:pointer;
+}
+.rs-root-row:hover{background:var(--r-hover)}
+.rs-root-row:focus-visible{outline:2px solid var(--r-accent);outline-offset:-2px}
+.rs-root-ico{display:inline-flex;flex:0 0 auto;opacity:.75}
+.rs-root-ico svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rs-root-label{flex:1 1 auto;min-width:0}
+.rs-root-val{flex:0 1 auto;min-width:0;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;opacity:.5}
+.rs-root-chev{flex:0 0 auto;font-size:20px;line-height:1;opacity:.35}
+.rs-root-reset{border-bottom:none;margin-top:8px;opacity:.75}
+.rs-page{padding-top:12px}
+.rs-page .rs-group{padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--r-border)}
+.rs-page .rs-group:last-child{border-bottom:none;margin-bottom:0}
+.rs-page .rs-group[hidden]{display:none}
+.rs-step-btn{
+  flex:0 0 auto;min-width:34px;height:32px;padding:0 8px;
+  border:1px solid var(--r-border);border-radius:10px;background:none;
+  color:var(--r-fg);font:inherit;font-size:16px;font-weight:600;line-height:1;cursor:pointer;
+}
+.rs-step-btn:hover{background:var(--r-hover)}
+.rs-step-btn:focus-visible{outline:2px solid var(--r-accent);outline-offset:1px}
+
+/* E-Ink: no sliders (every drag repaints the panel) — value between − and + */
+html[data-eink="1"] .rs-slider{justify-content:center;gap:14px}
+html[data-eink="1"] .rs-slider input[type="range"]{display:none}
+html[data-eink="1"] .rs-slider .rs-val{min-width:72px;text-align:center;font-size:1rem;opacity:1;color:var(--lite-ink)}
+html[data-eink="1"] .rs-step-btn{
+  min-width:var(--lite-touch);height:var(--lite-touch);
+  border:2px solid var(--lite-line);border-radius:var(--lite-radius);
+  background:var(--lite-surface);color:var(--lite-ink);font-size:1.3rem;
+}
+html[data-eink="1"] .rs-step-btn:active{background:var(--lite-ink);color:var(--lite-accent-fg)}
+html[data-eink="1"] .reader-quick{
+  background:var(--lite-surface) !important;
+  border-top:2px solid var(--lite-line);
+}
+html[data-eink="1"] body.chrome-hidden .reader-quick{transform:none;display:none}
+html[data-eink="1"] .rq-tile{min-height:var(--lite-touch);border:1px solid var(--lite-line-soft);border-radius:var(--lite-radius);color:var(--lite-ink)}
+html[data-eink="1"] .rq-tile:active,
+html[data-eink="1"] .rq-tile.is-active{background:var(--lite-ink);color:var(--lite-accent-fg)}
+html[data-eink="1"] .rq-label{opacity:1}
+html[data-eink="1"] .rq-step{border:2px solid var(--lite-line);border-radius:var(--lite-radius)}
+html[data-eink="1"] .rq-step-btn{min-height:var(--lite-touch);color:var(--lite-ink)}
+html[data-eink="1"] .rq-step-btn:active{background:var(--lite-ink);color:var(--lite-accent-fg)}
+html[data-eink="1"] .rq-step-val{opacity:1}
+html[data-eink="1"] .rs-root-row{min-height:var(--lite-touch);border-bottom:1px solid var(--lite-line-soft);color:var(--lite-ink)}
+html[data-eink="1"] .rs-root-row:active{background:var(--lite-hover)}
+html[data-eink="1"] .rs-root-val,
+html[data-eink="1"] .rs-root-ico,
+html[data-eink="1"] .rs-root-chev{opacity:1;color:var(--lite-muted)}
+html[data-eink="1"] .panel-back{width:var(--lite-touch);height:var(--lite-touch);border:2px solid var(--lite-line);border-radius:var(--lite-radius);margin-left:0}
+/* chrome / panels appear at once: no slide (a moving panel smears on e-paper) */
+html[data-eink="1"] body.chrome-hidden .reader-chrome{display:none}
+html[data-eink="1"] body.chrome-pinned.chrome-hidden .reader-toolbar,
+html[data-eink="1"] body.chrome-pinned.chrome-hidden .reader-footer{display:flex}
+html[data-eink="1"] body.chrome-pinned.quick-open .reader-quick{display:block}
+
 /* E-Ink / lite reader — contrast for e-paper; toolbar layout matches default */
 html[data-eink="1"] {
   --lite-touch: clamp(44px, 11vw, 52px);

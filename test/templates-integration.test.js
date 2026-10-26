@@ -440,6 +440,26 @@ test('renderReader lite mode sets e-ink attrs and lite boot', async () => {
   assert.ok(html.includes('/lite/book/'));
   assert.ok(html.includes('history.back()'));
   assert.ok(!html.includes('data-set-theme'));
+  /* /lite is always e-ink: no «Экран E-Ink» section */
+  assert.ok(!html.includes('data-rs-open="eink"'));
+});
+
+test('renderReader: tile menu and sectioned settings sheet', async () => {
+  const { renderReader } = await import('../src/templates/library.js');
+  const html = renderReader({ book: { id: '42', ext: 'fb2' }, details: { title: 'Reader Book' }, user: null });
+  for (const id of ['btn-toc', 'btn-search', 'btn-tts', 'btn-day-night', 'btn-fullscreen', 'btn-settings', 'btn-bookmark-add', 'rq-font-dec', 'rq-font-inc', 'panel-back', 'rs-root']) {
+    assert.ok(html.includes(`id="${id}"`), id);
+  }
+  for (const page of ['text', 'look', 'page', 'controls', 'tts', 'eink']) {
+    assert.ok(html.includes(`data-rs-open="${page}"`), page);
+    assert.ok(html.includes(`data-rs-page="${page}"`), page);
+  }
+  assert.ok(html.includes('data-set-eink-mode="auto"'));
+  assert.ok(html.includes('data-set-theme="eink"'));
+  /* settings is no longer a tab of the navigation panel */
+  assert.ok(!html.includes('data-tab="settings"'));
+  /* the boot script applies «Режим E-Ink» before the first paint */
+  assert.ok(html.includes('_d.dataset.eink'));
 });
 
 test('renderLiteHome shows logo in header and admin subtitle in hero', async () => {

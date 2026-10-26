@@ -25,6 +25,7 @@ import {
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
 import { encodeBookRef } from '../utils/book-ref.js';
 import { getUserHideRead } from '../db.js';
+import { READER_ICONS, READER_THEMES, READER_EINK_UA_RE, readerQuickTile, readerSettingsRow } from './reader-chrome.js';
 
 /** «Скрыть прочитанное»: account switch (also the Android filter sheet), toggled via POST /api/preferences. */
 function renderHideReadToggle(user) {
@@ -1794,21 +1795,12 @@ export function renderReader({ book, details, user, csrfToken = '', lite = false
   const htmlAttrs = lite ? ' data-eink="1" data-lite="1" data-reader-theme="eink"' : '';
   const themeBoot = lite
     ? "document.documentElement.dataset.readerTheme='eink';try{var _ls=JSON.parse(localStorage.getItem('reader-settings-lite')||'{}');if(_ls.chromePinned)document.documentElement.dataset.chromePinned='1'}catch(e){}"
-    : "try{var _s=JSON.parse(localStorage.getItem('reader-settings')||'{}');document.documentElement.dataset.readerTheme=_s.theme||'sepia';if(_s.chromePinned)document.documentElement.dataset.chromePinned='1'}catch(e){document.documentElement.dataset.readerTheme='sepia'}";
+    : `try{var _s=JSON.parse(localStorage.getItem('reader-settings')||'{}'),_d=document.documentElement;_d.dataset.readerTheme=_s.theme||'sepia';if(_s.chromePinned)_d.dataset.chromePinned='1';var _e=_s.einkMode;if(_e==='on'||(_e!=='off'&&${READER_EINK_UA_RE}.test(navigator.userAgent)))_d.dataset.eink='1'}catch(e){document.documentElement.dataset.readerTheme='sepia'}`;
   const liteBoot = lite
     ? `<script>window.__READER_LITE=1;window.__READER_BOOK_PAGE_PATH=${JSON.stringify(backHref)}</script>`
     : '';
-  const themeSettingsBlock = lite ? '' : `
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.theme'))}</div>
-        <div class="rs-themes">
-          <button class="rs-theme-dot" type="button" data-set-theme="dark"><span class="rs-dot-label">${escapeHtml(t('reader.themeDark'))}</span></button>
-          <button class="rs-theme-dot" type="button" data-set-theme="light"><span class="rs-dot-label">${escapeHtml(t('reader.themeLight'))}</span></button>
-          <button class="rs-theme-dot" type="button" data-set-theme="sepia"><span class="rs-dot-label">${escapeHtml(t('reader.themeSepia'))}</span></button>
-          <button class="rs-theme-dot" type="button" data-set-theme="night"><span class="rs-dot-label">${escapeHtml(t('reader.themeNight'))}</span></button>
-        </div>
-      </div>`;
-  const ttsStopSvg = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" fill="currentColor"/></svg>';
+  const themeDots = (cls) => READER_THEMES.map((th) => `<button class="${cls}" type="button" data-set-theme="${th}" title="${escapeHtml(t(`reader.theme.${th}`))}" aria-label="${escapeHtml(t(`reader.theme.${th}`))}"><span class="rs-dot-label">${escapeHtml(t(`reader.theme.${th}`))}</span></button>`).join('');
+  const quickThemes = lite ? '' : `<div class="rq-themes" role="group" aria-label="${escapeHtml(t('reader.theme'))}">${themeDots('rs-theme-dot rq-theme-dot')}</div>`;
   return `<!DOCTYPE html>
 <html lang="${htmlLang}"${htmlAttrs}>
 <head>
@@ -1828,26 +1820,12 @@ ${renderFaviconLinks()}
     <a href="${backHref}" class="tb-btn"${readerBackClick} title="${escapeHtml(t('reader.back'))}" aria-label="${escapeHtml(t('reader.backToBook'))}"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></a>
     <div class="tb-meta">
       <span class="tb-title">${escapeHtml(title)}</span>
+      <span class="tb-chapter" id="toolbar-chapter">${escapeHtml(t('reader.loading'))}</span>
     </div>
-  </div>
-  <div class="tb-center tb-hide-m">
-    <span class="tb-progress" id="progress-text">0%</span>
-    <span class="tb-sep"></span>
-    <span class="tb-chapter" id="toolbar-chapter">${escapeHtml(t('reader.loading'))}</span>
   </div>
   <div class="tb-right">
-    <div class="tb-tts-wrap" role="group" aria-label="${escapeHtml(t('reader.ttsBar'))}">
-      <button class="tb-btn tb-tts-skip js-tts-prev" type="button" id="btn-tts-prev" disabled title="${escapeHtml(t('reader.ttsPrev'))}" aria-label="${escapeHtml(t('reader.ttsPrev'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6V5zm3.6 7L18 5v14L9.6 12z" fill="currentColor"/></svg></button>
-      <button class="tb-btn" type="button" id="btn-tts" title="${escapeHtml(t('reader.ttsPlay'))}" aria-label="${escapeHtml(t('reader.tts'))}"><svg class="tts-main-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="tts-main-path" fill="currentColor" d="M8 5v14l11-7z"/></svg></button>
-      <button class="tb-btn tb-tts-stop js-tts-stop" type="button" id="btn-tts-stop" hidden title="${escapeHtml(t('reader.ttsStop'))}" aria-label="${escapeHtml(t('reader.ttsStop'))}">${ttsStopSvg}</button>
-      <button class="tb-btn tb-tts-skip js-tts-next" type="button" id="btn-tts-next" disabled title="${escapeHtml(t('reader.ttsNext'))}" aria-label="${escapeHtml(t('reader.ttsNext'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5h2v14h-2V5zm-2.4 7L8 5v14l7.6-7z" fill="currentColor"/></svg></button>
-    </div>
-    <button class="tb-btn tb-hide-mobile" type="button" id="btn-fullscreen" title="${escapeHtml(t('reader.fullscreen'))}" aria-label="${escapeHtml(t('reader.fullscreen'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
-    <button class="tb-btn tb-hide-mobile" type="button" id="btn-day-night" title="${escapeHtml(t('reader.nightMode'))}" aria-label="${escapeHtml(t('reader.dayModeToggle'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg></button>
-    <button class="tb-btn" type="button" id="btn-bookmark-add" title="${escapeHtml(t('reader.bookmark'))}" aria-label="${escapeHtml(t('reader.addBookmark'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg></button>
-    <button class="tb-btn" type="button" id="btn-search" title="${escapeHtml(t('reader.search'))}" aria-label="${escapeHtml(t('reader.searchBook'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></button>
-    <button class="tb-btn" type="button" id="btn-toc" title="${escapeHtml(t('reader.toc'))}" aria-label="${escapeHtml(t('reader.tocNav'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button>
-    <button class="tb-btn" type="button" id="btn-settings" title="${escapeHtml(t('reader.settings'))}" aria-label="${escapeHtml(t('reader.settingsReading'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+    <span class="tb-progress" id="progress-text">0%</span>
+    <button class="tb-btn" type="button" id="btn-bookmark-add" title="${escapeHtml(t('reader.bookmark'))}" aria-label="${escapeHtml(t('reader.addBookmark'))}">${READER_ICONS.bookmark}</button>
   </div>
 </div>
 
@@ -1864,6 +1842,27 @@ ${renderFaviconLinks()}
     <input type="range" class="ft-seek" id="ft-seek" name="readerSeek" min="0" max="1" step="0.001" value="0">
   </div>
   <span class="ft-pct" id="ft-pct">0%</span>
+</div>
+
+<div class="reader-quick reader-chrome" id="reader-quick" role="toolbar" aria-label="${escapeHtml(t('reader.quickMenu'))}">
+  <div class="rq-tiles">
+    ${readerQuickTile('btn-toc', 'toc', t('reader.panelToc'), t('reader.toc'))}
+    ${readerQuickTile('', 'bookmarks', t('reader.panelBookmarks'), '', 'data-quick-tab="bookmarks"')}
+    ${readerQuickTile('', 'notes', t('reader.panelNotes'), '', 'data-quick-tab="notes"')}
+    ${readerQuickTile('btn-search', 'search', t('reader.panelSearch'), t('reader.searchBook'))}
+    <button class="rq-tile" type="button" id="btn-tts" title="${escapeHtml(t('reader.ttsPlay'))}" aria-label="${escapeHtml(t('reader.tts'))}"><svg class="tts-main-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="tts-main-path" fill="currentColor" d="M8 5v14l11-7z"/></svg><span class="rq-label">${escapeHtml(t('reader.ttsShort'))}</span></button>
+    ${readerQuickTile('btn-day-night', 'moon', t('reader.dayNight'), t('reader.dayModeToggle'))}
+    ${readerQuickTile('btn-fullscreen', 'fullscreen', t('reader.fullscreenShort'), t('reader.fullscreen'))}
+    ${readerQuickTile('btn-settings', 'settings', t('reader.panelSettings'), t('reader.settingsReading'))}
+  </div>
+  <div class="rq-row">
+    <div class="rq-step" role="group" aria-label="${escapeHtml(t('reader.fontSize'))}">
+      <button type="button" class="rq-step-btn" id="rq-font-dec" aria-label="${escapeHtml(t('reader.fontSmaller'))}">A&minus;</button>
+      <span class="rq-step-val" id="rq-font-val">18</span>
+      <button type="button" class="rq-step-btn rq-step-btn-lg" id="rq-font-inc" aria-label="${escapeHtml(t('reader.fontLarger'))}">A+</button>
+    </div>
+    ${quickThemes}
+  </div>
 </div>
 
 <div class="reader-tts-dock" id="reader-tts-dock" role="region" aria-hidden="true" aria-label="${escapeHtml(t('reader.ttsBar'))}"></div>
@@ -1901,6 +1900,7 @@ ${renderFaviconLinks()}
   <button type="button" class="panel-backdrop" id="panel-backdrop" tabindex="-1" aria-label="${escapeHtml(t('reader.closePanel'))}"></button>
   <div class="panel">
     <div class="panel-header">
+      <button type="button" class="panel-back" id="panel-back" hidden title="${escapeHtml(t('reader.back'))}" aria-label="${escapeHtml(t('reader.settingsBack'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
       <div class="panel-heading">
         <div class="panel-kicker" id="panel-kicker">${escapeHtml(t('readerJs.panelTocKicker'))}</div>
         <div class="panel-title" id="panel-title">${escapeHtml(t('readerJs.panelTocTitle'))}</div>
@@ -1912,7 +1912,6 @@ ${renderFaviconLinks()}
       <button class="panel-tab" data-tab="search">${escapeHtml(t('reader.panelSearch'))}</button>
       <button class="panel-tab" data-tab="bookmarks">${escapeHtml(t('reader.panelBookmarks'))}</button>
       <button class="panel-tab" data-tab="notes">${escapeHtml(t('reader.panelNotes'))}</button>
-      <button class="panel-tab" data-tab="settings">${escapeHtml(t('reader.panelSettings'))}</button>
     </div>
     <div class="panel-body" data-panel-tab="toc">
       <div class="toc-tools">
@@ -1936,181 +1935,211 @@ ${renderFaviconLinks()}
     <div class="panel-body" data-panel-tab="notes" hidden>
       <div id="notes-content"><div class="bm-empty">${escapeHtml(t('reader.loading'))}</div></div>
     </div>
-    <div class="panel-body" data-panel-tab="settings" hidden>
-      ${themeSettingsBlock}
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.presets'))}</div>
-        <div class="rs-seg rs-preset-seg">
-          <button type="button" data-preset="compact">${escapeHtml(t('reader.presetCompact'))}</button>
-          <button type="button" data-preset="balanced">${escapeHtml(t('reader.presetBalanced'))}</button>
-          <button type="button" data-preset="relaxed">${escapeHtml(t('reader.presetRelaxed'))}</button>
-        </div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.font'))}</div>
-        <select id="rs-font-family" name="readerFontFamily" class="rs-select" aria-label="${escapeHtml(t('reader.fontFaceAria'))}"></select>
-        <label class="rs-check">
-          <input type="checkbox" id="rs-publisher-font" name="readerPublisherFont">
-          <span>${escapeHtml(t('reader.publisherFont'))}</span>
-        </label>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.fontWeight'))}</div>
-        <select id="rs-font-weight" name="readerFontWeight" class="rs-select" aria-label="${escapeHtml(t('reader.fontWeight'))}">
-          <option value="400">${escapeHtml(t('reader.fontWeight.regular'))}</option>
-          <option value="500">${escapeHtml(t('reader.fontWeight.medium'))}</option>
-          <option value="600">${escapeHtml(t('reader.fontWeight.semibold'))}</option>
-          <option value="700">${escapeHtml(t('reader.fontWeight.bold'))}</option>
-        </select>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.color'))}</div>
-        <div class="rs-color-stack">
-          <div class="rs-color-line">
-            <div class="rs-color-sub">${escapeHtml(t('reader.textColor'))}</div>
-            <div class="rs-color-row">
-              <input type="color" id="rs-text-color" name="readerTextColor" value="#3d3121" aria-label="${escapeHtml(t('reader.textColor'))}" title="${escapeHtml(t('reader.customTextColorTitle'))}">
-              <button type="button" class="rs-color-default" id="rs-text-color-default" title="${escapeHtml(t('reader.fromTheme'))}">${escapeHtml(t('reader.fromTheme'))}</button>
-            </div>
-          </div>
-          <div class="rs-color-line">
-            <div class="rs-color-sub">${escapeHtml(t('reader.bgColor'))}</div>
-            <div class="rs-color-row">
-              <input type="color" id="rs-bg-color" name="readerBgColor" value="#f4edd5" aria-label="${escapeHtml(t('reader.bgColor'))}" title="${escapeHtml(t('reader.customBgColorTitle'))}">
-              <button type="button" class="rs-color-default" id="rs-bg-color-default" title="${escapeHtml(t('reader.fromTheme'))}">${escapeHtml(t('reader.fromTheme'))}</button>
-            </div>
-          </div>
-          <div class="rs-color-line">
-            <div class="rs-color-sub">${escapeHtml(t('reader.linkColor'))}</div>
-            <div class="rs-color-row">
-              <input type="color" id="rs-link-color" name="readerLinkColor" value="#6b4226" aria-label="${escapeHtml(t('reader.linkColor'))}" title="${escapeHtml(t('reader.customLinkColorTitle'))}">
-              <button type="button" class="rs-color-default" id="rs-link-color-default" title="${escapeHtml(t('reader.fromTheme'))}">${escapeHtml(t('reader.fromTheme'))}</button>
-            </div>
+    <div class="panel-body rs-body" data-panel-tab="settings" hidden>
+      <nav class="rs-root" id="rs-root" aria-label="${escapeHtml(t('reader.panelSettings'))}">
+        ${readerSettingsRow('text', 'text', t('reader.rs.text'))}
+        ${readerSettingsRow('look', 'palette', lite ? t('reader.color') : t('reader.rs.look'))}
+        ${readerSettingsRow('page', 'page', t('reader.rs.page'))}
+        ${readerSettingsRow('controls', 'hand', t('reader.rs.controls'))}
+        ${readerSettingsRow('tts', 'tts', t('reader.rs.tts'))}
+        ${lite ? '' : readerSettingsRow('eink', 'eink', t('reader.rs.eink'))}
+        <button type="button" class="rs-root-row rs-root-reset" id="reader-reset-settings"><span class="rs-root-ico" aria-hidden="true">${READER_ICONS.reset}</span><span class="rs-root-label">${escapeHtml(t('reader.reset'))}</span></button>
+      </nav>
+
+      <section class="rs-page" data-rs-page="text" data-rs-title="${escapeHtml(t('reader.rs.text'))}" hidden>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.fontSize'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-font-size" name="readerFontSize" min="12" max="32" step="1" aria-label="${escapeHtml(t('reader.fontSize'))}">
+            <span class="rs-val" id="rs-font-size-val">18</span>
           </div>
         </div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.fontSize'))}</div>
-        <div class="rs-slider">
-          <span class="rs-icon">A</span>
-          <input type="range" id="rs-font-size" name="readerFontSize" min="12" max="32" step="1">
-          <span class="rs-val" id="rs-font-size-val">18</span>
-          <span class="rs-icon rs-icon-lg">A</span>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.presets'))}</div>
+          <div class="rs-seg rs-preset-seg">
+            <button type="button" data-preset="compact">${escapeHtml(t('reader.presetCompact'))}</button>
+            <button type="button" data-preset="balanced">${escapeHtml(t('reader.presetBalanced'))}</button>
+            <button type="button" data-preset="relaxed">${escapeHtml(t('reader.presetRelaxed'))}</button>
+          </div>
         </div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.lineHeight'))}</div>
-        <div class="rs-slider">
-          <span class="rs-icon">&equiv;</span>
-          <input type="range" id="rs-line-height" name="readerLineHeight" min="1.2" max="2.4" step="0.1">
-          <span class="rs-val" id="rs-line-height-val">1.6</span>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.font'))}</div>
+          <select id="rs-font-family" name="readerFontFamily" class="rs-select" aria-label="${escapeHtml(t('reader.fontFaceAria'))}"></select>
+          <label class="rs-check">
+            <input type="checkbox" id="rs-publisher-font" name="readerPublisherFont">
+            <span>${escapeHtml(t('reader.publisherFont'))}</span>
+          </label>
         </div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.typography'))}</div>
-        <label class="rs-check">
-          <input type="checkbox" id="rs-justify" name="readerJustify" checked>
-          <span>${escapeHtml(t('reader.justify'))}</span>
-        </label>
-        <label class="rs-check">
-          <input type="checkbox" id="rs-hyphenate" name="readerHyphenate" checked>
-          <span>${escapeHtml(t('reader.hyphenate'))}</span>
-        </label>
-        <div class="rs-sublabel">${escapeHtml(t('reader.letterSpacing'))}</div>
-        <div class="rs-slider">
-          <input type="range" id="rs-letter-spacing" name="readerLetterSpacing" min="-0.05" max="0.2" step="0.01" aria-label="${escapeHtml(t('reader.letterSpacing'))}">
-          <span class="rs-val" id="rs-letter-spacing-val">0.00</span>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.fontWeight'))}</div>
+          <select id="rs-font-weight" name="readerFontWeight" class="rs-select" aria-label="${escapeHtml(t('reader.fontWeight'))}">
+            <option value="400">${escapeHtml(t('reader.fontWeight.regular'))}</option>
+            <option value="500">${escapeHtml(t('reader.fontWeight.medium'))}</option>
+            <option value="600">${escapeHtml(t('reader.fontWeight.semibold'))}</option>
+            <option value="700">${escapeHtml(t('reader.fontWeight.bold'))}</option>
+          </select>
         </div>
-        <div class="rs-sublabel">${escapeHtml(t('reader.paragraphSpacing'))}</div>
-        <div class="rs-slider">
-          <input type="range" id="rs-paragraph-spacing" name="readerParagraphSpacing" min="0" max="1.5" step="0.05" aria-label="${escapeHtml(t('reader.paragraphSpacing'))}">
-          <span class="rs-val" id="rs-paragraph-spacing-val">0.40</span>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.lineHeight'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-line-height" name="readerLineHeight" min="1.2" max="2.4" step="0.1" aria-label="${escapeHtml(t('reader.lineHeight'))}">
+            <span class="rs-val" id="rs-line-height-val">1.6</span>
+          </div>
         </div>
-        <div class="rs-sublabel">${escapeHtml(t('reader.textIndent'))}</div>
-        <div class="rs-slider">
-          <input type="range" id="rs-text-indent" name="readerTextIndent" min="0" max="3" step="0.1" aria-label="${escapeHtml(t('reader.textIndent'))}">
-          <span class="rs-val" id="rs-text-indent-val">0.0 em</span>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.typography'))}</div>
+          <label class="rs-check">
+            <input type="checkbox" id="rs-justify" name="readerJustify" checked>
+            <span>${escapeHtml(t('reader.justify'))}</span>
+          </label>
+          <label class="rs-check">
+            <input type="checkbox" id="rs-hyphenate" name="readerHyphenate" checked>
+            <span>${escapeHtml(t('reader.hyphenate'))}</span>
+          </label>
         </div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.margins'))}</div>
-        <div class="rs-sublabel">${escapeHtml(t('reader.pageMargin'))}</div>
-        <div class="rs-slider">
-          <span class="rs-icon" aria-hidden="true">|</span>
-          <input type="range" id="rs-page-margin" name="readerPageMargin" min="0" max="72" step="4" aria-label="${escapeHtml(t('reader.pageMargin'))}">
-          <span class="rs-val" id="rs-page-margin-val">32 px</span>
-          <span class="rs-icon" aria-hidden="true">|&nbsp;|</span>
+        <div class="rs-group">
+          <div class="rs-sublabel">${escapeHtml(t('reader.paragraphSpacing'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-paragraph-spacing" name="readerParagraphSpacing" min="0" max="1.5" step="0.05" aria-label="${escapeHtml(t('reader.paragraphSpacing'))}">
+            <span class="rs-val" id="rs-paragraph-spacing-val">0.40</span>
+          </div>
+          <div class="rs-sublabel">${escapeHtml(t('reader.textIndent'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-text-indent" name="readerTextIndent" min="0" max="3" step="0.1" aria-label="${escapeHtml(t('reader.textIndent'))}">
+            <span class="rs-val" id="rs-text-indent-val">0.0 em</span>
+          </div>
+          <div class="rs-sublabel">${escapeHtml(t('reader.letterSpacing'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-letter-spacing" name="readerLetterSpacing" min="-0.05" max="0.2" step="0.01" aria-label="${escapeHtml(t('reader.letterSpacing'))}">
+            <span class="rs-val" id="rs-letter-spacing-val">0.00</span>
+          </div>
         </div>
-        <div class="rs-sublabel">${escapeHtml(t('reader.verticalMargin'))}</div>
-        <div class="rs-slider">
-          <span class="rs-icon" aria-hidden="true">—</span>
-          <input type="range" id="rs-vertical-margin" name="readerVerticalMargin" min="0" max="96" step="4" aria-label="${escapeHtml(t('reader.verticalMargin'))}">
-          <span class="rs-val" id="rs-vertical-margin-val">32 px</span>
-          <span class="rs-icon" aria-hidden="true">≡</span>
+      </section>
+
+      <section class="rs-page" data-rs-page="look" data-rs-title="${escapeHtml(lite ? t('reader.color') : t('reader.rs.look'))}" hidden>
+        ${lite ? '' : `<div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.theme'))}</div>
+          <div class="rs-themes">${themeDots('rs-theme-dot')}</div>
+        </div>`}
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.color'))}</div>
+          <div class="rs-color-stack">
+            <div class="rs-color-line">
+              <div class="rs-color-sub">${escapeHtml(t('reader.textColor'))}</div>
+              <div class="rs-color-row">
+                <input type="color" id="rs-text-color" name="readerTextColor" value="#3d3121" aria-label="${escapeHtml(t('reader.textColor'))}" title="${escapeHtml(t('reader.customTextColorTitle'))}">
+                <button type="button" class="rs-color-default" id="rs-text-color-default" title="${escapeHtml(t('reader.fromTheme'))}">${escapeHtml(t('reader.fromTheme'))}</button>
+              </div>
+            </div>
+            <div class="rs-color-line">
+              <div class="rs-color-sub">${escapeHtml(t('reader.bgColor'))}</div>
+              <div class="rs-color-row">
+                <input type="color" id="rs-bg-color" name="readerBgColor" value="#f4edd5" aria-label="${escapeHtml(t('reader.bgColor'))}" title="${escapeHtml(t('reader.customBgColorTitle'))}">
+                <button type="button" class="rs-color-default" id="rs-bg-color-default" title="${escapeHtml(t('reader.fromTheme'))}">${escapeHtml(t('reader.fromTheme'))}</button>
+              </div>
+            </div>
+            <div class="rs-color-line">
+              <div class="rs-color-sub">${escapeHtml(t('reader.linkColor'))}</div>
+              <div class="rs-color-row">
+                <input type="color" id="rs-link-color" name="readerLinkColor" value="#6b4226" aria-label="${escapeHtml(t('reader.linkColor'))}" title="${escapeHtml(t('reader.customLinkColorTitle'))}">
+                <button type="button" class="rs-color-default" id="rs-link-color-default" title="${escapeHtml(t('reader.fromTheme'))}">${escapeHtml(t('reader.fromTheme'))}</button>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="rs-hint">${escapeHtml(t('reader.pageMarginHint'))}</div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.layoutMode'))}</div>
-        <div class="rs-seg">
-          <button type="button" data-set-layout="paginated">${escapeHtml(t('reader.layoutPaginated'))}</button>
-          <button type="button" data-set-layout="dual" class="rs-layout-dual-btn">${escapeHtml(t('reader.layoutDual'))}</button>
-          <button type="button" data-set-layout="scrolled">${escapeHtml(t('reader.layoutScrolled'))}</button>
+      </section>
+
+      <section class="rs-page" data-rs-page="page" data-rs-title="${escapeHtml(t('reader.rs.page'))}" hidden>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.layoutMode'))}</div>
+          <div class="rs-seg">
+            <button type="button" data-set-layout="paginated">${escapeHtml(t('reader.layoutPaginated'))}</button>
+            <button type="button" data-set-layout="dual" class="rs-layout-dual-btn">${escapeHtml(t('reader.layoutDual'))}</button>
+            <button type="button" data-set-layout="scrolled">${escapeHtml(t('reader.layoutScrolled'))}</button>
+          </div>
         </div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.chromePinned'))}</div>
-        <label class="rs-check">
-          <input type="checkbox" id="rs-chrome-pinned" name="readerChromePinned">
-          <span>${escapeHtml(t('reader.chromePinnedLabel'))}</span>
-        </label>
-        <div class="rs-hint">${escapeHtml(t('reader.chromePinnedHint'))}</div>
-      </div>
-      <div class="rs-group" id="rs-layout-paginated">
-        <div class="rs-label">${escapeHtml(t('reader.columnWidth'))}</div>
-        <div class="rs-slider">
-          <input type="range" id="rs-column-width" name="readerColumnWidth" min="480" max="920" step="20" aria-label="${escapeHtml(t('reader.columnWidth'))}">
-          <span class="rs-val" id="rs-column-width-val">720 px</span>
+        <div class="rs-group" id="rs-layout-paginated">
+          <div class="rs-label">${escapeHtml(t('reader.columnWidth'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-column-width" name="readerColumnWidth" min="480" max="920" step="20" aria-label="${escapeHtml(t('reader.columnWidth'))}">
+            <span class="rs-val" id="rs-column-width-val">720 px</span>
+          </div>
+          <label class="rs-check">
+            <input type="checkbox" id="rs-full-width" name="readerFullWidth">
+            <span>${escapeHtml(t('reader.fullWidth'))}</span>
+          </label>
         </div>
-        <label class="rs-check">
-          <input type="checkbox" id="rs-full-width" name="readerFullWidth">
-          <span>${escapeHtml(t('reader.fullWidth'))}</span>
-        </label>
-      </div>
-      <div class="rs-group" id="rs-layout-dual" hidden>
-        <div class="rs-label">${escapeHtml(t('reader.columnGap'))}</div>
-        <div class="rs-slider">
-          <input type="range" id="rs-column-gap" name="readerColumnGap" min="4" max="16" step="1" aria-label="${escapeHtml(t('reader.columnGap'))}">
-          <span class="rs-val" id="rs-column-gap-val">7%</span>
+        <div class="rs-group" id="rs-layout-dual" hidden>
+          <div class="rs-label">${escapeHtml(t('reader.columnGap'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-column-gap" name="readerColumnGap" min="4" max="16" step="1" aria-label="${escapeHtml(t('reader.columnGap'))}">
+            <span class="rs-val" id="rs-column-gap-val">7%</span>
+          </div>
+          <div class="rs-hint">${escapeHtml(t('reader.columnGapHint'))}</div>
         </div>
-        <div class="rs-hint">${escapeHtml(t('reader.columnGapHint'))}</div>
-      </div>
-      <div class="rs-group" id="rs-layout-scrolled" hidden>
-        <div class="rs-label">${escapeHtml(t('reader.maxBlockSize'))}</div>
-        <div class="rs-slider">
-          <input type="range" id="rs-max-block-size" name="readerMaxBlockSize" min="720" max="2400" step="40" aria-label="${escapeHtml(t('reader.maxBlockSize'))}">
-          <span class="rs-val" id="rs-max-block-size-val">1440 px</span>
+        <div class="rs-group" id="rs-layout-scrolled" hidden>
+          <div class="rs-label">${escapeHtml(t('reader.maxBlockSize'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-max-block-size" name="readerMaxBlockSize" min="720" max="2400" step="40" aria-label="${escapeHtml(t('reader.maxBlockSize'))}">
+            <span class="rs-val" id="rs-max-block-size-val">1440 px</span>
+          </div>
+          <div class="rs-hint">${escapeHtml(t('reader.maxBlockSizeHint'))}</div>
         </div>
-        <div class="rs-hint">${escapeHtml(t('reader.maxBlockSizeHint'))}</div>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.tapZones'))}</div>
-        <div class="rs-seg rs-tap-mode-seg">
-          <button type="button" data-tap-edit="short" class="is-active">${escapeHtml(t('reader.tapZones.short'))}</button>
-          <button type="button" data-tap-edit="long">${escapeHtml(t('reader.tapZones.long'))}</button>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.margins'))}</div>
+          <div class="rs-sublabel">${escapeHtml(t('reader.pageMargin'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-page-margin" name="readerPageMargin" min="0" max="72" step="4" aria-label="${escapeHtml(t('reader.pageMargin'))}">
+            <span class="rs-val" id="rs-page-margin-val">32 px</span>
+          </div>
+          <div class="rs-sublabel">${escapeHtml(t('reader.verticalMargin'))}</div>
+          <div class="rs-slider">
+            <input type="range" id="rs-vertical-margin" name="readerVerticalMargin" min="0" max="96" step="4" aria-label="${escapeHtml(t('reader.verticalMargin'))}">
+            <span class="rs-val" id="rs-vertical-margin-val">32 px</span>
+          </div>
+          <div class="rs-hint">${escapeHtml(t('reader.pageMarginHint'))}</div>
         </div>
-        <div class="rs-tap-grid" id="rs-tap-grid" role="group" aria-label="${escapeHtml(t('reader.tapZones'))}"></div>
-        <select id="rs-tap-action" class="rs-select" aria-label="${escapeHtml(t('reader.tapZones.action'))}" hidden></select>
-        <div class="rs-hint" id="rs-tap-hint">${escapeHtml(t('reader.tapZones.hint'))}</div>
-        <button type="button" class="rs-tap-reset" id="rs-tap-reset">${escapeHtml(t('reader.tapZones.reset'))}</button>
-      </div>
-      <div class="rs-group">
-        <div class="rs-label">${escapeHtml(t('reader.ttsSettings'))}</div>
-        <div id="rs-tts-mount"></div>
-      </div>
-      <div class="rs-actions">
-        <button type="button" class="rs-reset" id="reader-reset-settings">${escapeHtml(t('reader.reset'))}</button>
-      </div>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.chromePinned'))}</div>
+          <label class="rs-check">
+            <input type="checkbox" id="rs-chrome-pinned" name="readerChromePinned">
+            <span>${escapeHtml(t('reader.chromePinnedLabel'))}</span>
+          </label>
+          <div class="rs-hint">${escapeHtml(t('reader.chromePinnedHint'))}</div>
+        </div>
+      </section>
+
+      <section class="rs-page" data-rs-page="controls" data-rs-title="${escapeHtml(t('reader.rs.controls'))}" hidden>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.tapZones'))}</div>
+          <div class="rs-seg rs-tap-mode-seg">
+            <button type="button" data-tap-edit="short" class="is-active">${escapeHtml(t('reader.tapZones.short'))}</button>
+            <button type="button" data-tap-edit="long">${escapeHtml(t('reader.tapZones.long'))}</button>
+          </div>
+          <div class="rs-tap-grid" id="rs-tap-grid" role="group" aria-label="${escapeHtml(t('reader.tapZones'))}"></div>
+          <select id="rs-tap-action" class="rs-select" aria-label="${escapeHtml(t('reader.tapZones.action'))}" hidden></select>
+          <div class="rs-hint" id="rs-tap-hint">${escapeHtml(t('reader.tapZones.hint'))}</div>
+          <button type="button" class="rs-tap-reset" id="rs-tap-reset">${escapeHtml(t('reader.tapZones.reset'))}</button>
+        </div>
+      </section>
+
+      <section class="rs-page" data-rs-page="tts" data-rs-title="${escapeHtml(t('reader.rs.tts'))}" hidden>
+        <div class="rs-group">
+          <div id="rs-tts-mount"></div>
+        </div>
+      </section>
+      ${lite ? '' : `
+      <section class="rs-page" data-rs-page="eink" data-rs-title="${escapeHtml(t('reader.rs.eink'))}" hidden>
+        <div class="rs-group">
+          <div class="rs-label">${escapeHtml(t('reader.einkMode'))}</div>
+          <div class="rs-seg">
+            <button type="button" data-set-eink-mode="auto">${escapeHtml(t('reader.einkMode.auto'))}</button>
+            <button type="button" data-set-eink-mode="on">${escapeHtml(t('reader.einkMode.on'))}</button>
+            <button type="button" data-set-eink-mode="off">${escapeHtml(t('reader.einkMode.off'))}</button>
+          </div>
+          <div class="rs-hint">${escapeHtml(t('reader.einkMode.hint'))}</div>
+        </div>
+      </section>`}
     </div>
   </div>
 </div>

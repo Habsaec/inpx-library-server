@@ -450,7 +450,7 @@ import {
     justify: true, hyphenate: true,
     usePublisherFont: false, fontWeight: 400,
     letterSpacing: 0, paragraphSpacing: 0.4, textIndent: 0,
-    ...TTS_SETTING_DEFAULTS, chromePinned: false,
+    ...TTS_SETTING_DEFAULTS, chromePinned: false, einkMode: 'auto',
     tapZonesShort: defaultTapZonesShort(),
     tapZonesLong: defaultTapZonesLong(),
   };
@@ -757,7 +757,7 @@ import {
     const night = isNightReaderTheme();
     btn.title = night ? rt('readerJs.dayModeBtn') : rt('readerJs.nightModeBtn');
     btn.setAttribute('aria-label', night ? rt('readerJs.enableDayMode') : rt('readerJs.enableNightMode'));
-    btn.innerHTML = night ? svgSun : svgMoon;
+    (btn.querySelector('.rq-ico') || btn).innerHTML = night ? svgSun : svgMoon;
   }
 
   /**
@@ -874,8 +874,21 @@ import {
     bookPageRight.textContent = rightText;
   }
 
+  /* «Режим E-Ink»: auto = /lite or an e-reader browser (same UA test as the boot script in renderReader). */
+  const EINK_UA_RE = /onyx|boox|pocketbook|kindle|kobo|tolino|bigme|meebook|likebook|inkbook|remarkable|supernote|boyue|hisense a[579]/i;
+  function isEinkModeActive() {
+    if (READER_LITE) return true;
+    const mode = S.einkMode || 'auto';
+    return mode === 'on' || (mode !== 'off' && EINK_UA_RE.test(navigator.userAgent || ''));
+  }
+  function applyEinkMode() {
+    if (isEinkModeActive()) document.documentElement.dataset.eink = '1';
+    else delete document.documentElement.dataset.eink;
+  }
+
   function applySettings() {
     if (READER_LITE) S.theme = 'eink';
+    applyEinkMode();
     document.documentElement.dataset.readerTheme = S.theme;
     document.body.dataset.readerTheme = S.theme;
     const bg = getEffectiveBgColor();
@@ -1130,7 +1143,11 @@ import {
   }
   /** Тап по центру поля: скрыто → показать и снова автоскрытие; уже видно → скрыть. */
   function toggleChromeFromCenterTap() {
-    if (isChromePinned()) return;
+    if (isChromePinned()) {
+      /* Pinned bars stay; the tap shows / hides only the tile menu above the footer. */
+      if (!panelOverlay.classList.contains('is-open')) document.body.classList.toggle('quick-open');
+      return;
+    }
     clearTimeout(chromeTimer);
     if (panelOverlay.classList.contains('is-open')) return;
     if (document.body.classList.contains('chrome-hidden')) {
@@ -2281,6 +2298,7 @@ import {
     hideSelMenu();
     if (panelOverlay.classList.contains('is-open') && activePanelTab === t) { closePanel(); return; }
     const wasOpen = panelOverlay.classList.contains('is-open');
+    document.body.classList.remove('quick-open');
     panelOverlay.classList.add('is-open');
     switchTab(t);
     syncPanelChrome(t);
@@ -2297,10 +2315,16 @@ import {
   function closePanel() {
     if (!panelOverlay.classList.contains('is-open')) return;
     closePanelDirect();
-    if (panelHistoryPushed) { panelHistoryPushed = false; history.back(); }
+    if (panelHistoryPushed) {
+      const steps = settingsPageHistory ? 2 : 1;
+      panelHistoryPushed = false;
+      settingsPageHistory = false;
+      history.go(-steps);
+    }
   }
   function switchTab(tab) {
     activePanelTab = tab;
+    panelOverlay.classList.toggle('is-settings', tab === 'settings');
     syncPanelMobileMode(tab);
     panelTabs.forEach(t => t.classList.toggle('is-active', t.dataset.tab === tab));
     panelBodies.forEach(b => { b.hidden = b.dataset.panelTab !== tab; });
@@ -2309,10 +2333,7 @@ import {
     if (panelTitleEl) panelTitleEl.textContent = pm.title;
     refreshTriggers();
     syncPanelChrome(tab);
-    if (tab === 'settings') {
-      document.querySelectorAll('.panel-body input[type="range"]').forEach(guardRangeSliderTouchScroll);
-      readerTts?.onSettingsOpen();
-    }
+    if (tab === 'settings') showSettingsPage('', { push: false });
     if (tab === 'notes') renderNotesTab();
     if (tab === 'toc') scrollTocToCurrent();
     if (tab === 'search') {
@@ -2332,8 +2353,109 @@ import {
     syncPanelChrome();
   });
 
-  /* Back gesture / back button closes panel instead of leaving */
+  /* ===== Settings sheet: list of sections → one section page (AlReader-style) =====
+   * The root lists sections with their current values; a section opens as its own page
+   * with a back arrow in the panel header (and a history entry, so Android back returns
+   * to the list instead of closing the sheet). Sliders get − / + buttons (enhanceRangeSteppers). */
+  const settingsRoot = $('rs-root');
+  const settingsPages = document.querySelectorAll('.rs-page');
+  const panelBackBtn = $('panel-back');
+  let settingsPage = '';
+  let settingsPageHistory = false;
+
+  function showSettingsPage(name, { push = true } = {}) {
+    const page = name ? document.querySelector(`.rs-page[data-rs-page="${name}"]`) : null;
+    settingsPage = page ? name : '';
+    if (settingsRoot) settingsRoot.hidden = Boolean(page);
+    settingsPages.forEach((p) => { p.hidden = p !== page; });
+    if (panelBackBtn) panelBackBtn.hidden = !page;
+    if (panelTitleEl && activePanelTab === 'settings') {
+      panelTitleEl.textContent = page ? page.dataset.rsTitle : getPanelMeta('settings').title;
+    }
+    if (page) {
+      enhanceRangeSteppers(page);
+      page.querySelectorAll('input[type="range"]').forEach(guardRangeSliderTouchScroll);
+      if (name === 'tts') readerTts?.onSettingsOpen();
+      if (push && panelHistoryPushed && !settingsPageHistory) {
+        history.pushState({ readerSettingsPage: true }, '');
+        settingsPageHistory = true;
+      }
+    } else {
+      refreshSettingsSummaries();
+    }
+    const body = (page || settingsRoot)?.closest('.panel-body');
+    if (body) body.scrollTop = 0;
+  }
+  function settingsBack() {
+    if (settingsPageHistory) { history.back(); return; }
+    showSettingsPage('');
+  }
+  function openSettingsPage(name) {
+    if (!panelOverlay.classList.contains('is-open') || activePanelTab !== 'settings') openPanel('settings');
+    showSettingsPage(name);
+  }
+  document.querySelectorAll('[data-rs-open]').forEach((b) => b.addEventListener('click', () => showSettingsPage(b.dataset.rsOpen)));
+  panelBackBtn?.addEventListener('click', settingsBack);
+  document.querySelectorAll('[data-quick-tab]').forEach((b) => b.addEventListener('click', () => openPanel(b.dataset.quickTab)));
+
+  /** − / + around every settings slider: exact steps without dragging (essential on e-ink, where ranges are hidden). */
+  function stepRange(slider, dir) {
+    if (slider.disabled) return;
+    const step = Number(slider.step) || 1;
+    const decimals = (String(slider.step).split('.')[1] || '').length;
+    const next = Math.min(Number(slider.max), Math.max(Number(slider.min), Number(slider.value) + dir * step));
+    slider.value = next.toFixed(decimals);
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function enhanceRangeSteppers(root) {
+    root.querySelectorAll('input[type="range"]').forEach((slider) => {
+      if (slider.dataset.stepper) return;
+      slider.dataset.stepper = '1';
+      const label = slider.getAttribute('aria-label') || '';
+      const make = (dir) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'rs-step-btn';
+        b.textContent = dir < 0 ? '−' : '+';
+        b.setAttribute('aria-label', `${label} ${dir < 0 ? '−' : '+'}`.trim());
+        b.addEventListener('click', () => stepRange(slider, dir));
+        return b;
+      };
+      slider.before(make(-1));
+      const val = slider.nextElementSibling?.classList.contains('rs-val') ? slider.nextElementSibling : slider;
+      val.after(make(1));
+    });
+  }
+
+  function tapZonesCustomized() {
+    return JSON.stringify(S.tapZonesShort) !== JSON.stringify(defaultTapZonesShort())
+      || JSON.stringify(S.tapZonesLong) !== JSON.stringify(defaultTapZonesLong());
+  }
+  function refreshSettingsSummaries() {
+    const set = (key, text) => {
+      const el = document.querySelector(`[data-rs-summary="${key}"]`);
+      if (el) el.textContent = text;
+    };
+    const fontLabel = S.usePublisherFont ? rt('reader.publisherFont') : ($('rs-font-family')?.selectedOptions?.[0]?.textContent || '');
+    set('text', [fontLabel, S.fontSize].filter(Boolean).join(', '));
+    set('look', READER_LITE ? '' : rt(`reader.theme.${S.theme}`));
+    set('page', rt({ paginated: 'reader.layoutPaginated', dual: 'reader.layoutDual', scrolled: 'reader.layoutScrolled' }[S.layout] || 'reader.layoutPaginated'));
+    set('controls', rt(tapZonesCustomized() ? 'readerJs.zonesCustom' : 'readerJs.zonesDefault'));
+    set('tts', `${Number(S.ttsRate || 1).toFixed(2).replace(/0$/, '')}×`);
+    const mode = S.einkMode || 'auto';
+    set('eink', rt(`reader.einkMode.${mode}`) + (mode === 'auto' && isEinkModeActive() ? ` · ${rt('readerJs.einkActive')}` : ''));
+  }
+
+  /* Back gesture / back button: section page → settings list; otherwise closes the panel */
   window.addEventListener('popstate', () => {
+    if (settingsPageHistory) {
+      settingsPageHistory = false;
+      if (panelOverlay.classList.contains('is-open') && activePanelTab === 'settings') {
+        showSettingsPage('', { push: false });
+        return;
+      }
+    }
     if (panelOverlay.classList.contains('is-open')) {
       panelHistoryPushed = false;
       closePanelDirect();
@@ -2437,6 +2559,22 @@ import {
   function initSettings() {
     bindSeg('[data-set-theme]', 'theme');
     bindSeg('[data-set-layout]', 'layout');
+    bindSeg('[data-set-eink-mode]', 'einkMode');
+    const stepFont = (dir) => {
+      S.fontSize = Math.min(32, Math.max(12, Number(S.fontSize) + dir));
+      applySettings(); refreshSettingsUI();
+      scheduleChromeHide();
+    };
+    $('rq-font-dec')?.addEventListener('click', () => stepFont(-1));
+    $('rq-font-inc')?.addEventListener('click', () => stepFont(1));
+    /* Theme dots in the tile menu share bindSeg; keep the menu open a little longer after a pick. */
+    document.querySelectorAll('.rq-theme-dot').forEach((b) => b.addEventListener('click', () => scheduleChromeHide()));
+    const quickEl = $('reader-quick');
+    if (quickEl && 'ResizeObserver' in window) {
+      new ResizeObserver(() => {
+        document.documentElement.style.setProperty('--r-quick-h', `${quickEl.offsetHeight}px`);
+      }).observe(quickEl);
+    }
     populateFontSelect();
     const fontSel = $('rs-font-family');
     if (fontSel) {
@@ -2568,6 +2706,9 @@ import {
     const toggle = (sel, attr, val) => document.querySelectorAll(sel).forEach(b => b.classList.toggle('is-active', b.dataset[attr] === val));
     toggle('[data-set-theme]', 'setTheme', S.theme);
     toggle('[data-set-layout]', 'setLayout', S.layout);
+    toggle('[data-set-eink-mode]', 'setEinkMode', S.einkMode || 'auto');
+    const rqFont = $('rq-font-val');
+    if (rqFont) rqFont.textContent = String(S.fontSize);
     populateFontSelect();
     const fs = $('rs-font-family');
     if (fs) {
@@ -2641,6 +2782,7 @@ import {
     updateSeekbar();
     updateDayNightButton();
     readerTts?.refreshSettingsUi();
+    refreshSettingsSummaries();
   }
 
   /* ===== TTS (read aloud): player, highlight, settings — public/reader-shared/reader-tts.js ===== */
@@ -2683,7 +2825,7 @@ import {
       syncTtsMediaSessionPlayback();
       if (active) syncTtsMediaMetadata();
     },
-    openSettings: () => openPanel('settings'),
+    openSettings: () => openSettingsPage('tts'),
     afterControl: () => scheduleChromeHide(),
   });
 
@@ -2703,11 +2845,12 @@ import {
   function updateFullscreenIcon() {
     if (!btnFullscreen) return;
     const isFs = !!document.fullscreenElement;
-    btnFullscreen.innerHTML = isFs
+    (btnFullscreen.querySelector('.rq-ico') || btnFullscreen).innerHTML = isFs
       ? '<svg viewBox="0 0 24 24"><path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>'
       : '<svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>';
     btnFullscreen.title = isFs ? rt('readerJs.fullscreenExit') : rt('readerJs.fullscreenEnter');
   }
+  if (btnFullscreen && !document.fullscreenEnabled) btnFullscreen.hidden = true;
   btnFullscreen?.addEventListener('click', toggleFullscreen);
   document.addEventListener('fullscreenchange', updateFullscreenIcon);
 
@@ -2754,6 +2897,7 @@ import {
       if (ed && ed.classList.contains('is-open')) { closeNoteEditor(); return; }
       const sm = $('reader-sel-menu');
       if (sm && sm.classList.contains('is-open')) { hideSelMenu(); activeSel = null; return; }
+      if (settingsPage && panelOverlay.classList.contains('is-open')) { settingsBack(); return; }
       closePanel();
       return;
     }
