@@ -475,10 +475,18 @@ export function createReaderTts(host) {
   let paused = false;
   /** Invalidates utterance callbacks on skip / pause / stop. */
   let token = 0;
-  let parts = [];
-  let idx = 0;
-  let pendingSsml = null;
-  let blocksStarted = 0;
+  /**
+   * Blocks (paragraphs) of the current section, keyed by their offset from the block the reading
+   * started in; Foliate's iterator is at `iterAt`. `pos` = { b, i } is the sentence being spoken
+   * (or to speak next). `inflight` = utterances handed to the engine, at most the current one and
+   * the next: the engine prepares the next sentence while this one plays, so there is no gap.
+   */
+  const blocks = new Map();
+  let iterAt = 0;
+  let startAt = -Infinity;
+  let endAt = Infinity;
+  let pos = null;
+  let inflight = [];
   let advancing = false;
   let sentenceRange = null;
   let wordCache = null;
@@ -557,21 +565,69 @@ export function createReaderTts(host) {
       .filter((p) => p.text && /[\p{L}\p{N}]/u.test(p.text));
   }
 
-  /** Next block of the section into `parts`; false at the end of the section. */
-  function loadNextBlock() {
-    const v = view();
-    let ssml = null;
-    if (pendingSsml) {
-      ssml = pendingSsml;
-      pendingSsml = null;
-    } else {
-      try { ssml = v?.tts?.next(); } catch (e) { console.warn('[reader TTS]', e); }
+  function resetBlocks(firstSsml) {
+    blocks.clear();
+    blocks.set(0, segmentsFromSsml(firstSsml));
+    iterAt = 0;
+    startAt = -Infinity;
+    endAt = Infinity;
+    pos = null;
+    inflight = [];
+  }
+
+  /** Sentences of block `b`, walking Foliate's iterator there; null outside the section. */
+  function fetchBlock(b) {
+    if (blocks.has(b)) return blocks.get(b);
+    if (b >= endAt || b <= startAt) return null;
+    const t = view()?.tts;
+    if (!t) return null;
+    while (iterAt !== b) {
+      const dir = b > iterAt ? 1 : -1;
+      let ssml = null;
+      try { ssml = dir > 0 ? t.next() : t.prev(); } catch (e) { console.warn('[reader TTS]', e); }
+      if (!ssml) {
+        if (dir > 0) endAt = iterAt + 1;
+        else startAt = iterAt - 1;
+        return null;
+      }
+      iterAt += dir;
+      if (!blocks.has(iterAt)) blocks.set(iterAt, segmentsFromSsml(ssml));
     }
-    if (!ssml) return false;
-    parts = segmentsFromSsml(ssml);
-    idx = 0;
-    blocksStarted++;
-    return true;
+    return blocks.get(b) ?? null;
+  }
+
+  function segAt(p) {
+    return p ? fetchBlock(p.b)?.[p.i] || null : null;
+  }
+
+  /** First sentence at or after block `b` (skips empty blocks); null at the section end. */
+  function firstPosFrom(b) {
+    for (let guard = 0; guard < 1000; guard++, b++) {
+      const segs = fetchBlock(b);
+      if (!segs) return null;
+      if (segs.length) return { b, i: 0 };
+    }
+    return null;
+  }
+
+  function nextPos(p) {
+    const segs = fetchBlock(p.b);
+    if (segs && p.i + 1 < segs.length) return { b: p.b, i: p.i + 1 };
+    return firstPosFrom(p.b + 1);
+  }
+
+  function prevPos(p) {
+    if (p.i > 0) return { b: p.b, i: p.i - 1 };
+    for (let b = p.b - 1, guard = 0; guard < 1000; guard++, b--) {
+      const segs = fetchBlock(b);
+      if (!segs) return null;
+      if (segs.length) return { b, i: segs.length - 1 };
+    }
+    return null;
+  }
+
+  function paraPauseMs() {
+    return PARA_PAUSE_MS[S().ttsParaPause] || 0;
   }
 
   function speakLater(delay = 30) {
@@ -583,6 +639,7 @@ export function createReaderTts(host) {
     token++;
     clearTimeout(paraTimer);
     paraTimer = null;
+    inflight = [];
     cancelSpeech();
   }
 
@@ -591,62 +648,101 @@ export function createReaderTts(host) {
     try { view()?.tts?.setMark(String(seg.mark)); } catch (e) { console.warn('[reader TTS]', e); }
   }
 
+  /** (Re)start speaking at `pos`, with an empty engine queue. */
   function speakStep() {
     clearTimeout(paraTimer);
     paraTimer = null;
     if (!active || paused) return;
-    const v = view();
-    if (!v?.tts) { stop(); return; }
+    if (!view()?.tts) { stop(); return; }
     if (sleepDeadline && Date.now() >= sleepDeadline) { fireSleep(); return; }
-    let loaded = false;
-    while (idx >= parts.length) {
-      if (!loadNextBlock()) { void finishSection(); return; }
-      loaded = true;
+    if (!segAt(pos)) {
+      pos = pos ? nextPos(pos) : firstPosFrom(0);
+      if (!pos) { void finishSection(); return; }
     }
-    const seg = parts[idx];
-    const pauseMs = PARA_PAUSE_MS[S().ttsParaPause] || 0;
-    if (loaded && blocksStarted > 1 && pauseMs && document.visibilityState === 'visible') {
-      markSegment(seg);
-      const tk = token;
-      paraTimer = setTimeout(() => {
-        if (tk !== token || !active || paused) return;
-        speakSegment(parts[idx]);
-      }, pauseMs);
-      return;
-    }
-    speakSegment(seg);
+    inflight = [];
+    markSegment(segAt(pos));
+    renderTitle();
+    if (enqueue(pos)) fillAhead();
   }
 
-  function speakSegment(seg) {
+  /** Queue the sentence after the last queued one, unless a paragraph pause must come first. */
+  function fillAhead() {
+    while (inflight.length && inflight.length < 2) {
+      const last = inflight[inflight.length - 1];
+      const np = nextPos(last.pos);
+      if (!np) return;
+      if (np.b !== last.pos.b && paraPauseMs()) return;
+      if (!enqueue(np)) return;
+    }
+  }
+
+  function enqueue(p) {
+    const seg = segAt(p);
     const s = synth();
     const U = window.SpeechSynthesisUtterance;
-    if (!seg || !s || !U) { stop(); return; }
-    markSegment(seg);
-    renderTitle();
+    if (!seg || !s || !U) { stop(); return false; }
     const u = new U(seg.text);
     applyUtterance(u);
     const tk = token;
-    u.onstart = () => { if (tk === token) host.onSpeechStart?.(); };
+    const item = { u, pos: p, seg };
+    u.onstart = () => {
+      if (tk !== token || !active) return;
+      if (host.canAdvance && !host.canAdvance()) return;
+      if (pos?.b !== p.b || pos?.i !== p.i) {
+        pos = p;
+        markSegment(seg);
+        renderTitle();
+      }
+      host.onSpeechStart?.();
+    };
     u.onboundary = (e) => {
       if (tk !== token || !active || paused) return;
       if (e?.name && e.name !== 'word') return;
+      if (pos?.b !== p.b || pos?.i !== p.i) return;
       showWord(seg, Number(e?.charIndex) || 0, Number(e?.charLength) || 0);
     };
-    const done = () => {
-      if (!active || tk !== token) return;
-      if (host.canAdvance && !host.canAdvance()) return;
-      idx++;
-      speakStep();
-    };
-    u.onend = done;
-    u.onerror = done;
+    u.onend = () => onItemDone(item, tk);
+    u.onerror = () => onItemDone(item, tk);
+    inflight.push(item);
     try {
       s.speak(u);
     } catch (e) {
       console.warn('[reader TTS]', e);
       host.toast?.(str('unavailable'));
       stop();
+      return false;
     }
+    return true;
+  }
+
+  function onItemDone(item, tk) {
+    if (!active || tk !== token) return;
+    // Hidden page: the platform drops speech without playing it — kick() repeats `pos` later.
+    if (host.canAdvance && !host.canAdvance()) return;
+    const at = inflight.indexOf(item);
+    if (at < 0) return;
+    inflight.splice(0, at + 1);
+    const np = inflight[0]?.pos || nextPos(item.pos);
+    if (!np) { inflight = []; void finishSection(); return; }
+    pos = np;
+    if (sleepDeadline && Date.now() >= sleepDeadline) { fireSleep(); return; }
+    if (inflight.length) {
+      // Already in the engine and starting now; onstart may come late on some engines.
+      markSegment(inflight[0].seg);
+      renderTitle();
+      fillAhead();
+      return;
+    }
+    const ms = paraPauseMs();
+    if (np.b !== item.pos.b && ms && document.visibilityState === 'visible') {
+      markSegment(segAt(np));
+      paraTimer = setTimeout(() => {
+        paraTimer = null;
+        if (tk === token && active && !paused) speakStep();
+      }, ms);
+      return;
+    }
+    speakStep();
   }
 
   function waitForLoad(v, ms) {
@@ -696,9 +792,9 @@ export function createReaderTts(host) {
       let first = null;
       try { first = v.tts.start(); } catch (e) { console.warn('[reader TTS]', e); }
       if (!first) continue;
-      parts = [];
-      idx = 0;
-      pendingSsml = first;
+      resetBlocks(first);
+      pos = firstPosFrom(0);
+      if (!pos) continue;
       return true;
     }
     return false;
@@ -862,12 +958,11 @@ export function createReaderTts(host) {
       try { first = v.tts.start(); } catch (e) { console.warn('[reader TTS]', e); }
     }
     if (!first) { host.toast?.(str('noText')); return false; }
+    resetBlocks(first);
+    pos = firstPosFrom(0);
+    if (!pos) { host.toast?.(str('noText')); return false; }
     active = true;
     paused = false;
-    parts = [];
-    idx = 0;
-    blocksStarted = 0;
-    pendingSsml = first;
     host.onBeforeStart?.();
     render();
     speakStep();
@@ -881,9 +976,8 @@ export function createReaderTts(host) {
     clearOverlays();
     active = false;
     paused = false;
-    parts = [];
-    idx = 0;
-    pendingSsml = null;
+    blocks.clear();
+    pos = null;
     advancing = false;
     sentenceRange = null;
     wordCache = null;
@@ -899,11 +993,11 @@ export function createReaderTts(host) {
     paraTimer = null;
     if (!external) {
       const s = synth();
+      // Native pause keeps the whole engine queue (and the notification); resume plays it on.
       if (host.nativePause && s?.speaking) {
-        try { s.pause(); } catch { token++; cancelSpeech(); }
+        try { s.pause(); } catch { interrupt(); }
       } else {
-        token++;
-        cancelSpeech();
+        interrupt();
       }
     }
     render();
@@ -942,7 +1036,7 @@ export function createReaderTts(host) {
 
   function afterMove() {
     if (paused) {
-      markSegment(parts[idx]);
+      markSegment(segAt(pos));
       render();
     } else {
       speakLater();
@@ -950,63 +1044,48 @@ export function createReaderTts(host) {
   }
 
   function nextSentence() {
-    if (!active) return;
+    if (!active || !pos) return;
     interrupt();
-    idx++;
-    if (idx >= parts.length) {
-      if (!loadNextBlock()) {
-        if (paused) { idx = Math.max(0, parts.length - 1); return; }
-        void finishSection();
-        return;
-      }
+    const np = nextPos(pos);
+    if (!np) {
+      if (!paused) void finishSection();
+      return;
     }
+    pos = np;
     afterMove();
   }
 
   function prevSentence() {
-    if (!active) return;
+    if (!active || !pos) return;
     interrupt();
-    if (pendingSsml) loadNextBlock();
-    idx--;
-    if (idx < 0) {
-      let ssml = null;
-      try { ssml = view()?.tts?.prev(); } catch (e) { console.warn('[reader TTS]', e); }
-      const prevParts = ssml ? segmentsFromSsml(ssml) : [];
-      if (!prevParts.length) {
-        idx = 0;
-        host.toast?.(str('noPrev'));
-      } else {
-        parts = prevParts;
-        idx = parts.length - 1;
-      }
-    }
+    const pp = prevPos(pos);
+    if (pp) pos = pp;
+    else host.toast?.(str('noPrev'));
     afterMove();
   }
 
   function nextParagraph() {
-    if (!active) return;
+    if (!active || !pos) return;
     interrupt();
-    pendingSsml = null;
-    if (!loadNextBlock()) {
+    const np = firstPosFrom(pos.b + 1);
+    if (!np) {
       if (!paused) void finishSection();
       return;
     }
+    pos = np;
     afterMove();
   }
 
+  /** Back to the start of this paragraph; from its first sentence — to the previous one. */
   function prevParagraph() {
-    if (!active) return;
+    if (!active || !pos) return;
     interrupt();
-    if (pendingSsml) loadNextBlock();
-    if (idx > 0) {
-      idx = 0;
+    if (pos.i > 0) {
+      pos = { b: pos.b, i: 0 };
     } else {
-      let ssml = null;
-      try { ssml = view()?.tts?.prev(); } catch (e) { console.warn('[reader TTS]', e); }
-      const prevParts = ssml ? segmentsFromSsml(ssml) : [];
-      if (prevParts.length) parts = prevParts;
+      const pp = prevPos(pos);
+      if (pp) pos = { b: pp.b, i: 0 };
       else host.toast?.(str('noPrev'));
-      idx = 0;
     }
     afterMove();
   }
