@@ -10,6 +10,7 @@ import {
   parseTtsSsmlSegments,
   prettyVoiceName,
   sleepFadeVolume,
+  TTS_MOTION_LEVELS,
   TTS_SETTING_DEFAULTS,
   wordLengthAt,
 } from '../public/reader-shared/reader-tts.js';
@@ -103,12 +104,34 @@ describe('sleep timer helpers', () => {
     assert.equal(sleepFadeVolume(-1000), 0.25);
   });
 
-  it('createMotionDetector: quiet on a table, fires when the phone is tilted', () => {
-    const moved = createMotionDetector();
+  it('createMotionDetector: quiet on a table; high fires on one tilt', () => {
+    const moved = createMotionDetector(TTS_MOTION_LEVELS.high);
     const g = 9.81;
-    assert.equal(moved(0, 0, g), false);
-    for (let i = 0; i < 50; i++) assert.equal(moved(0.01 * (i % 3), -0.01, g + 0.02 * (i % 2)), false);
+    let t = 0;
+    assert.equal(moved(0, 0, g, t), false);
+    for (let i = 0; i < 50; i++) assert.equal(moved(0.01 * (i % 3), -0.01, g + 0.02 * (i % 2), (t += 200)), false);
     const tilt = (deg) => [0, g * Math.sin((deg * Math.PI) / 180), g * Math.cos((deg * Math.PI) / 180)];
-    assert.equal(moved(...tilt(4)), true);
+    assert.equal(moved(...tilt(4), (t += 200)), true);
+  });
+
+  it('createMotionDetector: medium ignores short jolts (bed), fires on a sustained wobble (hand)', () => {
+    const g = 9.81;
+    const tilt = (deg) => [0, g * Math.sin((deg * Math.PI) / 180), g * Math.cos((deg * Math.PI) / 180)];
+    // Someone turns over next to the phone: a 0.4 s jolt, then still again — 5 Hz like Android.
+    let moved = createMotionDetector(TTS_MOTION_LEVELS.medium);
+    let t = 0;
+    const bed = [0, 0, 0, 0, 12, -12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    assert.equal(bed.some((deg) => moved(...tilt(deg), (t += 200))), false);
+    // In a hand: the phone keeps tilting back and forth by ~10° for a few seconds.
+    moved = createMotionDetector(TTS_MOTION_LEVELS.medium);
+    t = 0;
+    moved(...tilt(0), t);
+    const hand = Array.from({ length: 20 }, (_, i) => (i % 2 ? 10 : -10));
+    assert.equal(hand.some((deg) => moved(...tilt(deg), (t += 200))), true);
+    // Low wants a longer and stronger movement than medium.
+    moved = createMotionDetector(TTS_MOTION_LEVELS.low);
+    t = 0;
+    moved(...tilt(0), t);
+    assert.equal(hand.slice(0, 5).some((deg) => moved(...tilt(deg), (t += 200))), false);
   });
 });

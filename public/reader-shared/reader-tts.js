@@ -37,6 +37,8 @@ export const TTS_SETTING_DEFAULTS = Object.freeze({
   ttsParaPause: 0,
   /** Sleep timer restarts while the phone moves or the reader is touched; the voice fades out before it fires. */
   ttsSleepMotion: true,
+  /** high | medium | low — how much movement restarts the sleep timer (TTS_MOTION_LEVELS). */
+  ttsSleepMotionLevel: 'medium',
 });
 
 const HL_MODES = ['off', 'sentence', 'word'];
@@ -53,8 +55,20 @@ const SLEEP_CHOICES = [0, 15, 30, 45, 60, 90, 'chapter'];
 const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const KEY_SENTENCE = 'reader-tts-sentence';
 const KEY_WORD = 'reader-tts-word';
-/** Movement of the gravity vector (m/s²) against its slow average that counts as «телефон в руках». */
-export const TTS_MOTION_THRESHOLD = 0.3;
+/**
+ * «Телефон в руках»: the gravity vector moves away from its slow average by more than `threshold`
+ * m/s² for at least `spanMs`. A phone in a hand keeps wobbling; a phone on a bed only gets short
+ * jolts when someone moves next to it, which «medium» / «low» ignore.
+ */
+export const TTS_MOTION_LEVELS = Object.freeze({
+  high: Object.freeze({ threshold: 0.3, spanMs: 0 }),
+  medium: Object.freeze({ threshold: 0.8, spanMs: 700 }),
+  low: Object.freeze({ threshold: 1.5, spanMs: 1500 }),
+});
+/** Quieter samples shorter than this do not break a movement. */
+const MOTION_GAP_MS = 600;
+/** Time constant of the slow average (orientation the phone rests in). */
+const MOTION_BASE_TAU_MS = 1000;
 /** The voice fades out over the last minute of the sleep timer. */
 const SLEEP_FADE_MS = 60000;
 const SLEEP_FADE_MIN_VOLUME = 0.25;
@@ -85,6 +99,10 @@ const STRINGS = {
     sleepDone: 'Таймер сна: озвучка на паузе',
     sleepMotion: 'Таймер сна: продлевать, пока телефон в руках',
     sleepMotionHint: 'Пока телефон шевелится или вы касаетесь экрана, отсчёт начинается заново. За минуту до конца голос плавно стихает — пошевелите телефон, чтобы слушать дальше.',
+    sleepMotionLevel: 'Чувствительность к движению',
+    motionHigh: 'Высокая',
+    motionMedium: 'Средняя',
+    motionLow: 'Низкая',
     fromHere: 'Читать отсюда',
     noPrev: 'Это начало главы',
     bookEnd: 'Книга дочитана',
@@ -140,6 +158,10 @@ const STRINGS = {
     sleepDone: 'Sleep timer: reading paused',
     sleepMotion: 'Sleep timer: extend while the phone is in hand',
     sleepMotionHint: 'While the phone moves or you touch the screen, the countdown starts over. In the last minute the voice fades out — move the phone to keep listening.',
+    sleepMotionLevel: 'Motion sensitivity',
+    motionHigh: 'High',
+    motionMedium: 'Medium',
+    motionLow: 'Low',
     fromHere: 'Read from here',
     noPrev: 'This is the start of the chapter',
     bookEnd: 'End of the book',
@@ -215,6 +237,7 @@ export function normalizeTtsSettings(S) {
   const pp = Number(S.ttsParaPause);
   S.ttsParaPause = [0, 1, 2].includes(pp) ? pp : d.ttsParaPause;
   S.ttsSleepMotion = typeof S.ttsSleepMotion === 'boolean' ? S.ttsSleepMotion : d.ttsSleepMotion;
+  if (!Object.prototype.hasOwnProperty.call(TTS_MOTION_LEVELS, S.ttsSleepMotionLevel)) S.ttsSleepMotionLevel = d.ttsSleepMotionLevel;
   return S;
 }
 
@@ -317,18 +340,32 @@ export function sleepFadeVolume(remainingMs, fadeMs = SLEEP_FADE_MS) {
 }
 
 /**
- * Motion detector over accelerometer samples (gravity included): compares each sample with a
- * slow moving average, so a phone lying on a table (noise ~0.02 m/s²) stays quiet while a hand
- * that holds it tilts the gravity vector enough (2° ≈ 0.34 m/s²).
+ * Motion detector over accelerometer samples (gravity included, `t` in ms): compares each sample
+ * with a slow average (time-based, so 5 Hz Android and 60 Hz browser sensors behave alike) and
+ * reports a movement once the difference stays above `threshold` for `spanMs`. A phone lying on
+ * a table has ~0.02 m/s² of noise. Same algorithm as TtsMotionWatcher.java.
  */
-export function createMotionDetector(threshold = TTS_MOTION_THRESHOLD) {
+export function createMotionDetector({ threshold, spanMs } = TTS_MOTION_LEVELS.medium) {
   let base = null;
-  return (x, y, z) => {
+  let lastT = 0;
+  let runStart = 0;
+  let lastHit = 0;
+  return (x, y, z, t = Date.now()) => {
     const v = [Number(x) || 0, Number(y) || 0, Number(z) || 0];
-    if (!base) { base = v; return false; }
+    if (!base) { base = v; lastT = t; return false; }
     const d = Math.hypot(v[0] - base[0], v[1] - base[1], v[2] - base[2]);
-    for (let i = 0; i < 3; i++) base[i] = base[i] * 0.9 + v[i] * 0.1;
-    return d > threshold;
+    const alpha = 1 - Math.exp(-Math.max(1, t - lastT) / MOTION_BASE_TAU_MS);
+    lastT = t;
+    for (let i = 0; i < 3; i++) base[i] += (v[i] - base[i]) * alpha;
+    if (d <= threshold) {
+      if (runStart && t - lastHit > MOTION_GAP_MS) runStart = 0;
+      return false;
+    }
+    if (!runStart || t - lastHit > MOTION_GAP_MS) runStart = t;
+    lastHit = t;
+    if (t - runStart < spanMs) return false;
+    runStart = 0;
+    return true;
   };
 }
 
@@ -455,7 +492,7 @@ html[data-eink="1"] .rtts-chip.is-on{border-width:2px;color:inherit;border-color
  * @param {() => Range|null} [host.getSelectionRange]
  * @param {() => void} [host.onReadFromSelection]   hide the selection menu before «Читать отсюда» starts
  * @param {() => void} [host.afterControl]          e.g. restart the chrome auto-hide timer
- * @param {(onMove: () => void) => (() => void)} [host.watchMotion]  start a phone motion sensor and return its stop function (Android: native accelerometer, keeps working with the screen off; default: `devicemotion` while the page is visible)
+ * @param {(onMove: () => void, level: {threshold: number, spanMs: number}) => (() => void)} [host.watchMotion]  start a phone motion sensor and return its stop function (Android: native accelerometer, keeps working with the screen off; default: `devicemotion` while the page is visible)
  * @param {boolean} [host.nativePause]              pause/resume the engine (Android) instead of cancel + repeat
  * @param {string} [host.voiceHint]
  */
@@ -1140,14 +1177,27 @@ export function createReaderTts(host) {
     if (wasFading && active && !paused) { interrupt(); speakLater(); }
   }
 
-  function startDeviceMotion(onMove) {
-    const moved = createMotionDetector();
+  function motionLevel() {
+    return TTS_MOTION_LEVELS[S().ttsSleepMotionLevel] || TTS_MOTION_LEVELS.medium;
+  }
+
+  function startDeviceMotion(onMove, level) {
+    const moved = createMotionDetector(level);
     const handler = (e) => {
       const a = e.accelerationIncludingGravity;
       if (a && moved(a.x, a.y, a.z)) onMove();
     };
     window.addEventListener('devicemotion', handler);
     return () => window.removeEventListener('devicemotion', handler);
+  }
+
+  /** New sensitivity: restart a running sensor with it. */
+  function restartMotionWatch() {
+    if (!motionOn) return;
+    try { motionStop?.(); } catch { /* */ }
+    motionStop = null;
+    motionOn = false;
+    syncMotionWatch();
   }
 
   /** The motion sensor runs only while a minutes sleep timer is set and «продлевать» is on. */
@@ -1157,9 +1207,10 @@ export function createReaderTts(host) {
     motionOn = want;
     if (want) {
       try {
+        const level = motionLevel();
         motionStop = typeof host.watchMotion === 'function'
-          ? host.watchMotion(extendSleep)
-          : startDeviceMotion(extendSleep);
+          ? host.watchMotion(extendSleep, level)
+          : startDeviceMotion(extendSleep, level);
       } catch (e) {
         console.warn('[reader TTS motion]', e);
         motionStop = null;
@@ -1478,6 +1529,8 @@ export function createReaderTts(host) {
       <label class="rs-check"><span>${str('follow')}</span><input type="checkbox" id="rs-tts-follow" name="readerTtsFollow"></label>
       <label class="rs-check"><span>${str('skipNotes')}</span><input type="checkbox" id="rs-tts-skip-notes" name="readerTtsSkipNotes"></label>
       <label class="rs-check"><span>${str('sleepMotion')}</span><input type="checkbox" id="rs-tts-sleep-motion" name="readerTtsSleepMotion"></label>
+      <div class="rs-sublabel">${str('sleepMotionLevel')}</div>
+      ${seg('ttsSleepMotionLevel', [['high', str('motionHigh')], ['medium', str('motionMedium')], ['low', str('motionLow')]])}
       <div class="rs-hint">${str('sleepMotionHint')}</div>
       <div class="rs-sublabel">${str('paraPause')}</div>
       ${seg('ttsParaPause', [['0', str('pauseNone')], ['1', str('pauseShort')], ['2', str('pauseLong')]])}
@@ -1506,7 +1559,8 @@ export function createReaderTts(host) {
         S()[key] = key === 'ttsParaPause' ? Number(b.dataset.v) : b.dataset.v;
         host.saveSettings();
         refreshSettingsUi();
-        if (key !== 'ttsParaPause' && sentenceRange) drawSentence(sentenceRange);
+        if (key === 'ttsSleepMotionLevel') restartMotionWatch();
+        else if (key !== 'ttsParaPause' && sentenceRange) drawSentence(sentenceRange);
       });
     }
     mount.querySelector('.rtts-colors')?.addEventListener('click', (e) => {
