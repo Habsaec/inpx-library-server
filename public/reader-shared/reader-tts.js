@@ -52,6 +52,8 @@ export const TTS_HL_COLORS = Object.freeze({
 });
 const PARA_PAUSE_MS = [0, 350, 900];
 const SLEEP_CHOICES = [0, 15, 30, 45, 60, 90, 'chapter'];
+/** Steps of the single sleep button (`cycleSleep`). */
+const SLEEP_CYCLE = [15, 30, 60];
 const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const KEY_SENTENCE = 'reader-tts-sentence';
 const KEY_WORD = 'reader-tts-word';
@@ -483,6 +485,7 @@ html[data-eink="1"] .rtts-chip.is-on{border-width:2px;color:inherit;border-color
  * @param {(msg: string) => void} host.toast
  * @param {() => string} [host.locale]              'ru' | 'en'
  * @param {(state: {active: boolean, paused: boolean}) => void} [host.onStateChange]
+ * @param {(endsAt: number) => void} [host.onSleepChange]  sleep timer end in epoch ms (0 = off or «до конца главы»); the Android read-aloud widget counts it down
  * @param {() => void} [host.onBeforeStart]         clear selection, show chrome …
  * @param {() => void} [host.onSpeechStart]         every utterance start (keep-alive)
  * @param {() => boolean} [host.canAdvance]         false while the platform cancels hidden speech
@@ -1151,6 +1154,19 @@ export function createReaderTts(host) {
     sleepTicker = sleepDeadline ? setInterval(renderSleep, 1000) : null;
     renderSleep();
     syncMotionWatch();
+    notifySleep();
+  }
+
+  function notifySleep() {
+    try { host.onSleepChange?.(sleepDeadline); } catch (e) { console.warn('[reader TTS]', e); }
+  }
+
+  /** One button (Android widget): off → 15 → 30 → 60 min → off; «до конца главы» and longer go off. */
+  function cycleSleep() {
+    const current = typeof sleepMode === 'number' ? sleepMode : 0;
+    const next = SLEEP_CYCLE.find((m) => m > current) ?? 0;
+    setSleep(next);
+    host.toast?.(`${str('sleep')}: ${next ? str('sleepMin', { n: next }) : str('sleepOff').toLowerCase()}`);
   }
 
   function fireSleep() {
@@ -1168,6 +1184,7 @@ export function createReaderTts(host) {
     const wasFading = left < SLEEP_FADE_MS;
     sleepDeadline = Date.now() + full;
     renderSleep();
+    notifySleep();
     if (el.sleep) {
       el.sleep.classList.remove('is-extended');
       void el.sleep.offsetWidth;
@@ -1722,6 +1739,7 @@ export function createReaderTts(host) {
     nextParagraph,
     locate,
     setSleep,
+    cycleSleep,
     refreshSettingsUi,
     populateVoices,
     onSettingsOpen,
