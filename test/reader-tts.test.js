@@ -4,10 +4,12 @@ import {
   alignSpokenText,
   cleanTtsText,
   clampTtsRate,
+  createMotionDetector,
   formatSleepLeft,
   normalizeTtsSettings,
   parseTtsSsmlSegments,
   prettyVoiceName,
+  sleepFadeVolume,
   TTS_SETTING_DEFAULTS,
   wordLengthAt,
 } from '../public/reader-shared/reader-tts.js';
@@ -89,5 +91,24 @@ describe('helpers', () => {
     assert.equal(s.ttsFollow, false);
     assert.equal(s.ttsHlColor, 'yellow');
     assert.equal(clampTtsRate('1.234'), 1.23);
+  });
+});
+
+describe('sleep timer helpers', () => {
+  it('sleepFadeVolume fades only in the last minute', () => {
+    assert.equal(sleepFadeVolume(5 * 60_000), 1);
+    assert.equal(sleepFadeVolume(60_000), 1);
+    assert.equal(sleepFadeVolume(30_000), 0.63);
+    assert.equal(sleepFadeVolume(0), 0.25);
+    assert.equal(sleepFadeVolume(-1000), 0.25);
+  });
+
+  it('createMotionDetector: quiet on a table, fires when the phone is tilted', () => {
+    const moved = createMotionDetector();
+    const g = 9.81;
+    assert.equal(moved(0, 0, g), false);
+    for (let i = 0; i < 50; i++) assert.equal(moved(0.01 * (i % 3), -0.01, g + 0.02 * (i % 2)), false);
+    const tilt = (deg) => [0, g * Math.sin((deg * Math.PI) / 180), g * Math.cos((deg * Math.PI) / 180)];
+    assert.equal(moved(...tilt(4)), true);
   });
 });

@@ -35,6 +35,8 @@ export const TTS_SETTING_DEFAULTS = Object.freeze({
   ttsSkipNoteRefs: true,
   /** Pause between paragraphs: 0 none, 1 short, 2 long. */
   ttsParaPause: 0,
+  /** Sleep timer restarts while the phone moves or the reader is touched; the voice fades out before it fires. */
+  ttsSleepMotion: true,
 });
 
 const HL_MODES = ['off', 'sentence', 'word'];
@@ -51,6 +53,11 @@ const SLEEP_CHOICES = [0, 15, 30, 45, 60, 90, 'chapter'];
 const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const KEY_SENTENCE = 'reader-tts-sentence';
 const KEY_WORD = 'reader-tts-word';
+/** Movement of the gravity vector (m/s²) against its slow average that counts as «телефон в руках». */
+export const TTS_MOTION_THRESHOLD = 0.3;
+/** The voice fades out over the last minute of the sleep timer. */
+const SLEEP_FADE_MS = 60000;
+const SLEEP_FADE_MIN_VOLUME = 0.25;
 const LONG_PRESS_MS = 550;
 const LONG_PRESS_SLOP_PX = 14;
 
@@ -76,6 +83,8 @@ const STRINGS = {
     sleepChapter: 'До конца главы',
     sleepChapterShort: 'Глава',
     sleepDone: 'Таймер сна: озвучка на паузе',
+    sleepMotion: 'Таймер сна: продлевать, пока телефон в руках',
+    sleepMotionHint: 'Пока телефон шевелится или вы касаетесь экрана, отсчёт начинается заново. За минуту до конца голос плавно стихает — пошевелите телефон, чтобы слушать дальше.',
     fromHere: 'Читать отсюда',
     noPrev: 'Это начало главы',
     bookEnd: 'Книга дочитана',
@@ -129,6 +138,8 @@ const STRINGS = {
     sleepChapter: 'End of chapter',
     sleepChapterShort: 'Chapter',
     sleepDone: 'Sleep timer: reading paused',
+    sleepMotion: 'Sleep timer: extend while the phone is in hand',
+    sleepMotionHint: 'While the phone moves or you touch the screen, the countdown starts over. In the last minute the voice fades out — move the phone to keep listening.',
     fromHere: 'Read from here',
     noPrev: 'This is the start of the chapter',
     bookEnd: 'End of the book',
@@ -203,6 +214,7 @@ export function normalizeTtsSettings(S) {
   S.ttsSkipNoteRefs = typeof S.ttsSkipNoteRefs === 'boolean' ? S.ttsSkipNoteRefs : d.ttsSkipNoteRefs;
   const pp = Number(S.ttsParaPause);
   S.ttsParaPause = [0, 1, 2].includes(pp) ? pp : d.ttsParaPause;
+  S.ttsSleepMotion = typeof S.ttsSleepMotion === 'boolean' ? S.ttsSleepMotion : d.ttsSleepMotion;
   return S;
 }
 
@@ -296,6 +308,30 @@ export function wordLengthAt(text, index) {
   return m ? m[0].length : 1;
 }
 
+/** Utterance volume in the last minute of the sleep timer: 1 → 0.25. */
+export function sleepFadeVolume(remainingMs, fadeMs = SLEEP_FADE_MS) {
+  const r = Number(remainingMs);
+  if (!Number.isFinite(r) || r >= fadeMs) return 1;
+  const k = Math.max(0, r) / fadeMs;
+  return Math.round((SLEEP_FADE_MIN_VOLUME + (1 - SLEEP_FADE_MIN_VOLUME) * k) * 100) / 100;
+}
+
+/**
+ * Motion detector over accelerometer samples (gravity included): compares each sample with a
+ * slow moving average, so a phone lying on a table (noise ~0.02 m/s²) stays quiet while a hand
+ * that holds it tilts the gravity vector enough (2° ≈ 0.34 m/s²).
+ */
+export function createMotionDetector(threshold = TTS_MOTION_THRESHOLD) {
+  let base = null;
+  return (x, y, z) => {
+    const v = [Number(x) || 0, Number(y) || 0, Number(z) || 0];
+    if (!base) { base = v; return false; }
+    const d = Math.hypot(v[0] - base[0], v[1] - base[1], v[2] - base[2]);
+    for (let i = 0; i < 3; i++) base[i] = base[i] * 0.9 + v[i] * 0.1;
+    return d > threshold;
+  };
+}
+
 export function formatSleepLeft(ms) {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const h = Math.floor(total / 3600);
@@ -380,6 +416,9 @@ const STYLE = `
 .rtts-chip{display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:4px 12px;border:1px solid var(--r-border);border-radius:999px;font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .rtts-chip svg{width:16px;height:16px;flex:none}
 .rtts-chip.is-on{border-color:var(--r-accent);color:var(--r-accent)}
+.rtts-chip.is-extended{animation:rtts-extended .6s ease-out}
+@keyframes rtts-extended{0%{background:var(--r-hover);transform:scale(1.06)}100%{background:none;transform:none}}
+@media (prefers-reduced-motion:reduce){.rtts-chip.is-extended{animation:none}}
 .rtts-rate button:hover,.rtts-chip:hover{background:var(--r-hover)}
 .rtts-menu{position:absolute;bottom:calc(100% + 6px);z-index:5;display:flex;flex-direction:column;min-width:150px;max-height:min(60vh,360px);overflow:auto;padding:4px;border:1px solid var(--r-border);border-radius:12px;background:var(--r-bg,var(--r-bar));box-shadow:var(--r-shadow,0 6px 24px rgba(0,0,0,.25));transform:translateX(-50%)}
 .rtts-menu[hidden]{display:none}
@@ -416,6 +455,7 @@ html[data-eink="1"] .rtts-chip.is-on{border-width:2px;color:inherit;border-color
  * @param {() => Range|null} [host.getSelectionRange]
  * @param {() => void} [host.onReadFromSelection]   hide the selection menu before «Читать отсюда» starts
  * @param {() => void} [host.afterControl]          e.g. restart the chrome auto-hide timer
+ * @param {(onMove: () => void) => (() => void)} [host.watchMotion]  start a phone motion sensor and return its stop function (Android: native accelerometer, keeps working with the screen off; default: `devicemotion` while the page is visible)
  * @param {boolean} [host.nativePause]              pause/resume the engine (Android) instead of cancel + repeat
  * @param {string} [host.voiceHint]
  */
@@ -449,6 +489,9 @@ export function createReaderTts(host) {
   let sleepTicker = null;
   let lastNotified = '';
   let menu = null;
+  let motionOn = false;
+  let motionStop = null;
+  const watchedDocs = new WeakSet();
 
   const dockEl = document.getElementById('reader-tts-dock');
   const el = {};
@@ -485,6 +528,7 @@ export function createReaderTts(host) {
     u.rate = clampTtsRate(s.ttsRate);
     u.pitch = clampTtsPitch(s.ttsPitch);
     u.lang = bookLang();
+    u.volume = sleepDeadline ? sleepFadeVolume(sleepDeadline - Date.now()) : 1;
     const v = pickVoice();
     if (v) {
       u.voice = v;
@@ -801,6 +845,11 @@ export function createReaderTts(host) {
     }
     if (!v.tts) { host.toast?.(str('noText')); return false; }
     installHighlighter(v);
+    if (!v.__readerTtsActivity) {
+      v.__readerTtsActivity = true;
+      v.addEventListener('load', (e) => watchDocActivity(e.detail?.doc));
+    }
+    for (const c of v.renderer?.getContents?.() || []) watchDocActivity(c.doc);
     let first = null;
     const from = opts.range?.cloneRange ? opts.range.cloneRange()
       : v.lastLocation?.range?.cloneRange ? v.lastLocation.range.cloneRange() : null;
@@ -985,12 +1034,73 @@ export function createReaderTts(host) {
     clearInterval(sleepTicker);
     sleepTicker = sleepDeadline ? setInterval(renderSleep, 1000) : null;
     renderSleep();
+    syncMotionWatch();
   }
 
   function fireSleep() {
     setSleep(0);
     pause();
     host.toast?.(str('sleepDone'));
+  }
+
+  /** Movement or a touch: the listener is awake — start the countdown over (and undo the fade). */
+  function extendSleep() {
+    if (!sleepDeadline || typeof sleepMode !== 'number' || S().ttsSleepMotion === false) return;
+    const full = sleepMode * 60000;
+    const left = sleepDeadline - Date.now();
+    if (left > full - 2000) return;
+    const wasFading = left < SLEEP_FADE_MS;
+    sleepDeadline = Date.now() + full;
+    renderSleep();
+    if (el.sleep) {
+      el.sleep.classList.remove('is-extended');
+      void el.sleep.offsetWidth;
+      el.sleep.classList.add('is-extended');
+    }
+    // Back to full volume now, not after the faded sentence ends.
+    if (wasFading && active && !paused) { interrupt(); speakLater(); }
+  }
+
+  function startDeviceMotion(onMove) {
+    const moved = createMotionDetector();
+    const handler = (e) => {
+      const a = e.accelerationIncludingGravity;
+      if (a && moved(a.x, a.y, a.z)) onMove();
+    };
+    window.addEventListener('devicemotion', handler);
+    return () => window.removeEventListener('devicemotion', handler);
+  }
+
+  /** The motion sensor runs only while a minutes sleep timer is set and «продлевать» is on. */
+  function syncMotionWatch() {
+    const want = Boolean(active && sleepDeadline && S().ttsSleepMotion !== false);
+    if (want === motionOn) return;
+    motionOn = want;
+    if (want) {
+      try {
+        motionStop = typeof host.watchMotion === 'function'
+          ? host.watchMotion(extendSleep)
+          : startDeviceMotion(extendSleep);
+      } catch (e) {
+        console.warn('[reader TTS motion]', e);
+        motionStop = null;
+      }
+    } else {
+      try { motionStop?.(); } catch { /* */ }
+      motionStop = null;
+    }
+  }
+
+  function onUserActivity() {
+    if (sleepDeadline) extendSleep();
+  }
+
+  /** Touches inside the book iframes do not reach the reader document: listen on each section doc too. */
+  function watchDocActivity(doc) {
+    if (!doc || watchedDocs.has(doc)) return;
+    watchedDocs.add(doc);
+    doc.addEventListener('pointerdown', onUserActivity, { capture: true, passive: true });
+    doc.addEventListener('keydown', onUserActivity, { capture: true });
   }
 
   /* ----- UI ----- */
@@ -1191,6 +1301,11 @@ export function createReaderTts(host) {
   }
 
   function renderSleep() {
+    if (sleepDeadline && Date.now() >= sleepDeadline + 1000 && active && !paused && !synth()?.speaking) {
+      // Nothing is being spoken (e.g. a paragraph pause): do not wait for the next sentence.
+      fireSleep();
+      return;
+    }
     if (!el.sleepText) return;
     let label = str('sleep');
     if (sleepMode === 'chapter') label = str('sleepChapterShort');
@@ -1227,6 +1342,7 @@ export function createReaderTts(host) {
     renderSleep();
     if (!active) closeMenu();
     document.body.classList.toggle('reader-tts-active', active);
+    syncMotionWatch();
     const key = `${active}|${paused}`;
     if (key !== lastNotified) {
       lastNotified = key;
@@ -1282,6 +1398,8 @@ export function createReaderTts(host) {
       ${seg('ttsHlStyle', [['fill', str('hlFill')], ['underline', str('hlUnderline')]])}
       <label class="rs-check"><span>${str('follow')}</span><input type="checkbox" id="rs-tts-follow" name="readerTtsFollow"></label>
       <label class="rs-check"><span>${str('skipNotes')}</span><input type="checkbox" id="rs-tts-skip-notes" name="readerTtsSkipNotes"></label>
+      <label class="rs-check"><span>${str('sleepMotion')}</span><input type="checkbox" id="rs-tts-sleep-motion" name="readerTtsSleepMotion"></label>
+      <div class="rs-hint">${str('sleepMotionHint')}</div>
       <div class="rs-sublabel">${str('paraPause')}</div>
       ${seg('ttsParaPause', [['0', str('pauseNone')], ['1', str('pauseShort')], ['2', str('pauseLong')]])}
       <div class="rs-hint">${str('wordHint')}${host.voiceHint ? ` ${escapeAttr(host.voiceHint)}` : ''}</div>`;
@@ -1324,6 +1442,11 @@ export function createReaderTts(host) {
       S().ttsFollow = e.target.checked;
       host.saveSettings();
       if (S().ttsFollow) locate();
+    });
+    q('rs-tts-sleep-motion')?.addEventListener('change', (e) => {
+      S().ttsSleepMotion = e.target.checked;
+      host.saveSettings();
+      syncMotionWatch();
     });
     q('rs-tts-skip-notes')?.addEventListener('change', (e) => {
       S().ttsSkipNoteRefs = e.target.checked;
@@ -1394,6 +1517,7 @@ export function createReaderTts(host) {
     });
     if (q('rs-tts-follow')) q('rs-tts-follow').checked = s.ttsFollow !== false;
     if (q('rs-tts-skip-notes')) q('rs-tts-skip-notes').checked = s.ttsSkipNoteRefs !== false;
+    if (q('rs-tts-sleep-motion')) q('rs-tts-sleep-motion').checked = s.ttsSleepMotion !== false;
     renderRate();
   }
 
@@ -1441,6 +1565,9 @@ export function createReaderTts(host) {
   function onSettingsOpen() {
     void ensureVoices().then(() => { populateVoices(); refreshSettingsUi(); });
   }
+
+  document.addEventListener('pointerdown', onUserActivity, { capture: true, passive: true });
+  document.addEventListener('keydown', onUserActivity, { capture: true });
 
   injectStyle();
   buildDock();
