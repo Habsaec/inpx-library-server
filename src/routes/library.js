@@ -1113,7 +1113,10 @@ export function registerLibraryRoutes(app, deps) {
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
       userStats: {
         ...getUserStats(req.user.username),
-        followingNewCount: getFollowingNewCount(req.user.username, { langs: effectiveContentLangs(req.user.username) })
+        followingNewCount: getFollowingNewCount(req.user.username, {
+          langs: effectiveContentLangs(req.user.username),
+          unseenOnly: false
+        })
       },
       csrfToken: req.csrfToken || ''
     }));

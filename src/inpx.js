@@ -7611,11 +7611,13 @@ export function getFollowingNewBooks(username, { page = 1, pageSize = 24, lang =
   return { total, items };
 }
 
-/** Unseen «Новое у любимых» for the sidebar badge (memoized; cleared on favorite changes and visits). */
-export function getFollowingNewCount(username, { langs = null } = {}) {
+/** Unseen «Новое у любимых» for the sidebar badge (memoized; cleared on favorite changes and visits).
+ *  `unseenOnly: false` counts the whole list — the «Моя библиотека» hub shows totals, like the page itself. */
+export function getFollowingNewCount(username, { langs = null, unseenOnly = true } = {}) {
   const u = String(username || '').trim();
   if (!u) return 0;
-  const memo = _followingBadgeMemo.get(u);
+  const memoKey = unseenOnly ? u : `${u}\u0000all`;
+  const memo = _followingBadgeMemo.get(memoKey);
   if (memo && Date.now() - memo.at < FOLLOWING_BADGE_TTL_MS) return memo.count;
   let count = 0;
   try {
@@ -7624,14 +7626,14 @@ export function getFollowingNewCount(username, { langs = null } = {}) {
     `).get(u, u);
     const window = hasFavorites ? followingCutoffDate() : null;
     if (window) {
-      const seen = String(getMeta(followingSeenKey(u)) || '');
+      const seen = unseenOnly ? String(getMeta(followingSeenKey(u)) || '') : '';
       const { cte, body, params } = followingSqlParts(u, window.cutoff, { langs, newerThan: seen });
       count = db.prepare(`${cte} SELECT COUNT(*) AS count ${body}`).get(...params).count;
     }
   } catch (err) {
     console.warn('[following] badge count failed:', err.message);
   }
-  _followingBadgeMemo.set(u, { count, at: Date.now() });
+  _followingBadgeMemo.set(memoKey, { count, at: Date.now() });
   return count;
 }
 
@@ -7645,8 +7647,13 @@ export function markFollowingSeen(username) {
 }
 
 export function invalidateFollowingBadge(username) {
-  if (username) _followingBadgeMemo.delete(String(username).trim());
-  else _followingBadgeMemo.clear();
+  if (username) {
+    const u = String(username).trim();
+    _followingBadgeMemo.delete(u);
+    _followingBadgeMemo.delete(`${u}\u0000all`);
+  } else {
+    _followingBadgeMemo.clear();
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 ﻿import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { initDb, db, createUser, deleteUser } from '../src/db.js';
+import { initDb, db, createUser, deleteUser, getUserStats } from '../src/db.js';
 import {
   parseSmartShelfFilter, serializeSmartShelfFilter, createSmartShelf, updateSmartShelf, deleteSmartShelf,
   listSmartShelves, getSmartShelf, getSmartShelfBooks, setSmartShelfOnHome
@@ -92,6 +92,8 @@ test('smart shelf CRUD is per user and validates names', () => {
   assert.equal(getSmartShelf(id, USER).catalogUrl, '/catalog?genre=smartsf&lang=ru&sort=title');
   assert.equal(getSmartShelf(id, OTHER), null);
   assert.deepEqual(listSmartShelves(OTHER), []);
+  assert.equal(getUserStats(USER).smartShelvesCount, 1, 'profile / «Моя библиотека» count smart shelves');
+  assert.equal(getUserStats(OTHER).smartShelvesCount, 0);
 
   assert.throws(() => createSmartShelf(USER, 'Фантастика', { genre: 'x' }), /уже существует/);
   assert.throws(() => createSmartShelf(USER, '  ', { genre: 'x' }), /не указано/);

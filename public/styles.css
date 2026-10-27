@@ -9178,8 +9178,21 @@ html[data-theme="light"] .sidebar-overlay {
 
   /* Shelves: keep «+ Создать» a button, not a full-width row. */
 
+  /* Строка полки — в одну колонку: справа кнопки сжимали описание до слова в строке,
+     а обложки выстраивались столбиком. Обложки — одной строкой, лишние обрезаются. */
+  .shelf-list-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+  }
+
+  .shelf-list-row .shelf-row-actions {
+    justify-content: flex-start;
+  }
+
   .shelf-covers-preview {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow: hidden;
   }
 
   /* ?? Batch download ?? */
@@ -13401,6 +13414,13 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Ссылка-строка была block с min-height 72px — заголовок прилипал к верху, снизу пустота. */
+.my-library-list a.table-row-link {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
 }
 
 .my-library-row {

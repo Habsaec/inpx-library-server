@@ -5115,6 +5115,7 @@ function _ensureUserStatsStmt() {
         (SELECT COUNT(*) FROM favorite_authors WHERE username = ?) AS favoriteAuthorsCount,
         (SELECT COUNT(*) FROM favorite_series WHERE username = ?) AS favoriteSeriesCount,
         (SELECT COUNT(*) FROM shelves WHERE username = ?) AS shelvesCount,
+        (SELECT COUNT(*) FROM smart_shelves WHERE username = ?) AS smartShelvesCount,
         (SELECT COUNT(*) FROM reader_bookmarks rbm JOIN active_books ab3 ON ab3.id = rbm.book_id WHERE rbm.username = ?) AS readerBookmarksCount,
         (SELECT COUNT(*) FROM reader_annotations ra JOIN active_books ab4 ON ab4.id = ra.book_id WHERE ra.username = ?) AS readerAnnotationsCount,
         (SELECT created_at FROM users WHERE username = ?) AS createdAt,
@@ -5130,7 +5131,7 @@ function _ensureUserStatsStmt() {
 }
 
 export function getUserStats(username) {
-  const row = _ensureUserStatsStmt().get(username, username, username, username, username, username, username, username, username, username, username);
+  const row = _ensureUserStatsStmt().get(username, username, username, username, username, username, username, username, username, username, username, username);
   return {
     readingCount: row?.readingCount || 0,
     bookmarkCount: row?.bookmarkCount || 0,
@@ -5138,6 +5139,7 @@ export function getUserStats(username) {
     favoriteAuthorsCount: row?.favoriteAuthorsCount || 0,
     favoriteSeriesCount: row?.favoriteSeriesCount || 0,
     shelvesCount: row?.shelvesCount || 0,
+    smartShelvesCount: row?.smartShelvesCount || 0,
     readerBookmarksCount: row?.readerBookmarksCount || 0,
     readerAnnotationsCount: row?.readerAnnotationsCount || 0,
     wantCount: row?.wantCount || 0,

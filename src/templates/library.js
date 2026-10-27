@@ -1028,7 +1028,7 @@ export function renderFavorites({
     books: userStats.bookmarkCount,
     authors: userStats.favoriteAuthorsCount,
     series: userStats.favoriteSeriesCount,
-    shelves: userStats.shelvesCount,
+    shelves: (Number(userStats.shelvesCount) || 0) + (Number(userStats.smartShelvesCount) || 0),
     read: userStats.readBooksCount
   } : null;
   const currentView = ['books', 'read', 'authors', 'series'].includes(view) ? view : 'books';
@@ -1677,7 +1677,7 @@ function renderSmartShelvesSection(smartShelves, csrfToken) {
       ${smartShelves.length ? `
         <div class="table-list entity-list">
           ${smartShelves.map((shelf) => `
-            <div class="table-row table-row-clickable account-list-row" data-href="${escapeHtml(shelf.catalogUrl)}">
+            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-href="${escapeHtml(shelf.catalogUrl)}">
               <div class="account-list-row-main shelf-row-info">
                 <strong>${escapeHtml(shelf.name)}</strong>
                 <br><span class="muted">${escapeHtml(summarizeSmartShelfQuery(shelf.query))}</span>
@@ -1721,7 +1721,7 @@ export function renderShelves({ shelves = [], smartShelves = [], user, stats, in
       ${shelves.length ? `
         <div class="table-list entity-list">
           ${shelves.map((shelf) => `
-            <div class="table-row table-row-clickable account-list-row" data-shelf-row="${shelf.id}" data-href="/shelves/${shelf.id}">
+            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-shelf-row="${shelf.id}" data-href="/shelves/${shelf.id}">
               <div class="account-list-row-main shelf-row-info">
                 <strong>${escapeHtml(shelf.name)}</strong>
                 ${shelf.description ? `<br><span class="muted">${escapeHtml(shelf.description)}</span>` : ''}
@@ -2394,7 +2394,7 @@ export function renderMyLibrary({ user, stats, indexStatus, userStats, csrfToken
     { href: '/library/want', title: t('nav.want'), count: userStats.wantCount },
     { href: '/library/following', title: t('nav.following'), count: userStats.followingNewCount || 0 },
     { href: '/favorites', title: t('nav.favorites'), count: favoritesTotal },
-    { href: '/shelves', title: t('nav.shelves'), count: userStats.shelvesCount },
+    { href: '/shelves', title: t('nav.shelves'), count: (Number(userStats.shelvesCount) || 0) + (Number(userStats.smartShelvesCount) || 0) },
     { href: '/library/read', title: t('library.title.read'), count: userStats.readBooksCount },
     { href: '/library/rated', title: t('library.title.rated'), count: userStats.ratedCount },
     { href: '/library/bookmarks', title: t('nav.bookmarks'), count: userStats.readerBookmarksCount },
@@ -2433,7 +2433,7 @@ export function renderProfile({ user, stats, indexStatus, userStats, readingStat
     { href: '/favorites?view=books', label: t('favorites.books'), value: userStats.bookmarkCount },
     { href: '/favorites?view=authors', label: t('favorites.authors'), value: userStats.favoriteAuthorsCount },
     { href: '/favorites?view=series', label: t('favorites.series'), value: userStats.favoriteSeriesCount },
-    { href: '/shelves', label: t('nav.shelves'), value: userStats.shelvesCount },
+    { href: '/shelves', label: t('nav.shelves'), value: (Number(userStats.shelvesCount) || 0) + (Number(userStats.smartShelvesCount) || 0) },
     { href: '/library/bookmarks', label: t('profile.readerBookmarks'), value: userStats.readerBookmarksCount },
     { href: '/library/notes', label: t('profile.readerNotes'), value: userStats.readerAnnotationsCount }
   ];
