@@ -4,7 +4,9 @@
  * логин и пароль — из профиля (Настройки → KOReader).
  * Протокол: https://github.com/koreader/koreader-sync-server
  */
-import { verifyKosyncCredentials, saveKosyncProgress, getKosyncProgress } from '../kosync.js';
+import { verifyKosyncCredentials, saveKosyncProgress, getKosyncProgress, getKosyncDocumentBookId } from '../kosync.js';
+import { getBookById, isBookRead, addReadBooksIfMissing, recordKosyncReading } from '../inpx.js';
+import { invalidateUserPageCaches } from '../services/cache.js';
 import { logSystemEvent } from '../services/system-events.js';
 
 const DOCUMENT_RE = /^[\w.-]{1,128}$/;
@@ -19,6 +21,29 @@ function kosyncAuth(req, res, next) {
     logSystemEvent('warn', 'auth', 'KOSync auth failed', { username, ip: req.ip || '' });
   }
   return res.status(401).json({ code: 2001, message: 'Unauthorized' });
+}
+
+/**
+ * Progress of a book downloaded through the server → «Читаю» / «Прочитано» (web + Android).
+ * Coordinates stay in kosync_progress: KOReader xpointers do not map to reader v4 anchors.
+ * A low percentage never unmarks «Прочитано» (an old copy on another device could do that).
+ */
+function bridgeKosyncProgress(username, document, percentage) {
+  try {
+    const bookId = getKosyncDocumentBookId(document);
+    if (!bookId || !getBookById(bookId)) return;
+    const pct = (Number(percentage) || 0) * 100;
+    if (pct >= 99) {
+      if (!isBookRead(username, bookId)) addReadBooksIfMissing(username, [bookId]);
+    } else if (pct > 0 && !isBookRead(username, bookId)) {
+      recordKosyncReading(username, bookId);
+    } else {
+      return;
+    }
+    invalidateUserPageCaches(username);
+  } catch (error) {
+    logSystemEvent('warn', 'kosync', 'progress bridge failed', { username, error: String(error?.message || error) });
+  }
 }
 
 /** @param {import('express').Application} app */
@@ -39,6 +64,7 @@ export function registerKosyncRoutes(app) {
       return res.status(403).json({ code: 2004, message: "Field 'document' not provided." });
     }
     const timestamp = saveKosyncProgress(req.kosyncUser, { ...body, document });
+    bridgeKosyncProgress(req.kosyncUser, document, body.percentage);
     res.json({ document, timestamp });
   });
 

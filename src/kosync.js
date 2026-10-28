@@ -84,6 +84,44 @@ export function getKosyncProgress(username, document) {
   `).get(username, document) || null;
 }
 
+/** Книга, которой соответствует документ KOReader (файл скачан через сервер), или ''. */
+export function getKosyncDocumentBookId(document) {
+  const row = db.prepare('SELECT book_id AS bookId FROM kosync_documents WHERE document = ?').get(String(document || ''));
+  return row?.bookId ? String(row.bookId) : '';
+}
+
+/**
+ * Прогресс KOReader по книгам пользователя → Map(bookId → percent 0–100), максимум по документам.
+ * Без `bookIds` — все книги с прогрессом (у одного пользователя их немного).
+ */
+export function getKosyncPercentMap(username, bookIds = null) {
+  const out = new Map();
+  const u = String(username || '').trim();
+  if (!u) return out;
+  const put = (row) => {
+    const pct = Math.round((Number(row.pct) || 0) * 1000) / 10;
+    if (pct > 0) out.set(String(row.id), pct);
+  };
+  if (!bookIds) {
+    for (const row of db.prepare(`
+      SELECT d.book_id AS id, MAX(p.percentage) AS pct
+      FROM kosync_progress p JOIN kosync_documents d ON d.document = p.document
+      WHERE p.username = ? GROUP BY d.book_id
+    `).all(u)) put(row);
+    return out;
+  }
+  const ids = [...new Set(bookIds.map((id) => String(id || '')).filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    for (const row of db.prepare(`
+      SELECT d.book_id AS id, MAX(p.percentage) AS pct
+      FROM kosync_progress p JOIN kosync_documents d ON d.document = p.document
+      WHERE p.username = ? AND d.book_id IN (${part.map(() => '?').join(',')}) GROUP BY d.book_id
+    `).all(u, ...part)) put(row);
+  }
+  return out;
+}
+
 /** Запомнить, что файл с таким содержимым — это книга bookId (вызывать при выдаче файла пользователю). */
 export function rememberKosyncDocument(bookId, buffer) {
   try {

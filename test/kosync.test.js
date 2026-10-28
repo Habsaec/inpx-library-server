@@ -152,3 +152,62 @@ test('profile settings render the KOReader sync block', async () => {
   const on = renderProfileSettings({ user: { username: USER, role: 'user' }, stats, indexStatus: {}, userStats: {}, kosyncUrl: 'http://lib.local/kosync', kosyncHasPassword: true });
   assert.ok(on.includes('action="/profile/kosync-password/revoke"'));
 });
+
+test('KOSync progress of a downloaded book reaches «Читаю», the progress maps and «Прочитано»', async () => {
+  const { getInProgressBookMap, getLibraryView, isBookRead, getReadingHistory } = await import('../src/inpx.js');
+  const SOURCE_ID = 9311;
+  const BOOK = 'kosync-bridge-book';
+  db.exec(`DELETE FROM books WHERE id = '${BOOK}'`);
+  db.exec(`DELETE FROM sources WHERE id = ${SOURCE_ID}`);
+  db.prepare(`INSERT INTO sources (id, name, type, path, enabled) VALUES (${SOURCE_ID}, 'kosync-bridge', 'folder', '/', 1)`).run();
+  db.prepare(`
+    INSERT INTO books (
+      id, title, authors, genres, series, series_no, title_sort, author_sort,
+      series_sort, series_index, title_search, authors_search, series_search,
+      genres_search, keywords_search, file_name, archive_name, size, lib_id, deleted,
+      ext, date, lang, keywords, lib_rate, source_id, imported_at
+    ) VALUES (?, 'Мост', 'Test Author', '', '', '', 'мост', 'test author',
+      '', 0, 'мост', 'test author', '', '', '', 'most', '', 1, 'most', 0,
+      'fb2', '', 'ru', '', 0, ${SOURCE_ID}, datetime('now'))
+  `).run(BOOK);
+  for (const table of ['reading_history', 'read_books', 'reading_positions', 'kosync_progress']) {
+    db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(USER);
+  }
+
+  const password = createKosyncPassword(USER);
+  const headers = { 'x-auth-user': USER, 'x-auth-key': md5(password), 'Content-Type': 'application/json' };
+  const push = (document, percentage) => fetch(`${baseUrl}/kosync/syncs/progress`, {
+    method: 'PUT', headers, body: JSON.stringify({ document, progress: '/body/p[1].0', percentage, device: 'Boox' })
+  });
+
+  // Unknown document (file not downloaded through the server): stored, no bridge.
+  assert.equal((await push(md5('unknown file'), 0.5)).status, 200);
+  assert.equal(getReadingHistory(USER).length, 0);
+
+  const buf = crypto.randomBytes(5000);
+  rememberKosyncDocument(BOOK, buf);
+  const doc = partialMd5(buf);
+
+  assert.equal((await push(doc, 0.375)).status, 200);
+  const history = getReadingHistory(USER);
+  assert.deepEqual(history.map((b) => b.id), [BOOK], 'book is in «Читаю»');
+  assert.equal(history[0].readProgress, 37.5);
+  assert.equal(getInProgressBookMap(USER)[BOOK], 37.5);
+  const cont = getLibraryView('continue', { username: USER });
+  assert.equal(cont.items.find((b) => b.id === BOOK)?.readProgress, 37.5);
+
+  // Page turns do not bump the open counter.
+  await push(doc, 0.4);
+  assert.equal(db.prepare('SELECT open_count AS n FROM reading_history WHERE username = ? AND book_id = ?').get(USER, BOOK).n, 1);
+
+  assert.equal((await push(doc, 0.995)).status, 200);
+  assert.equal(isBookRead(USER, BOOK), true, '99% marks read');
+  assert.equal(getInProgressBookMap(USER)[BOOK], undefined);
+  assert.equal(getReadingHistory(USER).length, 0, 'read books leave «Читаю»');
+
+  await push(doc, 0.1);
+  assert.equal(isBookRead(USER, BOOK), true, 'a low percentage never unmarks read');
+
+  db.exec(`DELETE FROM books WHERE id = '${BOOK}'`);
+  db.exec(`DELETE FROM sources WHERE id = ${SOURCE_ID}`);
+});

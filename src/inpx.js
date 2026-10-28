@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeCachedAnnotation } from './html-sanitize.js';
+import { getKosyncPercentMap } from './kosync.js';
 import unzipper from 'unzipper';
 import iconv from 'iconv-lite';
 import {
@@ -7918,6 +7919,7 @@ export function getLibraryView(view = 'recent', {
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `).all(normalizedUsername, normalizedUsername, pageSize, offset).map(mapBookListRow);
+    withKosyncReadProgress(normalizedUsername, items);
     attachSeriesListsToBooks(items);
     attachCachedAnnotationsToBooks(items);
     return { total, items };
@@ -8456,7 +8458,7 @@ export function getReadingHistory(username, limit = 20, { excludeRead = true } =
       ORDER BY rh.last_opened_at DESC
       LIMIT ?
     `);
-    return _stmtGetReadHistory.all(username, username, limit);
+    return withKosyncReadProgress(username, _stmtGetReadHistory.all(username, username, limit));
   }
   _stmtGetReadHistoryActive ??= db.prepare(`
     SELECT b.id, b.title, b.authors, b.ext, b.series, b.series_no AS seriesNo,
@@ -8474,7 +8476,43 @@ export function getReadingHistory(username, limit = 20, { excludeRead = true } =
     ORDER BY rh.last_opened_at DESC
     LIMIT ?
   `);
-  return _stmtGetReadHistoryActive.all(username, username, limit);
+  return withKosyncReadProgress(username, _stmtGetReadHistoryActive.all(username, username, limit));
+}
+
+/** `readProgress` of list rows = max(own reader, KOReader via KOSync). Mutates and returns `items`. */
+function withKosyncReadProgress(username, items) {
+  if (!username || !items?.length) return items;
+  const kosync = getKosyncPercentMap(username, items.map((item) => item.id));
+  if (!kosync.size) return items;
+  for (const item of items) {
+    const pct = kosync.get(String(item.id));
+    if (pct > (Number(item.readProgress) || 0)) item.readProgress = pct;
+  }
+  return items;
+}
+
+/**
+ * KOReader pushed progress for a book downloaded through the server (KOSync):
+ * the book goes to «Читаю» like an opened one. `last_opened_at` moves at most every
+ * 5 minutes (KOReader pushes on page turns), `open_count` is not bumped.
+ * @returns {boolean} the history row changed
+ */
+let _stmtKosyncHistory = null;
+export function recordKosyncReading(username, bookId) {
+  _stmtKosyncHistory ??= db.prepare(`
+    INSERT INTO reading_history(username, book_id, last_opened_at, open_count)
+    VALUES(?, ?, CURRENT_TIMESTAMP, 1)
+    ON CONFLICT(username, book_id) DO UPDATE SET last_opened_at = CURRENT_TIMESTAMP
+    WHERE julianday(reading_history.last_opened_at) IS NULL
+       OR julianday(reading_history.last_opened_at) < julianday('now', '-5 minutes')
+  `);
+  db.prepare('INSERT OR IGNORE INTO users(username) VALUES(?)').run(username);
+  const changed = _stmtKosyncHistory.run(username, bookId).changes > 0;
+  if (changed) {
+    removeWantToRead(username, bookId);
+    touchUserReaderRevision(username, 'reading_history_rev');
+  }
+  return changed;
 }
 
 export function toggleFavoriteAuthor(username, authorName) {
@@ -8946,6 +8984,11 @@ export function getInProgressBookMap(username, limit = 1000) {
   `);
   const out = {};
   for (const row of _stmtInProgress.all(u, limit)) out[row.id] = Math.round(Number(row.progress) * 10) / 10;
+  // KOReader (KOSync) progress of downloaded books; the larger value wins.
+  for (const [id, pct] of getKosyncPercentMap(u)) {
+    if (pct >= 99 || pct <= (out[id] || 0) || isBookRead(u, id)) continue;
+    out[id] = pct;
+  }
   return out;
 }
 
