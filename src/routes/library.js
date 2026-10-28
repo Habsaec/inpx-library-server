@@ -13,6 +13,7 @@ import {
   getDiskCachedCoverThumb,
   setDiskCachedCoverThumb,
   invalidateCoverThumbCaches,
+  coverThumbCacheKey,
   getCoverWidth,
   getCoverHeight
 } from '../services/cover.js';
@@ -1250,9 +1251,13 @@ export function registerLibraryRoutes(app, deps) {
   app.get('/api/books/:id/cover-thumb', requireBrowseOrOpds, async (req, res, next) => {
     try {
       const bookId = req.params.id;
+      // Additive `hd=1`: twice the configured size, for E-Ink readers (~300 ppi) where
+      // the normal thumb is upscaled and looks soft. Cached apart from the normal one.
+      const hd = req.query.hd === '1';
+      const cacheKey = coverThumbCacheKey(bookId, hd);
 
-      // 1. Check in-memory cache FIRST (cheapest)
-      const cached = getCachedCoverThumb(bookId);
+      // 1. Check in-memory cache FIRST (cheapest). HD thumbs skip it: ~4× larger, disk is enough.
+      const cached = hd ? null : getCachedCoverThumb(cacheKey);
       if (cached?.data?.length) {
         res.set('Cache-Control', 'private, max-age=86400');
         res.type(cached.contentType || 'image/webp');
@@ -1260,9 +1265,9 @@ export function registerLibraryRoutes(app, deps) {
       }
 
       // 2. Check disk cache BEFORE expensive cover resolution
-      const diskCached = await getDiskCachedCoverThumb(bookId);
+      const diskCached = await getDiskCachedCoverThumb(cacheKey);
       if (diskCached?.data?.length) {
-        setCachedCoverThumb(bookId, diskCached.contentType, diskCached.data);
+        if (!hd) setCachedCoverThumb(cacheKey, diskCached.contentType, diskCached.data);
         res.set('Cache-Control', 'private, max-age=86400');
         res.type(diskCached.contentType || 'image/webp');
         return res.send(diskCached.data);
@@ -1297,12 +1302,12 @@ export function registerLibraryRoutes(app, deps) {
           gotSlot = true;
           outBuf = await sharp(coverBuffer, { failOn: 'none' })
             .resize({
-              width: getCoverWidth(),
-              height: getCoverHeight(),
+              width: hd ? Math.min(1200, getCoverWidth() * 2) : getCoverWidth(),
+              height: hd ? Math.min(1600, getCoverHeight() * 2) : getCoverHeight(),
               fit: 'inside',
               withoutEnlargement: true
             })
-            .webp({ quality: 62, effort: 2 })
+            .webp({ quality: hd ? 80 : 62, effort: hd ? 4 : 2 })
             .toBuffer();
         } catch {
           outType = coverMime;
@@ -1316,8 +1321,8 @@ export function registerLibraryRoutes(app, deps) {
         outBuf = coverBuffer;
       }
 
-      setCachedCoverThumb(book.id, outType, outBuf);
-      setDiskCachedCoverThumb(book.id, outType, outBuf);
+      if (!hd) setCachedCoverThumb(book.id, outType, outBuf);
+      setDiskCachedCoverThumb(coverThumbCacheKey(book.id, hd), outType, outBuf);
       res.set('Cache-Control', 'private, max-age=86400');
       res.type(outType);
       return res.send(outBuf);

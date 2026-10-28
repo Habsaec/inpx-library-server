@@ -190,14 +190,22 @@ export function setDiskCachedCoverThumb(bookId, contentType, data) {
   }
 }
 
+/** Cache key of the double-size thumb (`cover-thumb?hd=1`, E-Ink / high-DPI clients). */
+export function coverThumbCacheKey(bookId, hd = false) {
+  const key = String(bookId || '').trim();
+  return hd && key ? `${key}#hd` : key;
+}
+
 export function invalidateCoverThumbCaches(bookId) {
   const key = String(bookId || '').trim();
   if (!key) return;
-  coverThumbCache.delete(key);
-  try {
-    ensureCoverThumbDiskDir();
-    void fs.promises.unlink(coverThumbDiskPath(bookId)).catch(() => {});
-  } catch {
-    /* ignore */
+  for (const k of [key, coverThumbCacheKey(key, true)]) {
+    coverThumbCache.delete(k);
+    try {
+      ensureCoverThumbDiskDir();
+      void fs.promises.unlink(coverThumbDiskPath(k)).catch(() => {});
+    } catch {
+      /* ignore */
+    }
   }
 }
