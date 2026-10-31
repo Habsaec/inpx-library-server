@@ -25,6 +25,7 @@ import {
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
 import { encodeBookRef } from '../utils/book-ref.js';
 import { getUserHideRead } from '../db.js';
+import { normalizeHomeLayout, isHomeSectionVisible, WEB_HOME_SECTION_IDS } from '../home-layout.js';
 import { READER_ICONS, READER_THEMES, READER_EINK_UA_RE, readerQuickTile, readerSettingsRow } from './reader-chrome.js';
 
 /** «Скрыть прочитанное»: account switch (also the Android filter sheet), toggled via POST /api/preferences. */
@@ -38,8 +39,14 @@ function renderHideReadToggle(user) {
   return `<button type="button" class="button view-toggle hide-read-toggle${on ? ' is-active' : ''}" data-hide-read-toggle="${on ? '1' : '0'}" aria-pressed="${on ? 'true' : 'false'}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</button>`;
 }
 
-export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false, homeShelves = [] }) {
+export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false, homeShelves = [], followingShelf = null, homeLayout = null }) {
   const isAuthenticated = Boolean(user);
+  // Profile → view «Главная страница»: order and hidden blocks (guests get the default layout).
+  const layout = isAuthenticated && homeLayout ? homeLayout : normalizeHomeLayout('');
+  const shown = (id) => isHomeSectionVisible(layout, id);
+  const shelfOrder = layout.order.filter((id) => id !== 'continue' && WEB_HOME_SECTION_IDS.includes(id) && shown(id));
+  // The grid/list toggle sits on the first shelf, whichever it is now.
+  const toggleFor = (id) => (shelfOrder[0] === id ? viewToggle : '');
   const loginHint = tp('home.loginHint', { login: `<a href="/login">${escapeHtml(t('nav.login'))}</a>` });
   const welcomeQuotePool = getHomeWelcomeQuotePool(getLocale());
   const welcomeQuote = pickHomeWelcomeQuote(getLocale());
@@ -60,20 +67,18 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     : renderViewToggle({ href: listView ? '/?view=grid' : '/?view=list', isListView: listView });
   const recommendationsShelf = isAuthenticated
     ? (recommendations.length
-        ? renderHomeShelf({ title: t('home.shelfRecommended'), href: '/library/recommended', items: recommendations, type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView })
+        ? renderHomeShelf({ title: t('home.shelfRecommended'), href: '/library/recommended', items: recommendations, type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView, extraActions: toggleFor('recommended') })
         : `
     <section class="library-shelf" data-home-recommendations data-home-view="${homeViewAttr}" data-loaded="0">
       <div class="section-title">
         <h2>${escapeHtml(t('home.shelfRecommended'))}</h2>
-        <div class="actions"><a class="shelf-link" href="/library/recommended">${escapeHtml(t('home.showAll'))}</a></div>
+        <div class="actions">${toggleFor('recommended')}<a class="shelf-link" href="/library/recommended">${escapeHtml(t('home.showAll'))}</a></div>
       </div>
       <div data-home-recommendations-grid>${renderSkeletonGrid(8)}</div>
     </section>`)
     : '';
-  const continueAttr = isAuthenticated && hasContinueData ? ' data-home-continue' : '';
-  const content = `
-    <h1 class="visually-hidden">${escapeHtml(siteTitleForDisplay())}</h1>
-    ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
+  const continueAttr = isAuthenticated && hasContinueData && shown('continue') ? ' data-home-continue' : '';
+  const heroHtml = `
     <section class="welcome-hero-banner home-reveal"${continueAttr}>
       <div class="welcome-hero-cover">
       <a class="welcome-hero-mark cover"${welcomeQuoteHref ? ` href="${escapeHtml(welcomeQuoteHref)}"` : ''} tabindex="-1" aria-hidden="true">
@@ -93,12 +98,28 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
         <cite class="welcome-hero-author">${renderWelcomeQuoteAuthor(welcomeQuote.author)}</cite>
       </div>
       <script type="application/json" data-home-quotes>${welcomeQuotesJson}</script>
-    </section>
+    </section>`;
+  const shelfHtml = (shelf, id) => renderHomeShelf({ title: shelf.title, href: escapeHtml(shelf.href), items: shelf.items, type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView, extraActions: toggleFor(id) });
+  const blocks = {
+    novinki: () => renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView, extraActions: toggleFor('novinki') }),
+    recommended: () => recommendationsShelf,
+    following: () => (isAuthenticated && followingShelf ? shelfHtml(followingShelf, 'following') : ''),
+    shelves: () => (isAuthenticated ? homeShelves.map((shelf, i) => shelfHtml(shelf, i === 0 ? 'shelves' : '')).join('') : '')
+  };
+  /* The banner stays on top while «Продолжить чтение» is hidden (quote only) or first. */
+  const continuePos = shown('continue') ? layout.order.filter((id) => WEB_HOME_SECTION_IDS.includes(id) && shown(id)).indexOf('continue') : 0;
+  const shelvesBeforeHero = shelfOrder.slice(0, continuePos);
+  const shelvesAfterHero = shelfOrder.slice(continuePos);
+  const renderBlocks = (ids) => ids.map((id) => blocks[id]()).join('');
+  const content = `
+    <h1 class="visually-hidden">${escapeHtml(siteTitleForDisplay())}</h1>
+    ${subtitleText ? `<header class="home-page-intro"><p class="home-page-subtitle">${escapeHtml(subtitleText)}</p></header>` : ''}
+    ${shelvesBeforeHero.length ? '' : heroHtml}
     ${!isAuthenticated ? `<div class="home-inline-note">${loginHint}</div>` : ''}
     ${homeBatch ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}` : ''}
-    ${renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView, extraActions: viewToggle })}
-    ${recommendationsShelf}
-    ${isAuthenticated ? homeShelves.map((shelf) => renderHomeShelf({ title: shelf.title, href: escapeHtml(shelf.href), items: shelf.items, type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView })).join('') : ''}
+    ${renderBlocks(shelvesBeforeHero)}
+    ${shelvesBeforeHero.length ? heroHtml : ''}
+    ${renderBlocks(shelvesAfterHero)}
     ${homeBatch ? '</div>' : ''}
     `;
   return pageShell({ title: t('home.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home') }], currentPath: '/', csrfToken, readBookIds });
@@ -2562,6 +2583,37 @@ function renderProfileSettingsSubnav(active = 'account') {
     </nav>`;
 }
 
+/** Profile → view «Главная страница»: show / hide and ▲▼ per web home block (app-only `recent` kept as is). */
+function renderHomeLayoutForm(layout, csrfToken) {
+  const ids = layout.order.filter((id) => WEB_HOME_SECTION_IDS.includes(id));
+  const rows = ids.map((id, i) => `
+    <li class="home-layout-row">
+      <label class="admin-checkbox-label">
+        <input type="checkbox" name="show" value="${escapeHtml(id)}"${isHomeSectionVisible(layout, id) ? ' checked' : ''}>
+        ${escapeHtml(t(`profile.homeLayout.section.${id}`))}
+      </label>
+      <span class="home-layout-move">
+        <button type="submit" name="move" value="${escapeHtml(id)}:up" class="button-secondary" aria-label="${escapeHtml(`${t(`profile.homeLayout.section.${id}`)}: ${t('profile.homeLayout.up')}`)}"${i === 0 ? ' disabled' : ''}>▲</button>
+        <button type="submit" name="move" value="${escapeHtml(id)}:down" class="button-secondary" aria-label="${escapeHtml(`${t(`profile.homeLayout.section.${id}`)}: ${t('profile.homeLayout.down')}`)}"${i === ids.length - 1 ? ' disabled' : ''}>▼</button>
+      </span>
+    </li>`).join('');
+  return `
+      <div class="table-row table-row-stack profile-form-row" id="home-layout">
+        <div>
+          <strong>${escapeHtml(t('profile.homeLayout'))}</strong>
+          <p class="muted" style="margin:4px 0 8px;font-size:12px;">${escapeHtml(t('profile.homeLayout.hint'))}</p>
+          <form method="post" action="/profile/home-layout" class="vertical-form">
+            ${csrfHiddenField(csrfToken)}
+            <ul class="home-layout-list">${rows}</ul>
+            <div class="actions">
+              <button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button>
+              <button type="submit" name="reset" value="1" class="button-secondary">${escapeHtml(t('profile.homeLayout.reset'))}</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+}
+
 export function renderProfileSettings({
   user, stats, indexStatus, userStats,
   ereaderEmail = '', accountEmail = '', telegramId = '', telegramLinkedAt = '',
@@ -2571,6 +2623,7 @@ export function renderProfileSettings({
   contentLangOptions = [], contentLangs = [],
   kosyncUrl = '', kosyncHasPassword = false,
   hideRead = false, downloadFormat = '', downloadFormatOptions = [], telegramDigest = false,
+  homeLayout = null,
   section = 'account'
 } = {}) {
   const fmtDate = (d) => formatLocaleDateLong(d);
@@ -2721,6 +2774,7 @@ export function renderProfileSettings({
           </form>
         </div>
       </div>
+      ${renderHomeLayoutForm(homeLayout || normalizeHomeLayout(''), csrfToken)}
       <div class="table-row table-row-stack profile-form-row">
         <div>
           <strong>${escapeHtml(t('profile.contentLangs'))}</strong>

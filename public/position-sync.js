@@ -540,6 +540,30 @@ export function savedFraction(saved) {
   return 0;
 }
 
+/**
+ * A position saved while reading the other format of the same book: the Android app may keep a
+ * server-converted EPUB of an FB2 («Формат скачивания»). FB2 coordinates carry `fb2Href` and no
+ * CFI, EPUB ones an `epubcfi(…)`; their CFI, section / offset anchor and page mean nothing in the
+ * other format (Foliate failed on `goTo('0#2')` in an EPUB), so only the book-wide fraction is kept.
+ */
+export function positionForBookFormat(saved, isFb2Book) {
+  if (!saved || typeof saved !== 'object') return saved;
+  const hasCfi = /^epubcfi\(/i.test(String(saved.position || '').trim());
+  const hasFb2Href = Boolean(String(saved.fb2Href || '').trim());
+  const foreign = isFb2Book ? hasCfi && !hasFb2Href : hasFb2Href && !hasCfi;
+  if (!foreign) return saved;
+  return {
+    ...saved,
+    position: '',
+    fb2Href: null,
+    sectionIndex: null,
+    textOffset: null,
+    textQuote: '',
+    textSectionLength: null,
+    paginatorPage: null,
+  };
+}
+
 /** Map bootstrap / offline reader store to merge-input shape for cross-device prompt. */
 export function buildMergeInputFromOfflineStore(store) {
   const localFrac = savedFraction(store);

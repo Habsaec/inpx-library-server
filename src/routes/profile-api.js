@@ -10,13 +10,15 @@ import {
 import { getReadingHistory } from '../inpx.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { invalidateUserPageCaches } from '../services/cache.js';
+import { getUserHomeLayout, setUserHomeLayout } from '../home-layout.js';
 
 /** Per-account switches shared by the web UI and the Android app. */
 export function readUserPreferences(username) {
   return {
     hideRead: getUserHideRead(username),
     downloadFormat: getUserDownloadFormat(username),
-    telegramDigest: getUserTelegramDigest(username)
+    telegramDigest: getUserTelegramDigest(username),
+    homeLayout: getUserHomeLayout(username)
   };
 }
 
@@ -43,7 +45,7 @@ export function registerProfileApiRoutes(app) {
     });
   });
 
-  /* { hideRead, downloadFormat, telegramDigest } — POST takes any subset. */
+  /* { hideRead, downloadFormat, telegramDigest, homeLayout } — POST takes any subset. */
   app.get('/api/preferences', requireApiAuth, (req, res) => {
     res.json(readUserPreferences(req.user.username));
   });
@@ -56,6 +58,7 @@ export function registerProfileApiRoutes(app) {
       invalidateUserPageCaches(username);
     }
     if (body.downloadFormat !== undefined) setUserDownloadFormat(username, body.downloadFormat);
+    if (body.homeLayout !== undefined) setUserHomeLayout(username, body.homeLayout);
     if (body.telegramDigest !== undefined) {
       setUserTelegramDigest(username, body.telegramDigest === true || body.telegramDigest === 1 || body.telegramDigest === '1' || body.telegramDigest === 'true');
     }

@@ -106,6 +106,7 @@ import {
 } from '../flibusta-sidecar.js';
 import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup } from '../genre-map.js';
 import { clearCardHtmlCache } from '../templates/shared.js';
+import { getUserHomeLayout, isHomeSectionVisible } from '../home-layout.js';
 
 // --- Library routes ---
 // "First Last" display names (home quotes) vs "Last First Middle" in the index.
@@ -364,9 +365,13 @@ export function registerLibraryRoutes(app, deps) {
     const canUseAnonymousHomeHtmlCache = !user && !listView && !indexStatus?.active && !indexStatus?.error;
     const csrfToken = req.csrfToken || '';
     const homeSubtitle = getSetting('home_subtitle') || '';
-    const homeShelves = username ? getPinnedHomeShelves(username, DISPLAY_COUNT) : [];
-    // «Новое у любимых» as the first shelf (web only; /api/home/shelves keeps its two kinds).
-    if (username) {
+    // Profile «Главная страница»: hidden blocks are not even computed.
+    const homeLayout = username ? getUserHomeLayout(username) : null;
+    const homeShown = (id) => !homeLayout || isHomeSectionVisible(homeLayout, id);
+    const homeShelves = username && homeShown('shelves') ? getPinnedHomeShelves(username, DISPLAY_COUNT) : [];
+    let followingShelf = null;
+    // «Новое у любимых» (web only; /api/home/shelves keeps its two kinds).
+    if (username && homeShown('following')) {
       try {
         const following = getCachedPageData(
           `library:following:${username}:home:${contentLangCacheKey(contentLangs)}:${DISPLAY_COUNT}`,
@@ -374,7 +379,7 @@ export function registerLibraryRoutes(app, deps) {
           PAGE_CACHE_TTL_MS
         );
         if (following.items.length) {
-          homeShelves.unshift({ id: 'following', kind: 'following', title: t('home.followingShelf'), href: '/library/following', items: following.items });
+          followingShelf = { id: 'following', kind: 'following', title: t('home.followingShelf'), href: '/library/following', items: following.items };
         }
       } catch (err) {
         console.warn('[home] following shelf failed:', err.message);
@@ -382,7 +387,7 @@ export function registerLibraryRoutes(app, deps) {
     }
     const html = canUseAnonymousHomeHtmlCache
       ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken: '', hasContinueData: false, listView: false }), 1000 * 60 * 2)
-      : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData, readBookIds, listView, homeShelves });
+      : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData, readBookIds, listView, homeShelves, followingShelf, homeLayout });
     res.send(html);
     // Фоновый прогрев per-user кэшей для последующих переходов
     if (username) {

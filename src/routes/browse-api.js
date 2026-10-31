@@ -360,6 +360,7 @@ export function registerBrowseApiRoutes(app) {
       date: book.date,
       libRate: book.libRate,
       size: book.size,
+      downloadFormats: book.downloadFormats || [],
     });
   });
 }

@@ -3696,6 +3696,38 @@ html[data-theme="light"] .cover-fallback-author {
   font-size: 0.875rem;
 }
 
+/* Profile → view «Главная страница»: one row per home block. */
+.home-layout-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-width: 420px;
+}
+
+.home-layout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-layout-row:last-child {
+  border-bottom: 0;
+}
+
+.home-layout-move {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.home-layout-move button {
+  min-width: 40px;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
 .card-series {
   font-size: 0.6875rem;
   color: var(--muted);

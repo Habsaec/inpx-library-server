@@ -312,6 +312,10 @@ function ensureUsersSchema() {
     db.exec(`ALTER TABLE users ADD COLUMN download_format TEXT NOT NULL DEFAULT ''`);
   }
 
+  if (!columns.some((column) => column.name === 'home_layout')) {
+    db.exec(`ALTER TABLE users ADD COLUMN home_layout TEXT NOT NULL DEFAULT ''`);
+  }
+
   if (!columns.some((column) => column.name === 'telegram_digest')) {
     db.exec(`ALTER TABLE users ADD COLUMN telegram_digest INTEGER NOT NULL DEFAULT 0`);
   }
@@ -4920,6 +4924,25 @@ let _stmtSetDownloadFormat = null;
 export function setUserDownloadFormat(username, format) {
   _stmtSetDownloadFormat ??= db.prepare('UPDATE users SET download_format = ? WHERE username = ?');
   _stmtSetDownloadFormat.run(String(format || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12), String(username || ''));
+}
+
+/** Home page layout JSON (`src/home-layout.js`); '' = default order, nothing hidden. */
+let _stmtGetHomeLayout = null;
+export function getUserHomeLayoutRaw(username) {
+  const name = String(username || '').trim();
+  if (!name) return '';
+  try {
+    _stmtGetHomeLayout ??= db.prepare('SELECT home_layout AS l FROM users WHERE username = ?');
+    return String(_stmtGetHomeLayout.get(name)?.l || '');
+  } catch {
+    return '';
+  }
+}
+
+let _stmtSetHomeLayout = null;
+export function setUserHomeLayoutRaw(username, json) {
+  _stmtSetHomeLayout ??= db.prepare('UPDATE users SET home_layout = ? WHERE username = ?');
+  _stmtSetHomeLayout.run(String(json || '').slice(0, 2000), String(username || ''));
 }
 
 /** Weekly Telegram digest of «Новое у любимых». */

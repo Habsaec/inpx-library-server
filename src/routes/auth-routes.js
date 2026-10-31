@@ -39,6 +39,7 @@ import { isOidcConfigured } from '../services/oidc.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolvePublicBaseUrl, sendPasswordResetEmail } from '../services/password-reset.js';
 import { createKosyncPassword, hasKosyncPassword, revokeKosyncPassword } from '../kosync.js';
+import { getUserHomeLayout, setUserHomeLayout, moveHomeSection, WEB_HOME_SECTION_IDS } from '../home-layout.js';
 
 /** Only the current catalog URL, without a view override, so the saved preference applies. */
 function safeCatalogViewReturn(value) {
@@ -155,6 +156,7 @@ export function registerAuthRoutes(app, deps) {
         .filter((format) => isDownloadFormatEnabled(format))
         .map((format) => [format, FORMAT_LABELS[format] || format.toUpperCase()]),
       telegramDigest: getUserTelegramDigest(user.username),
+      homeLayout: getUserHomeLayout(user.username),
       flash,
       csrfToken,
       ...extra
@@ -490,6 +492,30 @@ export function registerAuthRoutes(app, deps) {
     const next = String(req.body?.view || '').toLowerCase() === 'list' ? 'list' : 'grid';
     setUserBrowseViewPrefs(req.user.username, { homeView: prefs.homeView, catalogView: next });
     res.redirect(safeCatalogViewReturn(req.body?.next));
+  });
+
+  app.post('/profile/home-layout', requireWebAuth, (req, res) => {
+    try {
+      const username = req.user.username;
+      if (lastFormValue(req.body.reset) === '1') {
+        setUserHomeLayout(username, '');
+      } else {
+        const current = getUserHomeLayout(username);
+        const show = new Set([].concat(req.body.show || []).map((v) => String(v)));
+        // Web checkboxes rule the web blocks; the app-only «recent» keeps its own switch.
+        const hidden = current.hidden.filter((id) => !WEB_HOME_SECTION_IDS.includes(id))
+          .concat(WEB_HOME_SECTION_IDS.filter((id) => !show.has(id)));
+        let next = { order: current.order, hidden };
+        const [moveId, direction] = lastFormValue(req.body.move).split(':');
+        if (moveId && (direction === 'up' || direction === 'down')) {
+          next = moveHomeSection(next, moveId, direction, WEB_HOME_SECTION_IDS);
+        }
+        setUserHomeLayout(username, next);
+      }
+      res.send(renderSettingsPage(req, t('profile.homeLayout.saved'), req.csrfToken || '', 'view'));
+    } catch (error) {
+      res.status(500).send(renderSettingsPage(req, translateKnownErrorMessage(error.message), req.csrfToken || '', 'view'));
+    }
   });
 
   app.post('/profile/view', requireWebAuth, (req, res) => {

@@ -10,6 +10,7 @@ import {
   savedFraction as sharedSavedFraction,
   IDLE_MS,
   isUserPositionSaveReason,
+  positionForBookFormat,
 } from '/position-sync.js';
 import {
   normalizeFraction,
@@ -1811,15 +1812,17 @@ import {
   }
 
   /** Стандартный Foliate: view.init({ lastLocation }) с CFI, href или fraction. */
-  async function restoreReadingPosition(saved, urlPos) {
+  async function restoreReadingPosition(rawSaved, urlPos) {
     if (urlPos) {
       try { await view.goTo(urlPos); } catch { await view.renderer.next(); }
       return true;
     }
-    if (!saved) {
+    if (!rawSaved) {
       await view.renderer.next();
       return true;
     }
+    // Saved in the app's EPUB copy of this FB2 (or vice versa): only the fraction applies.
+    const saved = positionForBookFormat(rawSaved, isFb2Active());
     const cfi = String(saved.position || '').trim();
     const fb2Href = String(saved.fb2Href || '').trim();
     const frac = savedFraction(saved);
