@@ -39,7 +39,7 @@ function renderHideReadToggle(user) {
   return `<button type="button" class="button view-toggle hide-read-toggle${on ? ' is-active' : ''}" data-hide-read-toggle="${on ? '1' : '0'}" aria-pressed="${on ? 'true' : 'false'}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</button>`;
 }
 
-export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false, homeShelves = [], followingShelf = null, homeLayout = null }) {
+export function renderHome({ user, stats, indexStatus, history = [], favoriteAuthors = [], favoriteSeries = [], sections = {}, recommendations = [], homeSubtitle = '', csrfToken = '', readBookIds = null, hasContinueData = false, listView = false, homeShelves = [], homeCollections = [], followingShelf = null, homeLayout = null }) {
   const isAuthenticated = Boolean(user);
   // Profile → view «Главная страница»: order and hidden blocks (guests get the default layout).
   const layout = isAuthenticated && homeLayout ? homeLayout : normalizeHomeLayout('');
@@ -104,7 +104,8 @@ export function renderHome({ user, stats, indexStatus, history = [], favoriteAut
     novinki: () => renderHomeShelf({ title: t('home.shelfNew'), href: '/library/recent', items: sections.newest || [], type: 'books', isAuthenticated, batchSelect: homeBatch, user, readBookIds, listView, extraActions: toggleFor('novinki') }),
     recommended: () => recommendationsShelf,
     following: () => (isAuthenticated && followingShelf ? shelfHtml(followingShelf, 'following') : ''),
-    shelves: () => (isAuthenticated ? homeShelves.map((shelf, i) => shelfHtml(shelf, i === 0 ? 'shelves' : '')).join('') : '')
+    shelves: () => (isAuthenticated ? homeShelves.map((shelf, i) => shelfHtml(shelf, i === 0 ? 'shelves' : '')).join('') : ''),
+    collections: () => (isAuthenticated ? homeCollections.map((shelf, i) => shelfHtml(shelf, i === 0 ? 'collections' : '')).join('') : '')
   };
   /* The banner stays on top while «Продолжить чтение» is hidden (quote only) or first. */
   const continuePos = shown('continue') ? layout.order.filter((id) => WEB_HOME_SECTION_IDS.includes(id) && shown(id)).indexOf('continue') : 0;
@@ -904,8 +905,12 @@ export function renderBook({
     // Source format only: INPX SIZE matches neither the archive entry nor the delivered
     // file (Flibusta sidecar images are merged back into FB2/EPUB on download).
     book.ext ? escapeHtml(String(book.ext).toUpperCase()) : '',
+    details?.publishYear ? `<span data-publish-year title="${escapeHtml(t('book.publishYearHint'))}">${escapeHtml(String(details.publishYear))}</span>` : '',
+    details?.isbn ? `<span data-publish-isbn>ISBN&nbsp;${escapeHtml(details.isbn)}</span>` : '',
     genreSummaryHtml
   ].filter(Boolean);
+  // Flibusta SSR does not open the archive and old cache rows lack it: app.js asks /publish-info.
+  const publishInfoLazy = !details?.metaResolved && String(book.ext || '').toLowerCase() === 'fb2';
   const parentLibraryHref = primarySeries ? `/facet/series/${encodeURIComponent(primarySeries.name)}${seriesAuthorParam}` : primaryAuthor ? `/facet/authors/${encodeURIComponent(primaryAuthor)}` : '/library/recent';
   const parentLibraryLabel = primarySeries
     ? tp('book.seriesPrefix', { name: primarySeries.displayName || primarySeries.name })
@@ -940,7 +945,7 @@ export function renderBook({
           <h1 class="book-detail-title">${escapeHtml(book.title)}${Number(book.deleted) ? ` <span class="deleted-badge deleted-badge--inline" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>` : ''}</h1>
           ${Number(book.deleted) ? `<p class="muted book-deleted-note">${escapeHtml(t('book.deletedHint'))}</p>` : ''}
           <div class="author">${book.authors ? renderAuthorLinks(book.authorsList, { limit: 3, bookAuthors: book.authors, inlineExpand: true }) : escapeHtml(t('book.authorUnknown'))}</div>
-          ${summaryBits.length ? `<div class="book-detail-summary">${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
+          ${summaryBits.length || publishInfoLazy ? `<div class="book-detail-summary"${publishInfoLazy ? ` data-publish-info-for="${encodeURIComponent(String(book.id))}" data-publish-year-hint="${escapeHtml(t('book.publishYearHint'))}"` : ''}>${summaryBits.join('<span class="book-detail-sep">·</span>')}</div>` : ''}
           ${isAuthenticated ? renderMyRating(book.id, myRating) : ''}
           ${readProgress > 0 && !isRead ? `<div class="book-detail-progress"><div class="read-progress-bar" role="progressbar" aria-valuenow="${Math.round(readProgress)}" aria-valuemin="0" aria-valuemax="100"><div class="read-progress-fill" style="width:${Math.round(readProgress)}%"></div></div><span class="read-progress-label">${escapeHtml(tp('book.progressLabel', { n: Math.round(readProgress) }))}</span></div>` : ''}
           ${
@@ -1680,11 +1685,12 @@ function summarizeSmartShelfQuery(query) {
 }
 
 /** «На главной» as a house icon (lit when pinned), like the app's `ShelfHomeToggle`. */
-function renderShelfHomeForm(action, onHome, csrfToken) {
+function renderShelfHomeForm(action, onHome, csrfToken, next = '') {
   const label = t(onHome ? 'shelves.home.remove' : 'shelves.home.add');
   return `
     <form method="post" action="${escapeHtml(action)}" class="admin-inline-form">
       ${csrfHiddenField(csrfToken)}
+      ${next ? `<input type="hidden" name="next" value="${escapeHtml(next)}">` : ''}
       <input type="hidden" name="on" value="${onHome ? '0' : '1'}">
       <button type="submit" class="shelf-home-toggle${onHome ? ' is-active' : ''}" aria-pressed="${onHome ? 'true' : 'false'}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="${onHome ? '2.4' : '1.75'}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
     </form>`;
@@ -1761,6 +1767,107 @@ export function renderShelves({ shelves = [], smartShelves = [], shelfOrder = []
       ` : renderEmptyState({ title: t('shelves.emptyTitle'), text: t('shelves.emptyText') })}
     </section>`;
   return pageShell({ title: t('shelves.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('shelves.title') }], currentPath: '/shelves', csrfToken });
+}
+
+function collectionFoundLine(collection) {
+  return collection.matching
+    ? t('collections.matching')
+    : tp('collections.foundOf', { found: formatLocaleInt(collection.found), total: formatLocaleInt(collection.total) });
+}
+
+/** «Подборки» (src/collections.js): the same rows as «Мои полки», read-only. */
+export function renderCollections({ collections = [], user, stats, indexStatus, csrfToken = '' }) {
+  const sortable = Boolean(user) && collections.length > 1;
+  const rows = collections.map((c) => `
+            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-href="/collections/${encodeURIComponent(c.slug)}" data-sort-key="${escapeHtml(c.slug)}">
+              ${sortable ? renderSortHandle(c.title) : ''}
+              <div class="account-list-row-main shelf-row-info">
+                <strong><a href="/collections/${encodeURIComponent(c.slug)}">${escapeHtml(c.title)}</a></strong>
+                ${c.description ? `<br><span class="muted">${escapeHtml(c.description)}</span>` : ''}
+                <br><span class="muted">${escapeHtml(collectionFoundLine(c))}</span>
+                ${c.previewBookIds.length ? `
+                  <div class="shelf-covers-preview">
+                    ${c.previewBookIds.map((bookId) => `<img class="shelf-cover-thumb" src="${apiBookPath(bookId, 'cover')}" alt="" loading="lazy" onerror="this.style.display='none'">`).join('')}
+                  </div>` : ''}
+              </div>
+              ${user ? `<div class="shelf-row-actions">${renderShelfHomeForm(`/collections/${encodeURIComponent(c.slug)}/home`, c.onHome, csrfToken, '/collections')}</div>` : ''}
+            </div>`).join('');
+  const content = `
+    <section class="page-intro page-intro-slim">
+      <div class="page-intro-copy">
+        <h1>${escapeHtml(t('collections.title'))}</h1>
+        <p>${escapeHtml(t('collections.intro'))}</p>
+      </div>
+    </section>
+    <section class="library-shelf">
+      ${sortable ? `<p class="muted shelf-sort-hint">${escapeHtml(t('collections.sortHint'))}</p>` : ''}
+      ${collections.length
+        ? `<div class="table-list entity-list"${sortable ? ' data-sortable data-sort-url="/collections/order"' : ''}>${rows}</div>`
+        : renderEmptyState({ title: t('collections.emptyTitle'), text: t('collections.emptyText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog') })}
+    </section>`;
+  return pageShell({ title: t('collections.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('collections.title') }], currentPath: '/collections', csrfToken });
+}
+
+/**
+ * One collection: found books as any library section (covers or list, batch select), in the list's
+ * order; the entries the library does not have follow as plain rows with a catalog search link.
+ */
+export function renderCollection({ collection, listView = false, user, stats, indexStatus, csrfToken = '', readBookIds = null }) {
+  const base = `/collections/${encodeURIComponent(collection.slug)}`;
+  const books = uniqueBooksById(collection.items.map((i) => i.book).filter(Boolean));
+  const missing = collection.items.filter((i) => !i.book);
+  const showBatch = Boolean(canDownloadInUi(user) && books.length);
+  const booksList = listView
+    ? renderBookFlibustaList(books, { user, batchSelect: showBatch })
+    : renderBookGrid(books, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds });
+  const source = collection.source
+    ? `<p class="muted">${escapeHtml(t('collections.source'))}: ${collection.sourceUrl
+      ? `<a href="${escapeHtml(collection.sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(collection.source)}</a>`
+      : escapeHtml(collection.source)}</p>`
+    : '';
+  const summary = [
+    collectionFoundLine(collection),
+    user && collection.found ? tp('collections.readOf', { n: formatLocaleInt(collection.read) }) : ''
+  ].filter(Boolean).join(' · ');
+  const missingRows = missing.map((item) => {
+    const q = [item.title, item.author].filter(Boolean).join(' ');
+    const meta = [item.author, item.year ? String(item.year) : '', item.note].filter(Boolean).join(' · ');
+    return `
+          <div class="table-row">
+            <span><strong>${escapeHtml(item.title)}</strong>${meta ? `<br><span class="muted">${escapeHtml(meta)}</span>` : ''}</span>
+            <a class="button" href="/catalog?q=${encodeURIComponent(q)}">${escapeHtml(t('collections.searchMissing'))}</a>
+          </div>`;
+  }).join('');
+  const content = `
+    <section class="page-intro catalog-page-intro">
+      <div class="page-intro-copy">
+        <h1>${escapeHtml(collection.title)}</h1>
+        ${collection.description ? `<p>${escapeHtml(collection.description)}</p>` : ''}
+        ${source}
+      </div>
+      ${books.length || user ? `<div class="actions">${user ? renderShelfHomeForm(`${base}/home`, collection.onHome, csrfToken, base) : ''}${books.length ? renderViewToggle({ href: `${base}?view=${listView ? 'grid' : 'list'}`, isListView: listView }) : ''}</div>` : ''}
+    </section>
+    <div class="list-context-hint list-context-hint-spacious">${escapeHtml(summary)}</div>
+    ${books.length ? `
+    <section class="library-shelf library-shelf-primary">
+      ${showBatch ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${booksList}</div>` : booksList}
+    </section>` : ''}
+    ${missing.length ? `
+    <section class="library-shelf">
+      <div class="section-title"><h2>${escapeHtml(t('collections.missing'))}</h2></div>
+      <div class="table-list entity-list">${missingRows}</div>
+    </section>` : ''}`;
+  return pageShell({
+    title: collection.title,
+    content,
+    user,
+    stats,
+    indexStatus,
+    breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('collections.title'), href: '/collections' }, { label: collection.title }],
+    currentPath: '/collections',
+    csrfToken,
+    readBookIds
+  });
 }
 
 export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus, csrfToken = '', readBookIds = null }) {

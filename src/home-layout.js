@@ -5,17 +5,19 @@
  * `{ order: string[], hidden: string[], shelfOrder: string[] }`: `order` always lists every
  * known section (unknown ids dropped, missing ones inserted at their default position), `hidden`
  * the switched-off ones. Each client renders only the sections it has: `recent`
- * («Недавно читали») exists only in the app. `shelfOrder` is the user's order of all shelves
+ * («Недавно читали») exists only in the app; `collections` = the user's pinned collections (src/collections.js). `shelfOrder` is the user's order of all shelves
  * (`shelf:<id>` / `smart:<id>`), set by dragging them in the one shelves list (regular and smart
  * shelves mixed): the list follows it and so do the pinned shelves on the home page. Shelves not listed (new ones) follow in the old
- * order — regular, then smart, by name.
+ * order — regular, then smart, by name. `collectionOrder` is the same for collections (slugs): the
+ * collections list and the pinned collections block follow it. A client that does not send
+ * `collectionOrder` at all (older apps) keeps the stored one.
  */
 import { getUserHomeLayoutRaw, setUserHomeLayoutRaw } from './db.js';
 
-export const HOME_SECTION_IDS = ['continue', 'recent', 'novinki', 'recommended', 'following', 'shelves'];
+export const HOME_SECTION_IDS = ['continue', 'recent', 'novinki', 'recommended', 'following', 'shelves', 'collections'];
 
 /** Sections the web home renders (in the shared order). */
-export const WEB_HOME_SECTION_IDS = ['continue', 'novinki', 'recommended', 'following', 'shelves'];
+export const WEB_HOME_SECTION_IDS = ['continue', 'novinki', 'recommended', 'following', 'shelves', 'collections'];
 
 const KNOWN = new Set(HOME_SECTION_IDS);
 
@@ -58,11 +60,24 @@ function shelfKeyList(value) {
   return out;
 }
 
+const COLLECTION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function collectionSlugList(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    const slug = String(item || '').trim().toLowerCase();
+    if (COLLECTION_SLUG_RE.test(slug) && !out.includes(slug)) out.push(slug);
+    if (out.length >= SHELF_ORDER_MAX) break;
+  }
+  return out;
+}
+
 export function homeShelfKey(shelf) {
   return `${shelf.kind === 'smart' ? 'smart' : 'shelf'}:${shelf.id}`;
 }
 
-/** @returns {{ order: string[], hidden: string[], shelfOrder: string[] }} */
+/** @returns {{ order: string[], hidden: string[], shelfOrder: string[], collectionOrder: string[] }} */
 export function normalizeHomeLayout(raw) {
   const input = parseLayoutInput(raw);
   const order = idList(input.order);
@@ -72,7 +87,12 @@ export function normalizeHomeLayout(raw) {
     const before = HOME_SECTION_IDS.slice(0, index).reverse().find((prev) => order.includes(prev));
     order.splice(before ? order.indexOf(before) + 1 : 0, 0, id);
   });
-  return { order, hidden: idList(input.hidden), shelfOrder: shelfKeyList(input.shelfOrder) };
+  return {
+    order,
+    hidden: idList(input.hidden),
+    shelfOrder: shelfKeyList(input.shelfOrder),
+    collectionOrder: collectionSlugList(input.collectionOrder)
+  };
 }
 
 export function getUserHomeLayout(username) {
@@ -80,8 +100,12 @@ export function getUserHomeLayout(username) {
 }
 
 export function setUserHomeLayout(username, raw) {
-  const layout = normalizeHomeLayout(raw);
-  const isDefault = !layout.hidden.length && !layout.shelfOrder.length
+  const input = parseLayoutInput(raw);
+  // Older apps know nothing about collectionOrder: their save must not wipe it.
+  const layout = normalizeHomeLayout(Object.prototype.hasOwnProperty.call(input, 'collectionOrder')
+    ? input
+    : { ...input, collectionOrder: getUserHomeLayout(username).collectionOrder });
+  const isDefault = !layout.hidden.length && !layout.shelfOrder.length && !layout.collectionOrder.length
     && layout.order.every((id, i) => id === HOME_SECTION_IDS[i]);
   setUserHomeLayoutRaw(username, isDefault ? '' : JSON.stringify(layout));
   return layout;
@@ -114,6 +138,22 @@ export function orderShelves(shelves, shelfOrder = []) {
     .map((shelf, i) => ({ shelf, i, r: rank.has(homeShelfKey(shelf)) ? rank.get(homeShelfKey(shelf)) : Infinity }))
     .sort((a, b) => a.r - b.r || a.i - b.i)
     .map((x) => x.shelf);
+}
+
+/** Collections (`{ slug }`) in the user's order; unlisted ones keep their place after the listed. */
+export function orderCollections(collections, collectionOrder = []) {
+  const rank = new Map(collectionOrder.map((slug, i) => [slug, i]));
+  return collections
+    .map((c, i) => ({ c, i, r: rank.has(c.slug) ? rank.get(c.slug) : Infinity }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.c);
+}
+
+/** Drag in the collections list: `slugs` must be a permutation of `allSlugs`, otherwise no change. */
+export function reorderCollectionList(layout, allSlugs, slugs) {
+  const wanted = collectionSlugList(slugs);
+  if (wanted.length !== allSlugs.length || !allSlugs.every((slug) => wanted.includes(slug))) return layout;
+  return { ...layout, collectionOrder: wanted };
 }
 
 /** Drag-and-drop: `ids` is the new order of the `visibleIds` blocks; other ids keep their slots. */

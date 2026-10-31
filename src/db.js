@@ -457,6 +457,16 @@ function ensureBooksSchema() {
   if (!detailsNames.has('annotation_is_html')) {
     db.exec(`ALTER TABLE book_details_cache ADD COLUMN annotation_is_html INTEGER NOT NULL DEFAULT 0`);
   }
+  // FB2 <publish-info>: year + ISBN. meta_version 0 = not read yet (rows cached before these columns).
+  if (!detailsNames.has('publish_year')) {
+    db.exec(`ALTER TABLE book_details_cache ADD COLUMN publish_year INTEGER`);
+  }
+  if (!detailsNames.has('isbn')) {
+    db.exec(`ALTER TABLE book_details_cache ADD COLUMN isbn TEXT`);
+  }
+  if (!detailsNames.has('meta_version')) {
+    db.exec(`ALTER TABLE book_details_cache ADD COLUMN meta_version INTEGER NOT NULL DEFAULT 0`);
+  }
 
   const backfillManagedColumns = [
     'title_sort',
@@ -1145,7 +1155,7 @@ export function deleteUser(username) {
     db.prepare(`DELETE FROM smart_shelves WHERE username = ?`).run(normalizedUsername);
     /* Per-user tables without ON DELETE CASCADE that were left behind (read marks, ratings,
        reader notes, sync revisions). Some are created lazily, so skip a table an old DB lacks. */
-    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions', 'want_to_read', 'reading_goals']) {
+    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions', 'want_to_read', 'reading_goals', 'collection_pins']) {
       const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table);
       if (exists) db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(normalizedUsername);
     }

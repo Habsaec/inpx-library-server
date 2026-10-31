@@ -6,6 +6,11 @@ import path from 'node:path';
 
 export const DOWNLOAD_FILENAME_STYLES = ['translit-full', 'title', 'author-title', 'full'];
 export const DEFAULT_DOWNLOAD_FILENAME_STYLE = 'translit-full';
+/**
+ * E-mail to an e-reader always names the attachment by the book title, whatever the admin style:
+ * Kindle (Send to Kindle) shows the attachment name as the book title in its library.
+ */
+export const EMAIL_FILENAME_STYLE = 'title';
 
 const TRANSLIT_MAP = {
   'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'Yo', 'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M', 'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U', 'Ф': 'F', 'Х': 'Kh', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Shch', 'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya',

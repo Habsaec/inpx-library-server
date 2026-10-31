@@ -185,8 +185,9 @@ function getFormatMimeType(format) {
   return MIME_TYPES[format] || 'application/octet-stream';
 }
 
-function getBookFormatFileName(book, format) {
-  return `${buildDownloadBaseName(book)}.${getFormatExtension(format)}`;
+function getBookFormatFileName(book, format, style = null) {
+  const baseName = style ? buildDownloadBaseName(book, style) : buildDownloadBaseName(book);
+  return `${baseName}.${getFormatExtension(format)}`;
 }
 
 function zipSingleFile(content, entryName) {
@@ -387,13 +388,15 @@ export function resolveDownload(book, requestedFormat, options = {}) {
 
 async function resolveDownloadNow(book, requestedFormat, options = {}) {
   const skipFb2DeliveryProcessing = options?.skipFb2DeliveryProcessing === true;
+  // Optional file-name style override (e-mail delivery always uses EMAIL_FILENAME_STYLE).
+  const style = options?.filenameStyle || null;
   const sourceFormat = String(book?.ext || 'fb2').toLowerCase();
   const format = normalizeDownloadFormat(book, requestedFormat);
   if (format === sourceFormat && sourceFormat !== 'fb2') {
     const content = await readBookBufferForDelivery(book);
     return {
       format,
-      fileName: getBookFormatFileName(book, sourceFormat),
+      fileName: getBookFormatFileName(book, sourceFormat, style),
       mimeType: getFormatMimeType(sourceFormat),
       content
     };
@@ -404,10 +407,10 @@ async function resolveDownloadNow(book, requestedFormat, options = {}) {
         ? await readBookBuffer(book)
         : await readBookBufferForDelivery(book)
     );
-    const fb2Name = getBookFormatFileName(book, 'fb2');
+    const fb2Name = getBookFormatFileName(book, 'fb2', style);
     return {
       format,
-      fileName: getBookFormatFileName(book, format),
+      fileName: getBookFormatFileName(book, format, style),
       mimeType: getFormatMimeType(format),
       content: format === FB2_ZIP_FORMAT ? await zipSingleFile(content, fb2Name) : content
     };
@@ -420,7 +423,7 @@ async function resolveDownloadNow(book, requestedFormat, options = {}) {
   const filePath = await convertFb2Book(book, format);
   return {
     format,
-    fileName: getBookFormatFileName(book, format),
+    fileName: getBookFormatFileName(book, format, style),
     mimeType: getFormatMimeType(format),
     filePath
   };

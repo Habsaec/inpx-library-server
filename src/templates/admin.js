@@ -869,6 +869,7 @@ export function renderAdminContent({
   fb2WebpMode = 'keep',
   showDeletedBooks = false,
   defaultLocale = 'auto',
+  collectionsCardHtml = '',
   flash = '',
   csrfToken = ''
 }) {
@@ -1123,6 +1124,7 @@ export function renderAdminContent({
         <span class="muted admin-compact-btn" style="align-self:center">${escapeHtml(t('admin.content.saveHint'))}</span>
       </div>
     </form>
+    ${collectionsCardHtml}
     <script>
       document.getElementById('download-format-toggle-all')?.addEventListener('change', function() {
         document.querySelectorAll('input[name="enabled_download_format"]').forEach(cb => { cb.checked = this.checked; });
@@ -2273,4 +2275,60 @@ export function renderAdminAppearance({
     currentPath: '/admin/appearance',
     csrfToken
   });
+}
+
+/** Admin → Content: on/off, delete uploaded ones, re-match, upload JSON. Rendered outside the content form. */
+export function renderAdminCollectionsCard({ collections = [], matching = false, csrfToken = '', error = '' }) {
+  const rows = collections.map((c) => `
+    <tr class="${c.enabled ? '' : 'lang-row-disabled'}">
+      <td data-label="${escapeHtml(t('admin.collections.thTitle'))}">
+        <a href="/collections/${encodeURIComponent(c.slug)}">${escapeHtml(c.title)}</a>
+        <div class="muted" style="font-size:12px">${escapeHtml(c.slug)}${c.builtin ? ` · ${escapeHtml(t('admin.collections.builtin'))}` : ''}</div>
+      </td>
+      <td data-label="${escapeHtml(t('admin.collections.thFound'))}" style="text-align:right;white-space:nowrap">${c.matching ? '…' : `${formatLocaleInt(c.found)} / ${formatLocaleInt(c.total)}`}</td>
+      <td data-label="" style="text-align:right;white-space:nowrap">
+        <form method="post" action="/admin/collections/${c.id}/toggle" style="display:inline">
+          ${csrfHiddenField(csrfToken)}
+          <input type="hidden" name="enabled" value="${c.enabled ? '0' : '1'}">
+          <button type="submit" class="button admin-compact-btn">${escapeHtml(c.enabled ? t('admin.collections.disable') : t('admin.collections.enable'))}</button>
+        </form>
+        ${c.builtin ? '' : `<form method="post" action="/admin/collections/${c.id}/delete" style="display:inline" data-confirm="${escapeHtml(tp('admin.collections.deleteConfirm', { title: c.title }))}">
+          ${csrfHiddenField(csrfToken)}
+          <button type="submit" class="button button-danger admin-compact-btn">${escapeHtml(t('admin.collections.delete'))}</button>
+        </form>`}
+      </td>
+    </tr>`).join('');
+  return `
+    <div class="admin-card" id="collections" style="margin-top:16px">
+      <div class="admin-card-title">${escapeHtml(t('admin.collections.title'))}</div>
+      <p class="muted admin-compact-btn" style="margin:4px 0 12px">${escapeHtml(t('admin.collections.hint'))}</p>
+      ${error ? renderAlert('error', error) : ''}
+      ${collections.length ? `<table class="admin-table">
+        <thead><tr>
+          <th>${escapeHtml(t('admin.collections.thTitle'))}</th>
+          <th style="text-align:right">${escapeHtml(t('admin.collections.thFound'))}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>` : ''}
+      <div class="admin-actions-row" style="margin-top:12px;flex-wrap:wrap;gap:8px">
+        <form method="post" action="/admin/collections/rematch">
+          ${csrfHiddenField(csrfToken)}
+          <button type="submit" class="button" ${matching ? 'disabled' : ''}>${escapeHtml(matching ? t('admin.collections.matching') : t('admin.collections.rematch'))}</button>
+        </form>
+      </div>
+      <form method="post" action="/admin/collections/import" style="margin-top:14px">
+        ${csrfHiddenField(csrfToken)}
+        <div class="admin-field-group">
+          <label for="admin-collection-file">${escapeHtml(t('admin.collections.importLabel'))}</label>
+          <input id="admin-collection-file" type="file" accept=".json,application/json"
+            onchange="var f=this.files&&this.files[0],ta=this.form.elements.json;if(f&&ta)f.text().then(function(s){ta.value=s;});">
+          <textarea name="json" rows="4" placeholder='{"slug":"my-list","title":"…","items":[{"author":"…","title":"…"}]}' aria-label="${escapeHtml(t('admin.collections.importPaste'))}"></textarea>
+          <span class="admin-field-hint">${escapeHtml(t('admin.collections.importHint'))}</span>
+        </div>
+        <div class="admin-actions-row">
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.collections.import'))}</button>
+        </div>
+      </form>
+    </div>`;
 }

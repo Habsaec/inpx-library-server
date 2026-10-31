@@ -78,6 +78,8 @@ import {
   SYSTEM_EVENTS_MAX_COUNT, SYSTEM_EVENTS_RETAIN_COUNT, SAFE_ADMIN_REDIRECTS
 } from '../constants.js';
 import { exportUsersBackup, importUsersBackup } from '../services/user-backup.js';
+import { listCollections, isCollectionsMatchRunning } from '../collections.js';
+import { renderAdminCollectionsCard } from '../templates/admin.js';
 
 function lastFormFieldValue(value) {
   return Array.isArray(value) ? value[value.length - 1] : value;
@@ -2231,6 +2233,12 @@ export function registerAdminRoutes(app, deps) {
       fb2WebpMode: normalizeFb2WebpMode(getSetting('fb2_webp_images')),
       showDeletedBooks: getSetting('show_deleted_books') === '1',
       defaultLocale: getSetting('default_locale') || 'auto',
+      collectionsCardHtml: renderAdminCollectionsCard({
+        collections: listCollections({ includeDisabled: true }),
+        matching: isCollectionsMatchRunning(),
+        csrfToken: req.csrfToken || '',
+        error: String(req.query.collectionsError || '').slice(0, 300)
+      }),
       flash: String(req.query.flash || ''), csrfToken: req.csrfToken || ''
     }));
   });

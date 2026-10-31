@@ -30,6 +30,7 @@ COPY package.json ./
 COPY --from=assets /build/public ./public
 COPY scripts ./scripts
 COPY src ./src
+COPY collections ./collections
 COPY .env.example ./
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh

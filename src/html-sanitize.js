@@ -114,3 +114,80 @@ export function balanceHtmlFragment(html) {
   }
   return out;
 }
+
+/* ---------- BB-codes in annotations (Flibusta / Librusec / RuTracker texts) ---------- */
+
+const BBCODE_NAMES = 'b|i|u|s|del|quote|spoiler|hide|url|center|left|right|justify|color|size|font|list|\\*';
+const BBCODE_TAG_RE = new RegExp(`\\[\\/?(?:${BBCODE_NAMES})(?:=[^\\]\\r\\n]{0,200})?\\]`, 'i');
+const BBCODE_SAFE_URL_RE = /^https?:\/\/[^\s"'<>[\]]+$/i;
+const BBCODE_MAX_PASSES = 4;
+
+function escapeBbText(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Spoiler / quote titles become plain text: no tags, no quotes. */
+function bbTitleText(value, fallback) {
+  // `=` as an entity: sanitizeHtml strips `on…=` handlers even from text and would eat the closing tag.
+  const s = String(value || '').replace(/<[^>]*>/g, '').replace(/["<>]/g, '').replace(/=/g, '&#61;').trim();
+  return s || fallback;
+}
+
+function bbLink(href, text) {
+  // Plain-text annotations were escaped already; sanitizeHtml escapes the href again.
+  const url = String(href || '').trim().replace(/&amp;/g, '&');
+  if (!BBCODE_SAFE_URL_RE.test(url)) return text;
+  return `<a href="${url}">${text || url}</a>`;
+}
+
+/** Repeat a replacement until the text stops changing, so nested pairs ([b][i]…[/i][/b]) all convert. */
+function replaceNested(s, re, fn) {
+  let out = s;
+  for (let i = 0; i < BBCODE_MAX_PASSES; i++) {
+    const next = out.replace(re, fn);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+export function hasBbCode(text) {
+  return BBCODE_TAG_RE.test(String(text || ''));
+}
+
+/**
+ * BB-codes → HTML for book annotations: [b] [i] [u] [s]/[del], [quote(=who)], [spoiler(=title)] → <details>,
+ * [url(=…)] (http/https only), [list][*]; [color] [size] [font] [center] … keep only their text.
+ * Plain text is HTML-escaped first; an HTML annotation keeps its markup. The result is still raw
+ * HTML — callers render it through sanitizeHtml (server) / sanitizeHtml.ts (Android), which allow
+ * only the produced tags and rebuild every <a href>.
+ * → { annotation, annotationIsHtml } (unchanged when there is no BB-code).
+ */
+export function annotationBbCodeToHtml(annotation, annotationIsHtml = false) {
+  const raw = String(annotation || '');
+  if (!raw || !hasBbCode(raw)) return { annotation: raw, annotationIsHtml: Boolean(annotationIsHtml) };
+  let s = annotationIsHtml
+    ? unwrapEscapedMarkup(raw)
+    : escapeBbText(raw).replace(/\r\n?/g, '\n').trim().replace(/\n/g, '<br>');
+
+  s = replaceNested(s, /\[(spoiler|hide)(?:=([^\]\r\n]{0,200}))?\]([\s\S]*?)\[\/\1\]/gi,
+    (_m, _tag, title, body) => `<details><summary>${bbTitleText(title, 'Спойлер')}</summary><div>${body.trim()}</div></details>`);
+  s = replaceNested(s, /\[quote(?:=([^\]\r\n]{0,200}))?\]([\s\S]*?)\[\/quote\]/gi,
+    (_m, who, body) => `<blockquote>${who ? `<p><strong>${bbTitleText(who, '')}:</strong></p>` : ''}${body.trim()}</blockquote>`);
+  s = replaceNested(s, /\[list(?:=[^\]\r\n]{0,20})?\]([\s\S]*?)\[\/list\]/gi, (_m, body) => {
+    const items = body.split(/\[\*\]/).map((x) => x.replace(/^(?:\s|<br>)+|(?:\s|<br>)+$/g, '')).filter(Boolean);
+    return items.length ? `<ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>` : '';
+  });
+  const inline = { b: 'strong', i: 'em', u: 'u', s: 's', del: 's' };
+  s = replaceNested(s, /\[(b|i|u|s|del)\]([\s\S]*?)\[\/\1\]/gi,
+    (_m, tag, body) => `<${inline[tag.toLowerCase()]}>${body}</${inline[tag.toLowerCase()]}>`);
+  s = s.replace(/\[url=([^\]\r\n]{1,2000})\]([\s\S]*?)\[\/url\]/gi, (_m, href, text) => bbLink(href, text));
+  s = s.replace(/\[url\]([^[\]\s]{1,2000})\[\/url\]/gi, (_m, href) => bbLink(href, ''));
+  // Layout-only tags: keep the text. Then drop any unpaired leftover of a known tag.
+  s = s.replace(new RegExp(`\\[\\/?(?:${BBCODE_NAMES})(?:=[^\\]\\r\\n]{0,200})?\\]`, 'gi'), '');
+  return { annotation: s, annotationIsHtml: true };
+}

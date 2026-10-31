@@ -292,6 +292,42 @@ export async function readBookBufferForDelivery(book) {
   });
 }
 
+/** Bump to re-read publish info of cached rows (lazily, on the next /publish-info request). */
+export const BOOK_DETAILS_META_VERSION = 1;
+
+function xmlSection(xml, tag) {
+  const m = xml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, 'i'));
+  return m ? m[1] : '';
+}
+
+function firstYearIn(value) {
+  const m = String(value || '').match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  return year >= 1000 && year <= new Date().getFullYear() + 1 ? year : null;
+}
+
+/**
+ * Year and ISBN of the edition from FB2 `<publish-info>`; without a publish year falls back to
+ * `<title-info><date>` (when the work was written / first published). `<isbn>` often holds several
+ * numbers or a prefix («ISBN 5-...») — the first ISBN-10/13 is kept.
+ */
+export function extractPublishInfo(xml) {
+  const text = String(xml || '');
+  const publish = xmlSection(text, 'publish-info');
+  let year = firstYearIn(decodeXml(xmlSection(publish, 'year')));
+  const isbnRaw = decodeXml(xmlSection(publish, 'isbn')).replace(/<[^>]*>/g, ' ');
+  const isbnMatch = isbnRaw.match(/(?:97[89][- ]?)?(?:[0-9][- ]?){9}[0-9Xx]/);
+  const isbn = isbnMatch ? isbnMatch[0].replace(/\s+/g, '').replace(/-+$/, '').toUpperCase() : '';
+  if (!year) {
+    const titleInfo = xmlSection(text, 'title-info');
+    const dateValue = titleInfo.match(/<date\b[^>]*\bvalue\s*=\s*["']([^"']*)["']/i);
+    const dateText = titleInfo.match(/<date\b[^>]*>([\s\S]*?)<\/date>/i);
+    year = firstYearIn(dateValue?.[1]) || firstYearIn(decodeXml(dateText?.[1] || ''));
+  }
+  return { publishYear: year || null, isbn };
+}
+
 async function extractBookDetails(book) {
   const xml = await readBookXml(book);
   const annotationMatch = xml.match(/<annotation[^>]*>([\s\S]*?)<\/annotation>/i);
@@ -304,7 +340,10 @@ async function extractBookDetails(book) {
   let annotation = annotationMatch ? decodeXml(annotationMatch[1]) : '';
   if (annotation.includes('\uFFFD')) annotation = '';
 
-  return { title, annotation, cover };
+  const isFb2 = String(book?.ext || 'fb2').toLowerCase() === 'fb2';
+  const { publishYear, isbn } = isFb2 ? extractPublishInfo(xml) : { publishYear: null, isbn: '' };
+
+  return { title, annotation, cover, publishYear, isbn };
 }
 
 /**
@@ -338,7 +377,8 @@ function getCachedBookDetails(bookId) {
   if (!_stmtGetCachedDetails) {
     _stmtGetCachedDetails = db.prepare(`
       SELECT title, annotation, annotation_is_html AS annotationIsHtml,
-             cover_content_type AS contentType, cover_data AS data
+             cover_content_type AS contentType, cover_data AS data,
+             publish_year AS publishYear, isbn, meta_version AS metaVersion
       FROM book_details_cache
       WHERE book_id = ?
     `);
@@ -354,6 +394,9 @@ function getCachedBookDetails(bookId) {
     title: row.title || '',
     annotation: annotation.annotation,
     annotationIsHtml: annotation.annotationIsHtml,
+    publishYear: Number(row.publishYear) || null,
+    isbn: row.isbn || '',
+    metaResolved: (Number(row.metaVersion) || 0) >= BOOK_DETAILS_META_VERSION,
     cover: row.data ? { contentType: row.contentType, data: row.data } : null
   };
 }
@@ -390,14 +433,18 @@ function saveCachedBookDetails(bookId, details) {
   if (!_stmtSaveCachedDetails) {
     _stmtSaveCachedDetails = db.prepare(`
       INSERT INTO book_details_cache (
-        book_id, title, annotation, annotation_is_html, cover_content_type, cover_data, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        book_id, title, annotation, annotation_is_html, cover_content_type, cover_data,
+        publish_year, isbn, meta_version, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(book_id) DO UPDATE SET
         title = excluded.title,
         annotation = excluded.annotation,
         annotation_is_html = excluded.annotation_is_html,
         cover_content_type = excluded.cover_content_type,
         cover_data = excluded.cover_data,
+        publish_year = excluded.publish_year,
+        isbn = excluded.isbn,
+        meta_version = excluded.meta_version,
         updated_at = CURRENT_TIMESTAMP
     `);
   }
@@ -407,8 +454,64 @@ function saveCachedBookDetails(bookId, details) {
     details.annotation || '',
     annHtml,
     details.cover?.contentType || null,
-    details.cover?.data || null
+    details.cover?.data || null,
+    details.publishYear || null,
+    details.isbn || '',
+    // Only when the archive was actually parsed; otherwise /publish-info reads it later.
+    details.metaResolved ? BOOK_DETAILS_META_VERSION : 0
   );
+}
+
+let _stmtSavePublishInfo;
+const publishInfoInFlight = new Map();
+
+/**
+ * Year + ISBN for the book page / apps. Cached rows answer without I/O; otherwise the FB2 is read
+ * once (Flibusta SSR never opens the archive, rows cached before 2.13 have no publish info) and the
+ * result — «nothing there» included — is stored, so the archive is not read again.
+ */
+export async function getBookPublishInfo(book) {
+  const empty = { publishYear: null, isbn: '' };
+  if (!book?.id) return empty;
+  const cached = getCachedBookDetails(book.id);
+  if (cached?.metaResolved) return { publishYear: cached.publishYear, isbn: cached.isbn };
+  if (String(book.ext || 'fb2').toLowerCase() !== 'fb2') return empty;
+  const pending = publishInfoInFlight.get(book.id);
+  if (pending) return pending;
+  const work = (async () => {
+    let info = empty;
+    try {
+      const xml = await readBookXml(book);
+      info = extractPublishInfo(xml);
+    } catch {
+      return empty; // unreadable archive: do not mark resolved, a later request retries
+    }
+    try {
+      if (!_stmtSavePublishInfo) {
+        _stmtSavePublishInfo = db.prepare(`
+          UPDATE book_details_cache
+          SET publish_year = ?, isbn = ?, meta_version = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE book_id = ?
+        `);
+      }
+      const res = _stmtSavePublishInfo.run(info.publishYear || null, info.isbn || '', BOOK_DETAILS_META_VERSION, book.id);
+      if (!res.changes) {
+        saveCachedBookDetails(book.id, {
+          title: book.title || '', annotation: '', annotationIsHtml: false, cover: null,
+          ...info, metaResolved: true
+        });
+      }
+    } catch {
+      /* cache is optional */
+    }
+    return info;
+  })();
+  publishInfoInFlight.set(book.id, work);
+  try {
+    return await work;
+  } finally {
+    publishInfoInFlight.delete(book.id);
+  }
 }
 
 function bookHasFlibustaSidecar(book) {
@@ -441,6 +544,9 @@ export async function getOrExtractBookDetails(book, { skipCoverAugment = false }
     title: book.title || '',
     annotation: '',
     annotationIsHtml: false,
+    publishYear: null,
+    isbn: '',
+    metaResolved: false,
     cover: null
   };
   let extractFailed = false;
@@ -493,6 +599,9 @@ export async function getOrExtractBookDetails(book, { skipCoverAugment = false }
       if (!details.cover?.data?.length && extracted.cover?.data?.length) {
         details.cover = extracted.cover;
       }
+      details.publishYear = extracted.publishYear || null;
+      details.isbn = extracted.isbn || '';
+      details.metaResolved = true;
     } catch {
       extractFailed = true;
     }

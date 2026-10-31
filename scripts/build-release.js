@@ -41,6 +41,7 @@ const DIRS = [
   'public',
   'scripts',
   'assets',
+  'collections',
 ];
 
 // --- Individual files from project root ---

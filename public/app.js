@@ -796,6 +796,53 @@ async function loadBookPageReview() {
   }
 }
 
+/** Year + ISBN on the book page when the server rendered it without them (Flibusta, old cache rows). */
+async function loadBookPagePublishInfo() {
+  const mount = document.querySelector('[data-publish-info-for]');
+  if (!mount) return;
+  const id = decodeURIComponent(mount.dataset.publishInfoFor || '').replace(/\uFFFD/g, '\0');
+  mount.removeAttribute('data-publish-info-for');
+  if (!id) return;
+  try {
+    const r = await fetch(apiBookPath(id, 'publish-info'), { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const bits = [];
+    const year = Number(data?.publishYear) || 0;
+    const isbn = typeof data?.isbn === 'string' ? data.isbn.trim() : '';
+    if (year && !mount.querySelector('[data-publish-year]')) {
+      const el = document.createElement('span');
+      el.setAttribute('data-publish-year', '');
+      el.title = mount.dataset.publishYearHint || '';
+      el.textContent = String(year);
+      bits.push(el);
+    }
+    if (isbn && !mount.querySelector('[data-publish-isbn]')) {
+      const el = document.createElement('span');
+      el.setAttribute('data-publish-isbn', '');
+      el.textContent = `ISBN\u00a0${isbn}`;
+      bits.push(el);
+    }
+    if (!bits.length) return;
+    // After the format (or first), before the genres — same order as the server-rendered line.
+    const anchor = [...mount.children].find((el) => el.tagName === 'A' && /\/facet\/genres\//.test(el.getAttribute('href') || ''));
+    for (const el of bits) {
+      const sep = document.createElement('span');
+      sep.className = 'book-detail-sep';
+      sep.textContent = '\u00b7';
+      if (anchor) {
+        anchor.before(el);
+        anchor.before(sep);
+      } else {
+        if (mount.lastChild) mount.append(sep);
+        mount.append(el);
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 function setCoverFallbackState(rootNode, showFallback) {
   const root = rootNode instanceof Element ? rootNode : null;
   if (!root) return;
@@ -8088,6 +8135,7 @@ attachDownloadMenus();
 attachCoverErrorFallback(document);
 loadCardDetails();
 loadBookPageReview();
+loadBookPagePublishInfo();
 attachBookmarkActions();
 attachWantActions();
 attachSeriesWantActions();

@@ -3,23 +3,23 @@ import assert from 'node:assert/strict';
 import { HOME_SECTION_IDS, WEB_HOME_SECTION_IDS, normalizeHomeLayout, moveHomeSection, orderShelves, reorderHomeSections, reorderShelfGroup } from '../src/home-layout.js';
 
 test('normalizeHomeLayout: empty → default order, nothing hidden', () => {
-  assert.deepEqual(normalizeHomeLayout(''), { order: HOME_SECTION_IDS, hidden: [], shelfOrder: [] });
-  assert.deepEqual(normalizeHomeLayout('not json'), { order: HOME_SECTION_IDS, hidden: [], shelfOrder: [] });
+  assert.deepEqual(normalizeHomeLayout(''), { order: HOME_SECTION_IDS, hidden: [], shelfOrder: [], collectionOrder: [] });
+  assert.deepEqual(normalizeHomeLayout('not json'), { order: HOME_SECTION_IDS, hidden: [], shelfOrder: [], collectionOrder: [] });
 });
 
 test('normalizeHomeLayout: drops unknown ids and puts missing ones back in place', () => {
   const layout = normalizeHomeLayout({ order: ['shelves', 'bogus', 'novinki', 'novinki'], hidden: ['recommended', 'x'] });
-  assert.deepEqual(layout.order, ['continue', 'recent', 'shelves', 'novinki', 'recommended', 'following']);
+  assert.deepEqual(layout.order, ['continue', 'recent', 'shelves', 'collections', 'novinki', 'recommended', 'following']);
   assert.deepEqual(layout.hidden, ['recommended']);
 });
 
 test('moveHomeSection: web moves skip the app-only block', () => {
   const layout = normalizeHomeLayout('');
   const moved = moveHomeSection(layout, 'novinki', 'up', WEB_HOME_SECTION_IDS);
-  assert.deepEqual(moved.order, ['novinki', 'recent', 'continue', 'recommended', 'following', 'shelves']);
+  assert.deepEqual(moved.order, ['novinki', 'recent', 'continue', 'recommended', 'following', 'shelves', 'collections']);
   assert.equal(moveHomeSection(layout, 'continue', 'up', WEB_HOME_SECTION_IDS), layout);
   const down = moveHomeSection(layout, 'following', 'down');
-  assert.deepEqual(down.order.slice(-2), ['shelves', 'following']);
+  assert.deepEqual(down.order.slice(-3), ['shelves', 'following', 'collections']);
 });
 
 test('renderHome follows the layout: hidden blocks gone, banner after a moved shelf', async () => {
@@ -56,8 +56,8 @@ test('shelves follow shelfOrder; unlisted ones keep their place after it', () =>
 
 test('drag-and-drop: home blocks keep the app-only slot, a shelves list reorders only its kind', () => {
   const layout = normalizeHomeLayout({ hidden: ['recent'], shelfOrder: ['smart:3'] });
-  const moved = reorderHomeSections(layout, ['shelves', 'continue', 'novinki', 'recommended', 'following'], WEB_HOME_SECTION_IDS);
-  assert.deepEqual(moved.order, ['shelves', 'recent', 'continue', 'novinki', 'recommended', 'following']);
+  const moved = reorderHomeSections(layout, ['shelves', 'continue', 'novinki', 'recommended', 'following', 'collections'], WEB_HOME_SECTION_IDS);
+  assert.deepEqual(moved.order, ['shelves', 'recent', 'continue', 'novinki', 'recommended', 'following', 'collections']);
   assert.deepEqual(moved.hidden, ['recent']);
   assert.equal(reorderHomeSections(layout, ['shelves', 'continue'], WEB_HOME_SECTION_IDS), layout);
 
@@ -105,4 +105,25 @@ test('one mixed shelves list: full order saved as is, smart shelves marked', asy
   assert.ok(html.indexOf('data-sort-key="smart:3"') < html.indexOf('data-sort-key="shelf:1"'), 'smart shelf first, as ordered');
   assert.ok(html.includes('shelf-smart-mark'), 'smart shelf has the search icon');
   assert.equal((html.match(/shelf-smart-mark/g) || []).length, 1, 'only on the smart shelf');
+});
+
+test('collectionOrder: normalized, kept when a client does not send it, orders collections', async () => {
+  const { orderCollections, reorderCollectionList, setUserHomeLayout, getUserHomeLayout } = await import('../src/home-layout.js');
+  const { initDb, db, createUser } = await import('../src/db.js');
+  assert.deepEqual(normalizeHomeLayout({ collectionOrder: ['b-list', 'Bad Slug', 'b-list', 'A-List'] }).collectionOrder, ['b-list', 'a-list']);
+  const list = [{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }];
+  assert.deepEqual(orderCollections(list, ['c', 'x']).map((c) => c.slug), ['c', 'a', 'b']);
+  const layout = normalizeHomeLayout('');
+  assert.deepEqual(reorderCollectionList(layout, ['a', 'b', 'c'], ['c', 'a', 'b']).collectionOrder, ['c', 'a', 'b']);
+  assert.equal(reorderCollectionList(layout, ['a', 'b', 'c'], ['c', 'a']), layout, 'not a permutation');
+
+  initDb();
+  const user = 'collection_order_user';
+  if (!db.prepare('SELECT 1 FROM users WHERE username = ?').get(user)) createUser({ username: user, password: 'Order12345!' });
+  setUserHomeLayout(user, { collectionOrder: ['c', 'a'] });
+  // Android 1.10 saves its layout without collectionOrder: the stored order stays.
+  setUserHomeLayout(user, { order: ['novinki'], hidden: [], shelfOrder: [] });
+  assert.deepEqual(getUserHomeLayout(user).collectionOrder, ['c', 'a']);
+  setUserHomeLayout(user, { collectionOrder: [] });
+  assert.deepEqual(getUserHomeLayout(user).collectionOrder, []);
 });

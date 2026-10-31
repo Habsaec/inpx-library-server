@@ -6873,6 +6873,32 @@ html[data-theme="light"] .page-jump::after {
   margin-top: 0;
 }
 
+/* BB-code [spoiler] / [quote] from annotations (annotationBbCodeToHtml). */
+.book-detail-annotation--html details {
+  margin: 0.6em 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.book-detail-annotation--html summary {
+  cursor: pointer;
+  padding: 6px 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.book-detail-annotation--html details > div {
+  padding: 0 12px 10px;
+}
+
+.book-detail-annotation--html blockquote {
+  margin: 0.6em 0;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--border);
+  color: var(--muted, var(--text));
+}
+
 /* Keep illustration colors original in dark theme. */
 .book-detail-annotation--html img,
 .book-detail-illustrations-strip img,

@@ -24,6 +24,7 @@ import {
 } from '../inpx.js';
 import { safePage } from '../utils/safe-int.js';
 import { resolveDownload } from '../conversion.js';
+import { EMAIL_FILENAME_STYLE } from '../download-filename.js';
 import { createSmtpTransport } from '../services/email.js';
 import { invalidateUserPageCaches } from '../services/cache.js';
 import { invalidateRecommendationsCache } from '../services/recommendations.js';
@@ -574,7 +575,7 @@ export function registerUserApiRoutes(app, deps) {
           try {
             const book = booksMap.get(bookId);
             if (!book) continue;
-            const download = await resolveDownload(book, format || undefined);
+            const download = await resolveDownload(book, format || undefined, { filenameStyle: EMAIL_FILENAME_STYLE });
 
             let fileName = download.fileName;
             const count = usedNames.get(fileName) || 0;
@@ -671,7 +672,7 @@ export function registerUserApiRoutes(app, deps) {
       batchEmailLocks.add(lockKey);
       const format = String(req.body.format || 'epub2');
       try {
-        const download = await resolveDownload(book, format);
+        const download = await resolveDownload(book, format, { filenameStyle: EMAIL_FILENAME_STYLE });
         const { transporter, senderEmail } = createSmtpTransport();
         const attachment = download.filePath
           ? { filename: download.fileName, path: download.filePath, contentType: download.mimeType }

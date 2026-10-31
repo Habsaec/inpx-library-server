@@ -294,7 +294,7 @@ export function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
-const ALLOWED_HTML_TAG_RE = /^(b|i|em|strong|p|br|span|div|ul|ol|li|h[1-6]|blockquote|sup|sub|a|img|table|thead|tbody|tr|td|th)$/i;
+const ALLOWED_HTML_TAG_RE = /^(b|i|u|s|em|strong|p|br|span|div|ul|ol|li|h[1-6]|blockquote|sup|sub|a|img|table|thead|tbody|tr|td|th|details|summary)$/i;
 
 export function sanitizeHtml(html) {
   const cleaned = stripXmlInvalidControls(stripFlibustaMediaPlaceholders(unwrapEscapedMarkup(html)))
@@ -876,6 +876,7 @@ function renderSidebarNavigation(user, currentPath = '/', stats = null) {
       ${link('/series', t('nav.series'), true)}
       ${link('/genres', t('nav.genres'), true)}
       ${showLanguages ? link('/languages', t('nav.languages'), true) : ''}
+      ${link('/collections', t('nav.collections'))}
       ${user ? `
       ${groupLabel('nav.groupMy')}
       ${link('/library/continue', t('nav.reading'), true)}

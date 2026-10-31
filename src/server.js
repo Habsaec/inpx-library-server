@@ -23,6 +23,8 @@ import { registerOpdsRoutes } from './routes/opds.js';
 import { registerOpdsV2Routes } from './routes/opds-v2.js';
 import { registerKosyncRoutes } from './routes/kosync.js';
 import { registerSmartShelfRoutes } from './routes/smart-shelves.js';
+import { registerCollectionRoutes } from './routes/collections.js';
+import { initCollections, scheduleCollectionsMatch } from './collections.js';
 import { registerAuthRoutes } from './routes/auth-routes.js';
 import { registerOidcRoutes } from './routes/oidc.js';
 import { registerDownloadRoutes } from './routes/download.js';
@@ -649,7 +651,12 @@ function runRepairMetadata() {
   return true;
 }
 
-app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+const urlencoded100kb = express.urlencoded({ extended: false, limit: '100kb' });
+// Admin → Content → «Подборки»: a JSON list up to 1 MB, percent-encoded Cyrillic is ~3× bigger.
+const urlencodedCollectionImport = express.urlencoded({ extended: false, limit: '4mb' });
+app.use((req, res, next) => (req.method === 'POST' && req.path === '/admin/collections/import'
+  ? urlencodedCollectionImport(req, res, next)
+  : urlencoded100kb(req, res, next)));
 const json100kb = express.json({ limit: '100kb' });
 const jsonUsersImport = express.json({ limit: '2mb' });
 app.use((req, res, next) => {
@@ -1111,6 +1118,7 @@ const batchEmailLocks = new Set();
 registerReaderRoutes(app);
 registerUserApiRoutes(app, { batchEmailLocks });
 registerSmartShelfRoutes(app);
+registerCollectionRoutes(app, { getCachedStats });
 registerNotesRoutes(app, { batchEmailLocks });
 registerAdminRoutes(app, {
   operationsState,
@@ -1292,6 +1300,9 @@ async function bootstrap() {
   } catch (err) {
     console.warn('[perf] SQLite memory settings not applied:', err.message);
   }
+  initCollections();
+  // Book ids change on folder reindex / source re-add: re-match the collection lists in the background.
+  onIndexComplete(() => scheduleCollectionsMatch());
   onIndexComplete(({ newBooksCount }) => {
     if (newBooksCount <= 0) return;
     if (!shouldRunTelegramBotInThisProcess()) return;

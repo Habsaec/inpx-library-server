@@ -94,7 +94,9 @@ import {
 } from '../inpx.js';
 import { getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
 import { listSmartShelves, getSmartShelfFirstPage } from '../smart-shelves.js';
-import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive } from '../fb2.js';
+import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive, getBookPublishInfo } from '../fb2.js';
+import { annotationBbCodeToHtml } from '../html-sanitize.js';
+import { listPinnedCollections, getCollectionBooks } from '../collections.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
 import {
   readFlibustaCover,
@@ -138,10 +140,15 @@ async function getDetails(book) {
     detailsCache.delete(book.id);
   }
   const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
+  // BB-codes become HTML here, so the book page, /details (Android) and card hovers all get it.
+  const annotation = annotationBbCodeToHtml(details.annotation, details.annotationIsHtml);
   const lite = {
     title: details.title,
-    annotation: details.annotation,
-    annotationIsHtml: Boolean(details.annotationIsHtml),
+    annotation: annotation.annotation,
+    annotationIsHtml: annotation.annotationIsHtml,
+    publishYear: details.publishYear || null,
+    isbn: details.isbn || '',
+    metaResolved: Boolean(details.metaResolved),
     cover: details.cover ? { contentType: details.cover.contentType, hasData: true } : null
   };
   if (detailsCache.size >= DETAILS_CACHE_MAX) {
@@ -298,8 +305,13 @@ export function listShelfRefs(username) {
   return orderShelves(refs, getUserHomeLayout(username).shelfOrder);
 }
 
-/** Полки, закреплённые пользователем на главной; пустые не показываем. */
-export function getPinnedHomeShelves(username, limit) {
+/**
+ * Полки, закреплённые пользователем на главной; пустые не показываем. `collections` — добавить
+ * закреплённые подборки (kind `collection`, есть `slug`, блок главной `collections`) после полок: старые сборки приложения
+ * считают всё, что не `smart`, обычной полкой по id, поэтому `/api/home/shelves` отдаёт их только
+ * по `?collections=1`.
+ */
+export function getPinnedHomeShelves(username, limit, { collections = false } = {}) {
   const result = [];
   const contentLangs = effectiveContentLangs(username);
   for (const ref of listShelfRefs(username)) {
@@ -313,6 +325,19 @@ export function getPinnedHomeShelves(username, limit) {
     } catch { /* битый фильтр не должен ломать главную */ }
     if (!items.length) continue;
     result.push({ id: ref.id, kind: ref.kind, title: ref.title, href: ref.kind === 'smart' ? ref.shelf.catalogUrl : `/shelves/${ref.id}`, items });
+  }
+  return collections ? result.concat(getPinnedHomeCollections(username, limit)) : result;
+}
+
+/** Подборки, закреплённые пользователем (свой блок главной `collections`); пустые не показываем. */
+export function getPinnedHomeCollections(username, limit) {
+  const result = [];
+  for (const pinned of listPinnedCollections(username)) {
+    if (result.length >= HOME_SHELVES_MAX) break;
+    let items = [];
+    try { items = getCollectionBooks(pinned.id, limit); } catch { /* optional */ }
+    if (!items.length) continue;
+    result.push({ id: pinned.id, kind: 'collection', slug: pinned.slug, title: pinned.title, href: `/collections/${encodeURIComponent(pinned.slug)}`, items });
   }
   return result;
 }
@@ -383,6 +408,7 @@ export function registerLibraryRoutes(app, deps) {
     const homeLayout = username ? getUserHomeLayout(username) : null;
     const homeShown = (id) => !homeLayout || isHomeSectionVisible(homeLayout, id);
     const homeShelves = username && homeShown('shelves') ? getPinnedHomeShelves(username, DISPLAY_COUNT) : [];
+    const homeCollections = username && homeShown('collections') ? getPinnedHomeCollections(username, DISPLAY_COUNT) : [];
     let followingShelf = null;
     // «Новое у любимых» (web only; /api/home/shelves keeps its two kinds).
     if (username && homeShown('following')) {
@@ -401,7 +427,7 @@ export function registerLibraryRoutes(app, deps) {
     }
     const html = canUseAnonymousHomeHtmlCache
       ? getCachedPageData(`page:home:anon:${getLocale()}`, () => renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken: '', hasContinueData: false, listView: false }), 1000 * 60 * 2)
-      : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData, readBookIds, listView, homeShelves, followingShelf, homeLayout });
+      : renderHome({ user, stats, indexStatus, sections: displaySections, homeSubtitle, csrfToken, hasContinueData, readBookIds, listView, homeShelves, homeCollections, followingShelf, homeLayout });
     res.send(html);
     // Фоновый прогрев per-user кэшей для последующих переходов
     if (username) {
@@ -410,7 +436,7 @@ export function registerLibraryRoutes(app, deps) {
   });
 
   app.get('/api/home/shelves', requireApiAuth, (req, res) => {
-    res.json({ items: getPinnedHomeShelves(req.user.username, getHomeNewestDisplayCount()) });
+    res.json({ items: getPinnedHomeShelves(req.user.username, getHomeNewestDisplayCount(), { collections: req.query.collections === '1' }) });
   });
 
   // --- Catalog search ---
@@ -1200,8 +1226,24 @@ export function registerLibraryRoutes(app, deps) {
       res.json({
         annotation: details.annotation,
         annotationIsHtml: Boolean(details.annotationIsHtml),
-        coverAvailable: Boolean(details.cover)
+        coverAvailable: Boolean(details.cover),
+        publishYear: details.publishYear || null,
+        isbn: details.isbn || ''
       });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /** Year + ISBN of the edition (FB2 <publish-info>); reads the archive once when not cached yet. */
+  app.get('/api/books/:id/publish-info', requireBrowseAuth, async (req, res, next) => {
+    try {
+      const book = getBookById(req.params.id);
+      if (!book) {
+        return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
+      }
+      const info = await getBookPublishInfo(book);
+      res.json({ publishYear: info.publishYear || null, isbn: info.isbn || '' });
     } catch (error) {
       next(error);
     }
