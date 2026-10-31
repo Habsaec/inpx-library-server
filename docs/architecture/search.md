@@ -50,7 +50,7 @@ Enter always opens **books** (Flibusta-like). Authors / series are chips above r
 |----------|---------|
 | (default) | Prefix FTS (`token*` + stem OR-expand) + multi-token phrase OR; LIKE: single `token%`, multi `%token%` |
 | `=` | Exact token |
-| `*` | Contains via LIKE |
+| `*` | Contains via LIKE on bounded candidates (FTS word prefix + time-boxed scan, see below) |
 | `~` | Regex over capped 5k-row scan |
 
 ## Morphology
@@ -68,6 +68,7 @@ Enter always opens **books** (Flibusta-like). Authors / series are chips above r
 4. Suggest: title prefix on `idx_books_title_search` (no FTS `ORDER BY rank`); authors/series are `sort_name` ranges. FTS fill only when every content token is 4+ characters and the prefix list is short
 5. FTS when healthy; LIKE only when dirty/desynced or explicitly requested with `*` (`BOOKS_FTS_ZERO_MATCH_LIKE_FALLBACK=1` restores the legacy zero-MATCH fallback)
 6. Book totals join `active_books` (cap 10k) so excluded languages, genres, and deleted books are not counted
+6a. The LIKE fallback (`*contains`, dirty FTS; books page and `/api/search/genres`) never LIKE-scans `active_books` in one statement. `collectLikeFallbackBookIds` gathers ≤ 10 001 candidate ids from: FTS `"tok"*` per token (`*` with a healthy index), the author index (`authors` → `book_authors`), and `books` in 20k-rowid chunks until `SEARCH_LIKE_SCAN_BUDGET_MS` (default 300; `0` = no scan). COUNT and the ranked page then run on `active_books.id IN json_each(candidates)` with the same LIKE and filters. A cut-short scan returns additive `partial: true`. Before this a rare needle («*Tolkien», sent by the Android app as an automatic retry of a zero-hit search) did COUNT + ORDER BY over 684k books with a per-row author `EXISTS` and stalled the event loop for 21 s; now ~0.35 s. The Android client no longer retries misses with `*`
 7. Language/format dropdowns read `catalog_distinct_langs` / `catalog_distinct_exts`, not `SELECT DISTINCT` over `books` on each search
 
 ## FTS reliability

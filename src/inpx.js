@@ -133,6 +133,17 @@ const BOOKS_FTS_DIRTY_META_KEY = 'books_fts_dirty';
  */
 const BOOKS_FTS_ZERO_MATCH_LIKE_FALLBACK = process.env.BOOKS_FTS_ZERO_MATCH_LIKE_FALLBACK === '1';
 /**
+ * Book LIKE fallback (`*contains`, dirty FTS) never scans the whole catalog in one
+ * statement: `books` is read in rowid chunks until this budget is spent (a rare
+ * needle on 700k books was a 21 s event-loop stall). Word-prefix hits still come
+ * from FTS and the author index, so the budget only limits mid-word matches.
+ */
+function searchLikeScanBudgetMs() {
+  const raw = process.env.SEARCH_LIKE_SCAN_BUDGET_MS;
+  return raw == null || raw === '' ? 300 : Math.max(0, Number(raw) || 0);
+}
+const SEARCH_LIKE_SCAN_CHUNK = 20_000;
+/**
  * Legacy empty-result recovery re-runs corrected book search plus author/series
  * scans synchronously. The search overview already supplies those section
  * totals, so keep that expensive duplicate work opt-in on large NAS catalogs.
@@ -1631,6 +1642,9 @@ function buildAuthorWhereFromMatchedNames(names = []) {
         AND a2.name IN (${placeholders})
     )`,
     params: names,
+    candidateSql: `SELECT ba2.book_id AS id FROM authors a2
+      JOIN book_authors ba2 ON ba2.author_id = a2.id
+      WHERE a2.name IN (${placeholders})`,
     authorRankSQL: `(SELECT MIN(CASE ${rankCases} ELSE 5 END) FROM book_authors ba2 JOIN authors a2 ON a2.id = ba2.author_id WHERE ba2.book_id = active_books.id)`,
     authorRankParams: names
   };
@@ -3584,8 +3598,10 @@ function buildBookSearchSql(field, query) {
       return { sql: `LOWER(COALESCE(${column}, '')) = ?`, param: value };
     }
 
+    /* No LOWER() around LIKE: built-in lower() folds only ASCII, exactly like LIKE itself,
+       and doubled the cost of every scanned row. */
     if (parsed.operator === '*') {
-      return { sql: `LOWER(COALESCE(${column}, '')) LIKE ?`, param: `%${value}%` };
+      return { sql: `COALESCE(${column}, '') LIKE ?`, param: `%${value}%` };
     }
 
     /*
@@ -3595,7 +3611,7 @@ function buildBookSearchSql(field, query) {
      * and that breaks the FTS-empty → LIKE fallback path.
      */
     const param = tokens.length === 1 ? `${value}%` : `%${value}%`;
-    return { sql: `LOWER(COALESCE(${column}, '')) LIKE ?`, param };
+    return { sql: `COALESCE(${column}, '') LIKE ?`, param };
   };
 
   const tokenClauses = [];
@@ -3612,8 +3628,71 @@ function buildBookSearchSql(field, query) {
 
   return {
     where: tokenClauses.map((clause) => `(${clause})`).join(' AND '),
-    params
+    params,
+    tokens: values,
+    columns
   };
+}
+
+/**
+ * Candidate book ids for the LIKE fallback, without one statement over every book:
+ * - `*` with a healthy FTS: word-prefix MATCH (`"tok"*`) finds the common case («*Tolkien»)
+ *   through the index; the caller's LIKE re-check keeps the contains semantics;
+ * - author matches through `authors` → `book_authors` (indexed);
+ * - `books` in rowid chunks with the LIKE predicate until `SEARCH_LIKE_SCAN_BUDGET_MS`
+ *   is spent or `cap` ids are found (mid-word matches; FTS-unusable fallback).
+ * Callers must still apply the search / filter WHERE to these ids (deleted, languages…).
+ * @returns {{ ids: string[], capped: boolean, partial: boolean }}
+ */
+function collectLikeFallbackBookIds({ sqlSearch, authorMatch, operator, cap = 10_001 }) {
+  const ids = new Set();
+  const addRows = (rows) => {
+    for (const row of rows) {
+      ids.add(row.id);
+      if (ids.size >= cap) return false;
+    }
+    return true;
+  };
+
+  if (operator === '*' && sqlSearch?.tokens?.length && isBooksFtsUsable()) {
+    const ftsColumns = sqlSearch.columns.length === 1 ? sqlSearch.columns[0] : '';
+    const match = sqlSearch.tokens
+      .map((token) => escapeFts5Token(token))
+      .filter(Boolean)
+      .map((token) => (ftsColumns ? `${ftsColumns}:"${token}"*` : `"${token}"*`))
+      .join(' AND ');
+    if (match) {
+      try {
+        addRows(db.prepare('SELECT id FROM books_fts WHERE books_fts MATCH ? LIMIT ?').all(match, cap));
+      } catch {
+        /* bad MATCH syntax — the scan below still runs */
+      }
+    }
+  }
+  if (ids.size < cap && authorMatch?.candidateSql) {
+    addRows(db.prepare(`${authorMatch.candidateSql} LIMIT ?`).all(...authorMatch.params, cap - ids.size));
+  }
+
+  let partial = false;
+  if (ids.size < cap && sqlSearch) {
+    const maxRowid = Number(db.prepare('SELECT MAX(rowid) AS m FROM books').get()?.m) || 0;
+    const scan = db.prepare(`
+      SELECT id FROM books
+      WHERE rowid > ? AND rowid <= ? AND (${sqlSearch.where})
+      LIMIT ?
+    `);
+    const deadline = Date.now() + searchLikeScanBudgetMs();
+    for (let from = 0; from < maxRowid; from += SEARCH_LIKE_SCAN_CHUNK) {
+      if (Date.now() >= deadline) {
+        partial = true;
+        break;
+      }
+      const rows = scan.all(from, from + SEARCH_LIKE_SCAN_CHUNK, ...sqlSearch.params, cap - ids.size);
+      if (!addRows(rows)) break;
+    }
+  }
+
+  return { ids: [...ids], capped: ids.size >= cap, partial };
 }
 
 /** Normalize genre query: CSV string, repeated values, or array → unique non-empty codes. */
@@ -3802,26 +3881,25 @@ function buildAuthorWhereForBooks(query) {
   if (!tokens.length) return null;
 
   const params = [];
-  let where;
+  let authorCond;
   const surnameExpr = `SUBSTR(COALESCE(a2.sort_name, ''), 1, INSTR(COALESCE(a2.sort_name, '') || ' ', ' ') - 1)`;
   if (tokens.length === 1) {
-    where = `EXISTS (
-      SELECT 1 FROM book_authors ba2
-      JOIN authors a2 ON a2.id = ba2.author_id
-      WHERE ba2.book_id = active_books.id
-        AND ${surnameExpr} = ?
-    )`;
+    authorCond = `${surnameExpr} = ?`;
     params.push(tokens[0]);
   } else {
-    const clauses = tokens.map(() => `(' ' || COALESCE(a2.search_name, '') || ' ') LIKE ?`);
-    where = `EXISTS (
-      SELECT 1 FROM book_authors ba2
-      JOIN authors a2 ON a2.id = ba2.author_id
-      WHERE ba2.book_id = active_books.id
-        AND ${clauses.join(' AND ')}
-    )`;
+    authorCond = tokens.map(() => `(' ' || COALESCE(a2.search_name, '') || ' ') LIKE ?`).join(' AND ');
     for (const t of tokens) params.push(`% ${t}%`);
   }
+  const where = `EXISTS (
+    SELECT 1 FROM book_authors ba2
+    JOIN authors a2 ON a2.id = ba2.author_id
+    WHERE ba2.book_id = active_books.id
+      AND ${authorCond}
+  )`;
+  /* Book ids from the authors side (one pass over `authors`), for the bounded LIKE fallback. */
+  const candidateSql = `SELECT ba2.book_id AS id FROM authors a2
+    JOIN book_authors ba2 ON ba2.author_id = a2.id
+    WHERE ${authorCond}`;
 
   const rankParams = [];
   const rankCases = [];
@@ -3840,7 +3918,7 @@ function buildAuthorWhereForBooks(query) {
 
   const authorRankSQL = `(SELECT MIN(CASE ${rankCases.join(' ')} ELSE 5 END) FROM book_authors ba2 JOIN authors a2 ON a2.id = ba2.author_id WHERE ba2.book_id = active_books.id)`;
 
-  return { where, params, authorRankSQL, authorRankParams: rankParams };
+  return { where, params, candidateSql, authorRankSQL, authorRankParams: rankParams };
 }
 
 function buildCatalogSearchSql(column, query, { startsWith = false } = {}) {
@@ -4629,8 +4707,16 @@ export function searchBooks({
     }
     const searchWhere = mainWhereParts.map((p) => `(${p})`).join(' OR ');
 
-    const fullWhereParts = [searchWhere];
-    const fullWhereParams = [...mainWhereParams];
+    /* Bounded candidates instead of COUNT + ORDER BY over every active book: a rare `*needle`
+       (Android retried a miss as «*Tolkien») scanned 700k rows twice and stalled the loop 21 s. */
+    const candidates = collectLikeFallbackBookIds({
+      sqlSearch, authorMatch, operator: parsedQuery.operator, cap: countCap
+    });
+    const partialFlag = candidates.partial ? { partial: true } : {};
+    if (!candidates.ids.length) return { total: 0, items: [], ...partialFlag };
+
+    const fullWhereParts = ['active_books.id IN (SELECT value FROM json_each(?))', searchWhere];
+    const fullWhereParams = [JSON.stringify(candidates.ids), ...mainWhereParams];
     appendBookFilterSql(fullWhereParts, fullWhereParams, genreFilter, extraFilters);
     const combinedWhere = fullWhereParts.map((p) => `(${p})`).join(' AND ');
 
@@ -4641,7 +4727,7 @@ export function searchBooks({
       fullWhereParams
     );
     const total = counted.total;
-    const capped = counted.capped;
+    const capped = counted.capped || candidates.capped;
 
     const titleRankParts = [];
     const titleRankParams = [];
@@ -4701,7 +4787,7 @@ export function searchBooks({
 
     attachSeriesListsToBooks(items);
     const outTotal = mode === 'omit' ? items.length : total;
-    return capped ? { total: outTotal, items, capped: true } : { total: outTotal, items };
+    return capped ? { total: outTotal, items, capped: true, ...partialFlag } : { total: outTotal, items, ...partialFlag };
   }
 
   return { total: 0, items: [] };
@@ -5045,8 +5131,13 @@ export function listSearchGenres({
     mainWhereParams.push(...authorMatch.params);
   }
   const searchWhere = mainWhereParts.map((p) => `(${p})`).join(' OR ');
-  const fullWhereParts = [searchWhere];
-  const fullWhereParams = [...mainWhereParams];
+  /* Same bounded candidates as searchBooks: an FTS miss must not LIKE-scan every book. */
+  const candidates = collectLikeFallbackBookIds({
+    sqlSearch, authorMatch, operator: parseSearchOperator(q).operator, cap: GENRE_MATCH_CAP
+  });
+  if (!candidates.ids.length) return finalize([]);
+  const fullWhereParts = ['active_books.id IN (SELECT value FROM json_each(?))', searchWhere];
+  const fullWhereParams = [JSON.stringify(candidates.ids), ...mainWhereParams];
   appendBookFilterSql(fullWhereParts, fullWhereParams, null, extraFilters);
   const combinedWhere = fullWhereParts.map((p) => `(${p})`).join(' AND ');
 
