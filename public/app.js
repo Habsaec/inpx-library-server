@@ -4980,6 +4980,8 @@ function confirmAction(message, { danger = false } = {}) {
 async function openAddToShelfPicker(bookIds, { series = '' } = {}) {
   const ids = [...new Set(bookIds.map(String).filter(Boolean))];
   if (!ids.length && !series) return;
+  // Declared before the first use: reading it earlier threw a ReferenceError and the picker never opened.
+  const isMulti = Boolean(series) || ids.length > 1;
 
   try {
     let shelves;
@@ -5001,7 +5003,6 @@ async function openAddToShelfPicker(bookIds, { series = '' } = {}) {
     }
 
     const initialShelfState = new Map(shelves.map((s) => [String(s.id), Boolean(s.hasBook)]));
-    const isMulti = Boolean(series) || ids.length > 1;
     const hint = series
       ? `<p class="modal-shelf-hint muted">${escapeHtml(uiT('series.shelfHint'))}</p>`
       : isMulti
