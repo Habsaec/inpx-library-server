@@ -286,16 +286,6 @@ function getHomeNewestDisplayCount() {
 
 const HOME_SHELVES_MAX = 8;
 
-/** Обычные полки пользователя в его порядке (перетаскивание в списке полок, `homeLayout.shelfOrder`). */
-export function getOrderedUserShelves(username, shelfOrder = getUserHomeLayout(username).shelfOrder) {
-  return orderShelves(getUserShelves(username).map((s) => ({ ...s, kind: 'shelf' })), shelfOrder).map(({ kind, ...s }) => s);
-}
-
-/** Умные полки в порядке пользователя (`opts` — как у `listSmartShelves`). */
-export function getOrderedSmartShelves(username, opts, shelfOrder = getUserHomeLayout(username).shelfOrder) {
-  return orderShelves(listSmartShelves(username, opts).map((s) => ({ ...s, kind: 'smart' })), shelfOrder).map(({ kind, ...s }) => s);
-}
-
 /**
  * Все полки (обычные и умные) без книг, в порядке пользователя (`homeLayout.shelfOrder`;
  * без него — обычные, затем умные, по имени). Главная берёт из них закреплённые.
@@ -1131,13 +1121,14 @@ export function registerLibraryRoutes(app, deps) {
     const username = req.user.username;
     const shelfOrder = getUserHomeLayout(username).shelfOrder;
     res.send(renderShelves({
-      shelves: getOrderedUserShelves(username, shelfOrder),
-      smartShelves: getOrderedSmartShelves(username, { withPreview: true }, shelfOrder),
+      shelves: getUserShelves(username),
+      smartShelves: listSmartShelves(username, { withPreview: true }),
+      shelfOrder,
       user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
     }));
   });
 
-  /* Drag-and-drop in a shelves list (app.js): `order=shelf:3,shelf:1,…` (one kind) → homeLayout.shelfOrder,
+  /* Drag-and-drop in the shelves list (app.js): `order=shelf:3,smart:1,…` (all shelves, mixed) → homeLayout.shelfOrder,
      which the shelves lists, the web home and /api/home/shelves follow (shared with the app). */
   app.post('/shelves/order', requireWebAuth, (req, res) => {
     const username = req.user.username;

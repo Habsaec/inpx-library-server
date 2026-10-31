@@ -25,7 +25,7 @@ import {
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
 import { encodeBookRef } from '../utils/book-ref.js';
 import { getUserHideRead } from '../db.js';
-import { normalizeHomeLayout, isHomeSectionVisible, WEB_HOME_SECTION_IDS } from '../home-layout.js';
+import { normalizeHomeLayout, isHomeSectionVisible, orderShelves, WEB_HOME_SECTION_IDS } from '../home-layout.js';
 import { READER_ICONS, READER_THEMES, READER_EINK_UA_RE, readerQuickTile, readerSettingsRow } from './reader-chrome.js';
 
 /** «Скрыть прочитанное»: account switch (also the Android filter sheet), toggled via POST /api/preferences. */
@@ -1690,43 +1690,53 @@ function renderShelfHomeForm(action, onHome, csrfToken) {
     </form>`;
 }
 
-function renderSmartShelvesSection(smartShelves, csrfToken) {
-  return `
-    <section class="library-shelf">
-      <div class="section-title">
-        <h2>${escapeHtml(t('smartShelves.title'))}</h2>
-      </div>
-      <p class="muted">${escapeHtml(t('smartShelves.hint'))}</p>
-      ${smartShelves.length ? `
-        <div class="table-list entity-list"${smartShelves.length > 1 ? ' data-sortable data-sort-url="/shelves/order"' : ''}>
-          ${smartShelves.map((shelf) => `
-            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-href="${escapeHtml(shelf.catalogUrl)}" data-sort-key="smart:${shelf.id}">
-              ${smartShelves.length > 1 ? renderSortHandle(shelf.name) : ''}
-              <div class="account-list-row-main shelf-row-info">
-                <strong>${escapeHtml(shelf.name)}</strong>
-                <br><span class="muted">${escapeHtml(summarizeSmartShelfQuery(shelf.query))}</span>
-                ${shelf.bookCount != null ? `<br><span class="muted">${countLabel('book', shelf.bookCount)}</span>` : ''}
-                ${shelf.previewBookIds && shelf.previewBookIds.length ? `
+const SMART_SHELF_ICON = '<svg class="shelf-smart-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+
+/** One row of the shelves list: a regular shelf, or a smart one (saved catalog filter, search icon). */
+function renderShelfListRow(shelf, { sortable, csrfToken }) {
+  const smart = shelf.kind === 'smart';
+  const covers = shelf.previewBookIds && shelf.previewBookIds.length ? `
                   <div class="shelf-covers-preview">
                     ${shelf.previewBookIds.map((bookId) => `<img class="shelf-cover-thumb" src="${apiBookPath(bookId, 'cover')}" alt="" loading="lazy" onerror="this.style.display='none'">`).join('')}
-                  </div>
-                ` : ''}
-              </div>
-              <div class="shelf-row-actions">
-                ${renderShelfHomeForm(`/shelves/smart/${shelf.id}/home`, shelf.onHome, csrfToken)}
+                  </div>` : '';
+  const actions = smart
+    ? `${renderShelfHomeForm(`/shelves/smart/${shelf.id}/home`, shelf.onHome, csrfToken)}
                 <form method="post" action="/shelves/smart/${shelf.id}/delete" class="admin-inline-form" data-confirm="${escapeHtml(tp('smartShelves.deleteConfirm', { name: shelf.name }))}">
                   ${csrfHiddenField(csrfToken)}
                   <button type="submit" class="profile-remove-btn account-list-remove" title="${escapeHtml(t('smartShelves.delete'))}" aria-label="${escapeHtml(t('smartShelves.delete'))}">&times;</button>
-                </form>
+                </form>`
+    : `${renderShelfHomeForm(`/shelves/${shelf.id}/home`, shelf.onHome, csrfToken)}
+                ${renderListRemoveBtn({
+                  titleKey: 'shelves.delete',
+                  extraAttrs: `data-shelf-delete="${shelf.id}" data-shelf-name="${escapeHtml(shelf.name)}" data-shelf-description="${escapeHtml(shelf.description || '')}"`
+                })}`;
+  return `
+            <div class="table-row table-row-clickable account-list-row shelf-list-row${smart ? ' is-smart' : ''}"${smart ? '' : ` data-shelf-row="${shelf.id}"`} data-href="${escapeHtml(smart ? shelf.catalogUrl : `/shelves/${shelf.id}`)}" data-sort-key="${smart ? 'smart' : 'shelf'}:${shelf.id}">
+              ${sortable ? renderSortHandle(shelf.name) : ''}
+              <div class="account-list-row-main shelf-row-info">
+                <strong>${smart ? `<span class="shelf-smart-mark" title="${escapeHtml(t('smartShelves.badge'))}">${SMART_SHELF_ICON}<span class="visually-hidden">${escapeHtml(t('smartShelves.badge'))}: </span></span>` : ''}${escapeHtml(shelf.name)}</strong>
+                ${smart
+                  ? `<br><span class="muted">${escapeHtml(summarizeSmartShelfQuery(shelf.query))}</span>`
+                  : (shelf.description ? `<br><span class="muted">${escapeHtml(shelf.description)}</span>` : '')}
+                ${shelf.bookCount != null ? `<br><span class="muted">${countLabel('book', shelf.bookCount)}</span>` : ''}
+                ${covers}
               </div>
-            </div>
-          `).join('')}
-        </div>
-      ` : `<p class="muted">${escapeHtml(t('smartShelves.empty'))}</p>`}
-    </section>`;
+              <div class="shelf-row-actions">
+                ${actions}
+              </div>
+            </div>`;
 }
 
-export function renderShelves({ shelves = [], smartShelves = [], user, stats, indexStatus, csrfToken = '' }) {
+/**
+ * /shelves: one list of regular and smart shelves (smart ones marked by a search icon) in the
+ * user's order (`homeLayout.shelfOrder`), drag-sortable as a whole — the home page follows it.
+ */
+export function renderShelves({ shelves = [], smartShelves = [], shelfOrder = [], user, stats, indexStatus, csrfToken = '' }) {
+  const all = orderShelves([
+    ...shelves.map((shelf) => ({ ...shelf, kind: 'shelf' })),
+    ...smartShelves.map((shelf) => ({ ...shelf, kind: 'smart' }))
+  ], shelfOrder);
+  const sortable = all.length > 1;
   const content = `
     <section class="page-intro page-intro-slim">
       <div class="page-intro-copy">
@@ -1742,35 +1752,14 @@ export function renderShelves({ shelves = [], smartShelves = [], user, stats, in
         <button type="button" class="shelf-create-toggle" data-shelf-create-toggle aria-expanded="false" aria-label="${escapeHtml(t('shelves.create'))}" title="${escapeHtml(t('shelves.create'))}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
         <input type="text" name="name" placeholder="${escapeHtml(t('shelves.newPlaceholder'))}" aria-label="${escapeHtml(t('shelves.newPlaceholder'))}" maxlength="80" autocomplete="off" tabindex="-1" aria-hidden="true">
       </form>
-      ${shelves.length + smartShelves.length > 1 ? `<p class="muted shelf-sort-hint">${escapeHtml(t('shelves.sortHint'))}</p>` : ''}
-      ${shelves.length ? `
-        <div class="table-list entity-list"${shelves.length > 1 ? ' data-sortable data-sort-url="/shelves/order"' : ''}>
-          ${shelves.map((shelf) => `
-            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-shelf-row="${shelf.id}" data-href="/shelves/${shelf.id}" data-sort-key="shelf:${shelf.id}">
-              ${shelves.length > 1 ? renderSortHandle(shelf.name) : ''}
-              <div class="account-list-row-main shelf-row-info">
-                <strong>${escapeHtml(shelf.name)}</strong>
-                ${shelf.description ? `<br><span class="muted">${escapeHtml(shelf.description)}</span>` : ''}
-                <br><span class="muted">${countLabel('book', shelf.bookCount)}</span>
-                ${shelf.previewBookIds && shelf.previewBookIds.length ? `
-                  <div class="shelf-covers-preview">
-                    ${shelf.previewBookIds.map((bookId) => `<img class="shelf-cover-thumb" src="${apiBookPath(bookId, 'cover')}" alt="" loading="lazy" onerror="this.style.display='none'">`).join('')}
-                  </div>
-                ` : ''}
-              </div>
-              <div class="shelf-row-actions">
-                ${renderShelfHomeForm(`/shelves/${shelf.id}/home`, shelf.onHome, csrfToken)}
-                ${renderListRemoveBtn({
-                  titleKey: 'shelves.delete',
-                  extraAttrs: `data-shelf-delete="${shelf.id}" data-shelf-name="${escapeHtml(shelf.name)}" data-shelf-description="${escapeHtml(shelf.description || '')}"`
-                })}
-              </div>
-            </div>
-          `).join('')}
+      ${sortable ? `<p class="muted shelf-sort-hint">${escapeHtml(t('shelves.sortHint'))}</p>` : ''}
+      ${smartShelves.length ? `<p class="muted shelf-sort-hint shelf-smart-hint">${SMART_SHELF_ICON} ${escapeHtml(t('smartShelves.hint'))}</p>` : ''}
+      ${all.length ? `
+        <div class="table-list entity-list"${sortable ? ' data-sortable data-sort-url="/shelves/order"' : ''}>
+          ${all.map((shelf) => renderShelfListRow(shelf, { sortable, csrfToken })).join('')}
         </div>
       ` : renderEmptyState({ title: t('shelves.emptyTitle'), text: t('shelves.emptyText') })}
-    </section>
-    ${renderSmartShelvesSection(smartShelves, csrfToken)}`;
+    </section>`;
   return pageShell({ title: t('shelves.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('shelves.title') }], currentPath: '/shelves', csrfToken });
 }
 

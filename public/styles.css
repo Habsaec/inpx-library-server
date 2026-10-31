@@ -3772,11 +3772,18 @@ html[data-theme="light"] .cover-fallback-author {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
+/* Rows' offsetTop is measured from the list (drag-and-drop reorders by it). */
+.is-sortable {
+  position: relative;
+}
+
 .is-sortable > .is-dragging {
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  will-change: transform;
   background: var(--surface);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 8px;
 }
 
@@ -9998,6 +10005,20 @@ form[data-shelf-create].is-open input:focus {
   gap: 4px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* Smart shelf (saved catalog filter) in the one shelves list: a search icon before the name. */
+.shelf-smart-mark {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  color: var(--accent);
+  vertical-align: -2px;
+}
+
+.shelf-smart-hint .shelf-smart-icon {
+  color: var(--accent);
+  vertical-align: -3px;
 }
 
 /* «На главной»: house icon, lit when the shelf is pinned (same look as the app). */

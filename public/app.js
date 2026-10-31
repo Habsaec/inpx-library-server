@@ -7933,12 +7933,17 @@ silenceSkippedViewTransitions();
 attachScrollToTop();
 attachSidebarToggle();
 /**
- * `[data-sortable]` lists (Profile → «Главная страница», /shelves «На главной»): drag a row by its
- * `[data-sort-handle]` (mouse, touch, pen) or move it with ↑↓ on the focused handle. On drop the new
- * order (`data-sort-key` of the rows) goes to `data-sort-url` as `order=a,b,c`; ▲▼ buttons stay
- * for pages without JS and are hidden by `.is-sortable`.
+ * `[data-sortable]` lists (Profile → «Главная страница», /shelves): drag a row by its
+ * `[data-sort-handle]` (mouse, touch, pen) or move it with ↑↓ on the focused handle. The dragged
+ * row follows the pointer, the others slide aside (FLIP on `offsetTop`, which ignores running
+ * transforms) and the row settles into its slot on drop; `prefers-reduced-motion` turns the
+ * motion off. On drop the new order (`data-sort-key` of the rows) goes to `data-sort-url` as
+ * `order=a,b,c`; ▲▼ buttons stay for pages without JS and are hidden by `.is-sortable`.
  */
 function initSortableLists() {
+  const SLIDE_MS = 180;
+  const reduceMotion = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+
   document.querySelectorAll('[data-sortable]').forEach((list) => {
     const url = list.getAttribute('data-sort-url');
     if (!url) return;
@@ -7957,6 +7962,24 @@ function initSortableLists() {
         .finally(() => list.classList.remove('is-saving'));
     };
 
+    /** Runs `mutate` (a DOM move) and slides the other rows from their old to their new place. */
+    const slideAround = (mutate, skip = null) => {
+      const moving = rows().filter((el) => el !== skip);
+      const before = new Map(moving.map((el) => [el, el.offsetTop]));
+      mutate();
+      if (reduceMotion()) return;
+      for (const el of moving) {
+        const dy = before.get(el) - el.offsetTop;
+        if (!dy) continue;
+        el.style.transition = 'none';
+        el.style.transform = `translateY(${dy}px)`;
+        // Force the start position before the transition back to 0.
+        void el.offsetHeight;
+        el.style.transition = `transform ${SLIDE_MS}ms ease`;
+        el.style.transform = '';
+      }
+    };
+
     list.addEventListener('pointerdown', (e) => {
       const handle = e.target.closest('[data-sort-handle]');
       const row = handle?.closest('[data-sort-key]');
@@ -7964,28 +7987,68 @@ function initSortableLists() {
       e.preventDefault();
       const before = keys();
       const pointerId = e.pointerId;
+      const startY = e.clientY;
+      const startTop = row.offsetTop;
+      const startScroll = window.scrollY;
+      let lastY = e.clientY;
+      let scrollTimer = 0;
       row.classList.add('is-dragging');
+      row.style.transition = 'none';
+
+      // The row stays under the pointer wherever the DOM put it.
+      const follow = () => {
+        const dy = lastY - startY + (window.scrollY - startScroll) - (row.offsetTop - startTop);
+        row.style.transform = reduceMotion() ? '' : `translateY(${dy}px)`;
+      };
+      const reorder = () => {
+        const y = lastY - list.getBoundingClientRect().top;
+        const others = rows().filter((el) => el !== row);
+        const next = others.find((el) => y < el.offsetTop + el.offsetHeight / 2);
+        if (next) {
+          if (row.nextElementSibling !== next) slideAround(() => list.insertBefore(row, next), row);
+        } else if (list.lastElementChild !== row) {
+          slideAround(() => list.appendChild(row), row);
+        }
+        follow();
+      };
+      // Near the top / bottom edge of the window the page scrolls on its own.
+      const autoScroll = () => {
+        const edge = 48;
+        const step = lastY < edge ? -12 : lastY > window.innerHeight - edge ? 12 : 0;
+        if (step) {
+          window.scrollBy(0, step);
+          reorder();
+        }
+        scrollTimer = step ? window.setTimeout(autoScroll, 16) : 0;
+      };
       // Listen on the document: moving the row in the DOM drops any pointer capture on the handle.
       const onMove = (ev) => {
         if (ev.pointerId !== pointerId) return;
         ev.preventDefault();
-        const others = rows().filter((el) => el !== row);
-        const next = others.find((el) => {
-          const r = el.getBoundingClientRect();
-          return ev.clientY < r.top + r.height / 2;
-        });
-        if (next) {
-          if (row.nextElementSibling !== next) list.insertBefore(row, next);
-        } else if (list.lastElementChild !== row) {
-          list.appendChild(row);
-        }
+        lastY = ev.clientY;
+        reorder();
+        if (!scrollTimer) autoScroll();
       };
       const onEnd = (ev) => {
         if (ev.pointerId !== pointerId) return;
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onEnd);
         document.removeEventListener('pointercancel', onEnd);
-        row.classList.remove('is-dragging');
+        window.clearTimeout(scrollTimer);
+        scrollTimer = 0;
+        const done = () => {
+          row.classList.remove('is-dragging');
+          row.style.transition = '';
+          row.style.transform = '';
+        };
+        if (reduceMotion() || !row.style.transform) {
+          done();
+        } else {
+          // Settle into the slot, then drop the lifted look.
+          row.style.transition = `transform ${SLIDE_MS}ms ease`;
+          row.style.transform = '';
+          window.setTimeout(done, SLIDE_MS);
+        }
         if (keys() !== before) save();
       };
       document.addEventListener('pointermove', onMove, { passive: false });
@@ -8001,8 +8064,10 @@ function initSortableLists() {
       e.preventDefault();
       const sibling = e.key === 'ArrowUp' ? row.previousElementSibling : row.nextElementSibling;
       if (!sibling?.hasAttribute('data-sort-key')) return;
-      if (e.key === 'ArrowUp') list.insertBefore(row, sibling);
-      else list.insertBefore(sibling, row);
+      slideAround(() => {
+        if (e.key === 'ArrowUp') list.insertBefore(row, sibling);
+        else list.insertBefore(sibling, row);
+      });
       handle.focus();
       save();
     });

@@ -87,3 +87,22 @@ test('shelves page: lists are drag-sortable, no separate home order block', asyn
   assert.ok(profile.includes('data-sort-url="/profile/home-layout"'));
   assert.ok(profile.includes('data-sort-key="novinki"'));
 });
+
+test('one mixed shelves list: full order saved as is, smart shelves marked', async () => {
+  const layout = normalizeHomeLayout('');
+  const all = ['shelf:1', 'shelf:2', 'smart:3'];
+  assert.deepEqual(reorderShelfGroup(layout, all, ['smart:3', 'shelf:2', 'shelf:1']).shelfOrder, ['smart:3', 'shelf:2', 'shelf:1']);
+  assert.equal(reorderShelfGroup(layout, all, ['smart:3', 'shelf:2']), layout);
+
+  const { renderShelves } = await import('../src/templates/library.js');
+  const html = renderShelves({
+    user: { username: 'u' }, stats: {}, indexStatus: {},
+    shelves: [{ id: 1, name: 'Regular one', bookCount: 0, previewBookIds: [] }],
+    smartShelves: [{ id: 3, name: 'Smart one', query: 'genre=x', catalogUrl: '/catalog?genre=x', bookCount: 2, previewBookIds: [] }],
+    shelfOrder: ['smart:3', 'shelf:1']
+  });
+  assert.equal((html.match(/data-sortable/g) || []).length, 1, 'one list');
+  assert.ok(html.indexOf('data-sort-key="smart:3"') < html.indexOf('data-sort-key="shelf:1"'), 'smart shelf first, as ordered');
+  assert.ok(html.includes('shelf-smart-mark'), 'smart shelf has the search icon');
+  assert.equal((html.match(/shelf-smart-mark/g) || []).length, 1, 'only on the smart shelf');
+});

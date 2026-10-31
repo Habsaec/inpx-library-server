@@ -6,8 +6,8 @@
  * known section (unknown ids dropped, missing ones inserted at their default position), `hidden`
  * the switched-off ones. Each client renders only the sections it has: `recent`
  * («Недавно читали») exists only in the app. `shelfOrder` is the user's order of all shelves
- * (`shelf:<id>` / `smart:<id>`), set by dragging them in the shelves lists: the lists follow it
- * and so do the pinned shelves on the home page. Shelves not listed (new ones) follow in the old
+ * (`shelf:<id>` / `smart:<id>`), set by dragging them in the one shelves list (regular and smart
+ * shelves mixed): the list follows it and so do the pinned shelves on the home page. Shelves not listed (new ones) follow in the old
  * order — regular, then smart, by name.
  */
 import { getUserHomeLayoutRaw, setUserHomeLayoutRaw } from './db.js';
@@ -126,12 +126,15 @@ export function reorderHomeSections(layout, ids, visibleIds = HOME_SECTION_IDS) 
 }
 
 /**
- * Drag in a shelves list: `groupKeys` is the new order of one list (all regular or all smart
- * shelves); `allKeys` is every shelf in the current order. The other kind keeps its slots, the
- * whole order is stored. Anything but a permutation of that list leaves the layout as is.
+ * Drag in the shelves list. `allKeys` is every shelf in the current order; `keys` is either all of
+ * them in the new order (one mixed list of regular and smart shelves) or, from older clients, the
+ * new order of one kind — then the other kind keeps its slots. Anything else leaves the layout as is.
  */
-export function reorderShelfGroup(layout, allKeys, groupKeys) {
-  const wanted = shelfKeyList(groupKeys);
+export function reorderShelfGroup(layout, allKeys, keys) {
+  const wanted = shelfKeyList(keys);
+  if (wanted.length === allKeys.length && allKeys.every((key) => wanted.includes(key))) {
+    return { ...layout, shelfOrder: wanted };
+  }
   const kind = wanted[0]?.split(':')[0];
   const slots = allKeys.filter((key) => key.split(':')[0] === kind);
   if (!kind || wanted.length !== slots.length || !slots.every((key) => wanted.includes(key))) return layout;
