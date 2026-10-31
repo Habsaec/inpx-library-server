@@ -3728,6 +3728,72 @@ html[data-theme="light"] .cover-fallback-author {
   padding: 0 10px;
 }
 
+.home-layout-row .admin-checkbox-label,
+.home-layout-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Drag handle of [data-sortable] lists; ▲▼ stay only for pages without JS. */
+.sort-handle {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-height: 40px;
+  margin-left: -6px;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.sort-handle:hover,
+.sort-handle:focus-visible {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.is-sortable .sort-handle {
+  display: inline-flex;
+}
+
+.is-sortable .home-layout-move {
+  display: none;
+}
+
+.is-sortable .home-layout-row {
+  justify-content: flex-start;
+}
+
+.is-sortable > .shelf-list-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.is-sortable > .is-dragging {
+  position: relative;
+  z-index: 1;
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+}
+
+.is-sortable > .is-dragging .sort-handle {
+  cursor: grabbing;
+}
+
+.is-sortable.is-saving {
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .home-layout-row {
+    transition: box-shadow 0.15s ease;
+  }
+}
+
 .card-series {
   font-size: 0.6875rem;
   color: var(--muted);
@@ -9222,6 +9288,15 @@ html[data-theme="light"] .sidebar-overlay {
     justify-content: flex-start;
   }
 
+  /* Sortable shelves: the ⠿ handle stays left of the info, the buttons go under it. */
+  .is-sortable > .shelf-list-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .is-sortable > .shelf-list-row .shelf-row-actions {
+    grid-column: 2;
+  }
+
   .shelf-covers-preview {
     flex-wrap: nowrap;
     overflow: hidden;
@@ -9920,9 +9995,45 @@ form[data-shelf-create].is-open input:focus {
 .shelf-row-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* «На главной»: house icon, lit when the shelf is pinned (same look as the app). */
+.shelf-home-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s, background-color .15s;
+}
+
+.shelf-home-toggle:hover {
+  color: var(--text);
+  background-color: var(--button-bg-hover);
+}
+
+.shelf-home-toggle.is-active {
+  color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.shelf-home-toggle.is-active:hover {
+  background-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.shelf-home-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--link) 45%, transparent);
+  outline-offset: 2px;
 }
 
 /* ?? Admin responsive (tablet) ?? */

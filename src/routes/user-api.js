@@ -4,7 +4,7 @@ import { t, tp, translateKnownErrorMessage, countLabel } from '../i18n.js';
 import { requireApiAuth } from '../middleware/auth.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import {
-  db, getUserShelves, getShelfById, createShelf, updateShelf, deleteShelf,
+  db, getUserShelves, getShelfById, createShelf, updateShelf, deleteShelf, setShelfOnHome,
   addBookToShelf, removeBookFromShelf, getShelfBooks, getBookShelves,
   getEreaderEmail, setEreaderEmail, setUserAccountEmail, getSmtpSettings, getUserByUsername, isEreaderEmailAllowedForUser,
   getMeta, setMeta, createAppPairingToken, consumeAppPairingToken,
@@ -32,6 +32,7 @@ import { effectiveContentLangs } from '../user-content-langs.js';
 import { isServerBusyError } from '../services/heavy-task-limiter.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
+import { getUserHomeLayout, orderShelves } from '../home-layout.js';
 import { normalizeBatchIdsParam, resolveAdhocBookIdsFromClientList, resolveBatchScopeBookIds } from './download.js';
 import { decodeBookRef } from '../utils/book-ref.js';
 
@@ -383,7 +384,10 @@ export function registerUserApiRoutes(app, deps) {
   });
 
   app.get('/api/shelves', requireApiAuth, (req, res) => {
-    res.json(getUserShelves(req.user.username));
+    // In the user's order (drag in the shelves list, homeLayout.shelfOrder) — same as the web /shelves.
+    const username = req.user.username;
+    res.json(orderShelves(getUserShelves(username).map((s) => ({ ...s, kind: 'shelf' })), getUserHomeLayout(username).shelfOrder)
+      .map(({ kind, ...s }) => s));
   });
 
   app.post('/api/shelves', requireApiAuth, (req, res) => {
@@ -410,6 +414,15 @@ export function registerUserApiRoutes(app, deps) {
     const deleted = deleteShelf(Number(req.params.id), req.user.username);
     if (!deleted) return apiFail(res, 404, ApiErrorCode.SHELF_NOT_FOUND, t('shelf.notFound'));
     res.json({ ok: true });
+  });
+
+  /* Pin to the home page (same column as the web form POST /shelves/:id/home): { on } → { ok, onHome }. */
+  app.post('/api/shelves/:id/home', requireApiAuth, (req, res) => {
+    const on = [true, 1, '1', 'true'].includes(req.body?.on);
+    if (!setShelfOnHome(Number(req.params.id), req.user.username, on)) {
+      return apiFail(res, 404, ApiErrorCode.SHELF_NOT_FOUND, t('shelf.notFound'));
+    }
+    res.json({ ok: true, onHome: on ? 1 : 0 });
   });
 
   app.get('/api/shelves/:id/books', requireApiAuth, (req, res) => {

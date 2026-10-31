@@ -4577,7 +4577,7 @@ function attachShelfActions() {
 
   for (const row of document.querySelectorAll('.table-row-clickable[data-href]')) {
     row.addEventListener('click', (e) => {
-      if (e.target.closest('button, a, input')) return;
+      if (e.target.closest('button, a, input, [data-sort-handle]')) return;
       window.location.href = row.dataset.href;
     });
   }
@@ -7931,8 +7931,86 @@ attachBfCacheFacetReload();
 silenceSkippedViewTransitions();
 attachScrollToTop();
 attachSidebarToggle();
+/**
+ * `[data-sortable]` lists (Profile → «Главная страница», /shelves «На главной»): drag a row by its
+ * `[data-sort-handle]` (mouse, touch, pen) or move it with ↑↓ on the focused handle. On drop the new
+ * order (`data-sort-key` of the rows) goes to `data-sort-url` as `order=a,b,c`; ▲▼ buttons stay
+ * for pages without JS and are hidden by `.is-sortable`.
+ */
+function initSortableLists() {
+  document.querySelectorAll('[data-sortable]').forEach((list) => {
+    const url = list.getAttribute('data-sort-url');
+    if (!url) return;
+    list.classList.add('is-sortable');
+    const rows = () => [...list.children].filter((el) => el.hasAttribute('data-sort-key'));
+    const keys = () => rows().map((el) => el.getAttribute('data-sort-key')).join(',');
+    const save = () => {
+      list.classList.add('is-saving');
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        body: new URLSearchParams({ order: keys() }),
+      })
+        .then((res) => { if (!res.ok) throw new Error(String(res.status)); })
+        .catch(() => window.location.reload())
+        .finally(() => list.classList.remove('is-saving'));
+    };
+
+    list.addEventListener('pointerdown', (e) => {
+      const handle = e.target.closest('[data-sort-handle]');
+      const row = handle?.closest('[data-sort-key]');
+      if (!row || row.parentElement !== list || e.button > 0) return;
+      e.preventDefault();
+      const before = keys();
+      const pointerId = e.pointerId;
+      row.classList.add('is-dragging');
+      // Listen on the document: moving the row in the DOM drops any pointer capture on the handle.
+      const onMove = (ev) => {
+        if (ev.pointerId !== pointerId) return;
+        ev.preventDefault();
+        const others = rows().filter((el) => el !== row);
+        const next = others.find((el) => {
+          const r = el.getBoundingClientRect();
+          return ev.clientY < r.top + r.height / 2;
+        });
+        if (next) {
+          if (row.nextElementSibling !== next) list.insertBefore(row, next);
+        } else if (list.lastElementChild !== row) {
+          list.appendChild(row);
+        }
+      };
+      const onEnd = (ev) => {
+        if (ev.pointerId !== pointerId) return;
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onEnd);
+        document.removeEventListener('pointercancel', onEnd);
+        row.classList.remove('is-dragging');
+        if (keys() !== before) save();
+      };
+      document.addEventListener('pointermove', onMove, { passive: false });
+      document.addEventListener('pointerup', onEnd);
+      document.addEventListener('pointercancel', onEnd);
+    });
+
+    list.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      const handle = e.target.closest('[data-sort-handle]');
+      const row = handle?.closest('[data-sort-key]');
+      if (!row || row.parentElement !== list) return;
+      e.preventDefault();
+      const sibling = e.key === 'ArrowUp' ? row.previousElementSibling : row.nextElementSibling;
+      if (!sibling?.hasAttribute('data-sort-key')) return;
+      if (e.key === 'ArrowUp') list.insertBefore(row, sibling);
+      else list.insertBefore(sibling, row);
+      handle.focus();
+      save();
+    });
+  });
+}
+
 initAppDownloadUi();
 initAppPairingUi();
+initSortableLists();
 attachTopbarSearchToggle();
 attachGooeySearch();
 attachAdminTabs();

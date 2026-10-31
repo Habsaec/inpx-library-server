@@ -1679,12 +1679,14 @@ function summarizeSmartShelfQuery(query) {
   return parts.join(' · ');
 }
 
+/** «На главной» as a house icon (lit when pinned), like the app's `ShelfHomeToggle`. */
 function renderShelfHomeForm(action, onHome, csrfToken) {
+  const label = t(onHome ? 'shelves.home.remove' : 'shelves.home.add');
   return `
     <form method="post" action="${escapeHtml(action)}" class="admin-inline-form">
       ${csrfHiddenField(csrfToken)}
       <input type="hidden" name="on" value="${onHome ? '0' : '1'}">
-      <button type="submit" class="button${onHome ? ' is-active' : ''}">${escapeHtml(t(onHome ? 'shelves.home.remove' : 'shelves.home.add'))}</button>
+      <button type="submit" class="shelf-home-toggle${onHome ? ' is-active' : ''}" aria-pressed="${onHome ? 'true' : 'false'}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="${onHome ? '2.4' : '1.75'}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
     </form>`;
 }
 
@@ -1696,9 +1698,10 @@ function renderSmartShelvesSection(smartShelves, csrfToken) {
       </div>
       <p class="muted">${escapeHtml(t('smartShelves.hint'))}</p>
       ${smartShelves.length ? `
-        <div class="table-list entity-list">
+        <div class="table-list entity-list"${smartShelves.length > 1 ? ' data-sortable data-sort-url="/shelves/order"' : ''}>
           ${smartShelves.map((shelf) => `
-            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-href="${escapeHtml(shelf.catalogUrl)}">
+            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-href="${escapeHtml(shelf.catalogUrl)}" data-sort-key="smart:${shelf.id}">
+              ${smartShelves.length > 1 ? renderSortHandle(shelf.name) : ''}
               <div class="account-list-row-main shelf-row-info">
                 <strong>${escapeHtml(shelf.name)}</strong>
                 <br><span class="muted">${escapeHtml(summarizeSmartShelfQuery(shelf.query))}</span>
@@ -1713,7 +1716,7 @@ function renderSmartShelvesSection(smartShelves, csrfToken) {
                 ${renderShelfHomeForm(`/shelves/smart/${shelf.id}/home`, shelf.onHome, csrfToken)}
                 <form method="post" action="/shelves/smart/${shelf.id}/delete" class="admin-inline-form" data-confirm="${escapeHtml(tp('smartShelves.deleteConfirm', { name: shelf.name }))}">
                   ${csrfHiddenField(csrfToken)}
-                  <button type="submit" class="button-danger">${escapeHtml(t('smartShelves.delete'))}</button>
+                  <button type="submit" class="profile-remove-btn account-list-remove" title="${escapeHtml(t('smartShelves.delete'))}" aria-label="${escapeHtml(t('smartShelves.delete'))}">&times;</button>
                 </form>
               </div>
             </div>
@@ -1739,10 +1742,12 @@ export function renderShelves({ shelves = [], smartShelves = [], user, stats, in
         <button type="button" class="shelf-create-toggle" data-shelf-create-toggle aria-expanded="false" aria-label="${escapeHtml(t('shelves.create'))}" title="${escapeHtml(t('shelves.create'))}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
         <input type="text" name="name" placeholder="${escapeHtml(t('shelves.newPlaceholder'))}" aria-label="${escapeHtml(t('shelves.newPlaceholder'))}" maxlength="80" autocomplete="off" tabindex="-1" aria-hidden="true">
       </form>
+      ${shelves.length + smartShelves.length > 1 ? `<p class="muted shelf-sort-hint">${escapeHtml(t('shelves.sortHint'))}</p>` : ''}
       ${shelves.length ? `
-        <div class="table-list entity-list">
+        <div class="table-list entity-list"${shelves.length > 1 ? ' data-sortable data-sort-url="/shelves/order"' : ''}>
           ${shelves.map((shelf) => `
-            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-shelf-row="${shelf.id}" data-href="/shelves/${shelf.id}">
+            <div class="table-row table-row-clickable account-list-row shelf-list-row" data-shelf-row="${shelf.id}" data-href="/shelves/${shelf.id}" data-sort-key="shelf:${shelf.id}">
+              ${shelves.length > 1 ? renderSortHandle(shelf.name) : ''}
               <div class="account-list-row-main shelf-row-info">
                 <strong>${escapeHtml(shelf.name)}</strong>
                 ${shelf.description ? `<br><span class="muted">${escapeHtml(shelf.description)}</span>` : ''}
@@ -2583,11 +2588,18 @@ function renderProfileSettingsSubnav(active = 'account') {
     </nav>`;
 }
 
-/** Profile → view «Главная страница»: show / hide and ▲▼ per web home block (app-only `recent` kept as is). */
+/** Drag handle of a `[data-sortable]` list (app.js `initSortableLists`; ↑↓ keys move the row too). */
+function renderSortHandle(label) {
+  const title = `${label}: ${t('sort.handle')}`;
+  return `<span class="sort-handle" data-sort-handle role="button" tabindex="0" aria-label="${escapeHtml(title)}" title="${escapeHtml(t('sort.handle'))}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>`;
+}
+
+/** Profile → view «Главная страница»: show / hide and drag (▲▼ without JS) per web home block (app-only `recent` kept as is). */
 function renderHomeLayoutForm(layout, csrfToken) {
   const ids = layout.order.filter((id) => WEB_HOME_SECTION_IDS.includes(id));
   const rows = ids.map((id, i) => `
-    <li class="home-layout-row">
+    <li class="home-layout-row" data-sort-key="${escapeHtml(id)}">
+      ${renderSortHandle(t(`profile.homeLayout.section.${id}`))}
       <label class="admin-checkbox-label">
         <input type="checkbox" name="show" value="${escapeHtml(id)}"${isHomeSectionVisible(layout, id) ? ' checked' : ''}>
         ${escapeHtml(t(`profile.homeLayout.section.${id}`))}
@@ -2604,7 +2616,7 @@ function renderHomeLayoutForm(layout, csrfToken) {
           <p class="muted" style="margin:4px 0 8px;font-size:12px;">${escapeHtml(t('profile.homeLayout.hint'))}</p>
           <form method="post" action="/profile/home-layout" class="vertical-form">
             ${csrfHiddenField(csrfToken)}
-            <ul class="home-layout-list">${rows}</ul>
+            <ul class="home-layout-list" data-sortable data-sort-url="/profile/home-layout">${rows}</ul>
             <div class="actions">
               <button type="submit" class="button-primary">${escapeHtml(t('profile.save'))}</button>
               <button type="submit" name="reset" value="1" class="button-secondary">${escapeHtml(t('profile.homeLayout.reset'))}</button>

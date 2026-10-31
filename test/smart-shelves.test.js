@@ -1,12 +1,14 @@
 ﻿import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { initDb, db, createUser, deleteUser, getUserStats } from '../src/db.js';
+import { initDb, db, createUser, deleteUser, getUserStats, createShelf, getUserShelves } from '../src/db.js';
 import {
   parseSmartShelfFilter, serializeSmartShelfFilter, createSmartShelf, updateSmartShelf, deleteSmartShelf,
   listSmartShelves, getSmartShelf, getSmartShelfBooks, setSmartShelfOnHome
 } from '../src/smart-shelves.js';
 import { registerSmartShelfRoutes } from '../src/routes/smart-shelves.js';
+import { registerUserApiRoutes } from '../src/routes/user-api.js';
+import { setUserHomeLayout } from '../src/home-layout.js';
 import { registerOpdsRoutes } from '../src/routes/opds.js';
 import { renderShelves, renderCatalog, renderHome } from '../src/templates/library.js';
 import { getPinnedHomeShelves } from '../src/routes/library.js';
@@ -51,6 +53,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   registerSmartShelfRoutes(app);
+  registerUserApiRoutes(app, { batchEmailLocks: new Set() });
   registerOpdsRoutes(app, { baseUrl: () => 'http://example' });
   server = await new Promise((resolve) => {
     const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
@@ -233,6 +236,9 @@ test('smart shelves show cover previews like regular shelves and can be pinned t
   assert.ok(page.includes('shelf-cover-thumb'), 'smart shelf row has cover thumbs');
   assert.ok(page.includes(`action="/shelves/smart/${id}/home"`));
   assert.ok(/name="on" value="0"/.test(page), 'pinned shelf offers to unpin');
+  assert.ok(page.includes('class="shelf-home-toggle is-active" aria-pressed="true"'), 'pinned shelf: lit house icon');
+  assert.ok(page.includes('class="profile-remove-btn account-list-remove"'), 'smart shelf delete is the same × as a regular shelf');
+  assert.ok(!page.includes('button-danger'), 'no big delete button');
 
   const regular = renderShelves({
     shelves: [{ id: 5, name: 'Reg', bookCount: 0, previewBookIds: [], onHome: 0 }],
@@ -240,6 +246,7 @@ test('smart shelves show cover previews like regular shelves and can be pinned t
   });
   assert.ok(regular.includes('action="/shelves/5/home"'));
   assert.ok(/name="on" value="1"/.test(regular));
+  assert.ok(regular.includes('class="shelf-home-toggle" aria-pressed="false"'), 'unpinned shelf: plain house icon');
 
   const book = { id: IDS[0], title: 'Smart Alpha', authors: 'Smart Author', genres: 'smartsf', ext: 'fb2', lang: 'ru' };
   const homeShelves = [{ title: 'Pinned shelf title', href: '/catalog?a=1&b=2', items: [book] }];
@@ -280,5 +287,44 @@ test('smart shelf preview is cached until the catalog caches reset', async () =>
     db.prepare("UPDATE books SET deleted = 0 WHERE id = ?").run(IDS[2]);
     markLibraryDedupProjectionStale();
     deleteSmartShelf(id, USER);
+  }
+});
+
+test('pin to home API: regular and smart shelves, own shelves only', async () => {
+  const shelfId = createShelf(USER, 'Pin API shelf');
+  const smartId = createSmartShelf(USER, 'Pin API smart', { genre: ['smartsf'] });
+  const post = (path, username, body) => fetch(`${baseUrl}${path}`, { method: 'POST', headers: json(username), body: JSON.stringify(body) });
+
+  assert.equal((await fetch(`${baseUrl}/api/shelves/${shelfId}/home`, { method: 'POST' })).status, 401);
+  assert.deepEqual(await (await post(`/api/shelves/${shelfId}/home`, USER, { on: true })).json(), { ok: true, onHome: 1 });
+  assert.equal(getUserShelves(USER).find((s) => s.id === shelfId).onHome, 1);
+  assert.deepEqual(await (await post(`/api/smart-shelves/${smartId}/home`, USER, { on: 1 })).json(), { ok: true, onHome: 1 });
+  assert.equal(getSmartShelf(smartId, USER).onHome, 1);
+
+  assert.equal((await post(`/api/shelves/${shelfId}/home`, OTHER, { on: false })).status, 404);
+  assert.equal((await post(`/api/smart-shelves/${smartId}/home`, OTHER, { on: false })).status, 404);
+
+  assert.deepEqual(await (await post(`/api/shelves/${shelfId}/home`, USER, { on: false })).json(), { ok: true, onHome: 0 });
+  assert.equal(getUserShelves(USER).find((s) => s.id === shelfId).onHome, 0);
+  deleteSmartShelf(smartId, USER);
+  db.prepare('DELETE FROM shelves WHERE id = ?').run(shelfId);
+});
+
+test('shelf lists follow the user order (drag in the shelves list)', async () => {
+  const a = createShelf(USER, 'Order A');
+  const b = createShelf(USER, 'Order B');
+  const s1 = createSmartShelf(USER, 'Order S1', { genre: ['smartsf'] });
+  const s2 = createSmartShelf(USER, 'Order S2', { genre: ['smartdet'] });
+  try {
+    setUserHomeLayout(USER, { shelfOrder: [`smart:${s2}`, `shelf:${b}`] });
+    const regular = (await (await fetch(`${baseUrl}/api/shelves`, { headers: auth(USER) })).json()).map((s) => s.id);
+    assert.deepEqual(regular.slice(0, 2), [b, a]);
+    const smart = (await (await fetch(`${baseUrl}/api/smart-shelves`, { headers: auth(USER) })).json()).map((s) => s.id);
+    assert.deepEqual(smart.slice(0, 2), [s2, s1]);
+  } finally {
+    setUserHomeLayout(USER, '');
+    deleteSmartShelf(s1, USER);
+    deleteSmartShelf(s2, USER);
+    db.prepare('DELETE FROM shelves WHERE id IN (?, ?)').run(a, b);
   }
 });

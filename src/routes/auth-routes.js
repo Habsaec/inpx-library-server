@@ -39,7 +39,7 @@ import { isOidcConfigured } from '../services/oidc.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolvePublicBaseUrl, sendPasswordResetEmail } from '../services/password-reset.js';
 import { createKosyncPassword, hasKosyncPassword, revokeKosyncPassword } from '../kosync.js';
-import { getUserHomeLayout, setUserHomeLayout, moveHomeSection, WEB_HOME_SECTION_IDS } from '../home-layout.js';
+import { getUserHomeLayout, setUserHomeLayout, moveHomeSection, reorderHomeSections, WEB_HOME_SECTION_IDS } from '../home-layout.js';
 
 /** Only the current catalog URL, without a view override, so the saved preference applies. */
 function safeCatalogViewReturn(value) {
@@ -497,6 +497,13 @@ export function registerAuthRoutes(app, deps) {
   app.post('/profile/home-layout', requireWebAuth, (req, res) => {
     try {
       const username = req.user.username;
+      // Drag-and-drop (app.js): `order=continue,novinki,…` only reorders, switches stay as they are.
+      if (req.body.order !== undefined) {
+        const ids = lastFormValue(req.body.order).split(',');
+        setUserHomeLayout(username, reorderHomeSections(getUserHomeLayout(username), ids, WEB_HOME_SECTION_IDS));
+        if (String(req.get('accept') || '').includes('application/json')) return res.json({ ok: true });
+        return res.send(renderSettingsPage(req, t('profile.homeLayout.saved'), req.csrfToken || '', 'view'));
+      }
       if (lastFormValue(req.body.reset) === '1') {
         setUserHomeLayout(username, '');
       } else {
@@ -505,7 +512,7 @@ export function registerAuthRoutes(app, deps) {
         // Web checkboxes rule the web blocks; the app-only «recent» keeps its own switch.
         const hidden = current.hidden.filter((id) => !WEB_HOME_SECTION_IDS.includes(id))
           .concat(WEB_HOME_SECTION_IDS.filter((id) => !show.has(id)));
-        let next = { order: current.order, hidden };
+        let next = { ...current, hidden };
         const [moveId, direction] = lastFormValue(req.body.move).split(':');
         if (moveId && (direction === 'up' || direction === 'down')) {
           next = moveHomeSection(next, moveId, direction, WEB_HOME_SECTION_IDS);

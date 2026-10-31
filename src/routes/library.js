@@ -106,7 +106,7 @@ import {
 } from '../flibusta-sidecar.js';
 import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup } from '../genre-map.js';
 import { clearCardHtmlCache } from '../templates/shared.js';
-import { getUserHomeLayout, isHomeSectionVisible } from '../home-layout.js';
+import { getUserHomeLayout, setUserHomeLayout, isHomeSectionVisible, orderShelves, homeShelfKey, reorderShelfGroup } from '../home-layout.js';
 
 // --- Library routes ---
 // "First Last" display names (home quotes) vs "Last First Middle" in the index.
@@ -286,21 +286,45 @@ function getHomeNewestDisplayCount() {
 
 const HOME_SHELVES_MAX = 8;
 
-/** Полки (обычные и умные), закреплённые пользователем на главной; пустые не показываем. */
+/** Обычные полки пользователя в его порядке (перетаскивание в списке полок, `homeLayout.shelfOrder`). */
+export function getOrderedUserShelves(username, shelfOrder = getUserHomeLayout(username).shelfOrder) {
+  return orderShelves(getUserShelves(username).map((s) => ({ ...s, kind: 'shelf' })), shelfOrder).map(({ kind, ...s }) => s);
+}
+
+/** Умные полки в порядке пользователя (`opts` — как у `listSmartShelves`). */
+export function getOrderedSmartShelves(username, opts, shelfOrder = getUserHomeLayout(username).shelfOrder) {
+  return orderShelves(listSmartShelves(username, opts).map((s) => ({ ...s, kind: 'smart' })), shelfOrder).map(({ kind, ...s }) => s);
+}
+
+/**
+ * Все полки (обычные и умные) без книг, в порядке пользователя (`homeLayout.shelfOrder`;
+ * без него — обычные, затем умные, по имени). Главная берёт из них закреплённые.
+ */
+export function listShelfRefs(username) {
+  const refs = [
+    ...getUserShelves(username).map((s) => ({ id: s.id, kind: 'shelf', title: s.name, onHome: s.onHome, shelf: s })),
+    ...listSmartShelves(username).map((s) => ({ id: s.id, kind: 'smart', title: s.name, onHome: s.onHome, shelf: s }))
+  ];
+  return orderShelves(refs, getUserHomeLayout(username).shelfOrder);
+}
+
+/** Полки, закреплённые пользователем на главной; пустые не показываем. */
 export function getPinnedHomeShelves(username, limit) {
   const result = [];
   const contentLangs = effectiveContentLangs(username);
-  for (const shelf of getUserShelves(username)) {
-    if (!shelf.onHome) continue;
-    result.push({ id: shelf.id, kind: 'shelf', title: shelf.name, href: `/shelves/${shelf.id}`, items: getShelfBooks(shelf.id, username).slice(0, limit) });
-  }
-  for (const shelf of listSmartShelves(username)) {
-    if (!shelf.onHome) continue;
+  for (const ref of listShelfRefs(username)) {
+    if (!ref.onHome) continue;
+    if (result.length >= HOME_SHELVES_MAX) break;
+    let items = [];
     try {
-      result.push({ id: shelf.id, kind: 'smart', title: shelf.name, href: shelf.catalogUrl, items: getSmartShelfFirstPage(shelf, { pageSize: limit, langs: contentLangs }).items.map((book) => ({ ...book })) });
+      items = ref.kind === 'smart'
+        ? getSmartShelfFirstPage(ref.shelf, { pageSize: limit, langs: contentLangs }).items.map((book) => ({ ...book }))
+        : getShelfBooks(ref.id, username).slice(0, limit);
     } catch { /* битый фильтр не должен ломать главную */ }
+    if (!items.length) continue;
+    result.push({ id: ref.id, kind: ref.kind, title: ref.title, href: ref.kind === 'smart' ? ref.shelf.catalogUrl : `/shelves/${ref.id}`, items });
   }
-  return result.filter((shelf) => shelf.items.length).slice(0, HOME_SHELVES_MAX);
+  return result;
 }
 
 /** `?lang=` on author / series / genre pages, narrowed by the profile languages. */
@@ -1104,8 +1128,24 @@ export function registerLibraryRoutes(app, deps) {
 
   app.get('/shelves', requireWebAuth, (req, res) => {
     const stats = getCachedStats();
-    const shelves = getUserShelves(req.user.username);
-    res.send(renderShelves({ shelves, smartShelves: listSmartShelves(req.user.username, { withPreview: true }), user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '' }));
+    const username = req.user.username;
+    const shelfOrder = getUserHomeLayout(username).shelfOrder;
+    res.send(renderShelves({
+      shelves: getOrderedUserShelves(username, shelfOrder),
+      smartShelves: getOrderedSmartShelves(username, { withPreview: true }, shelfOrder),
+      user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
+    }));
+  });
+
+  /* Drag-and-drop in a shelves list (app.js): `order=shelf:3,shelf:1,…` (one kind) → homeLayout.shelfOrder,
+     which the shelves lists, the web home and /api/home/shelves follow (shared with the app). */
+  app.post('/shelves/order', requireWebAuth, (req, res) => {
+    const username = req.user.username;
+    const allKeys = listShelfRefs(username).map((ref) => homeShelfKey(ref));
+    const groupKeys = String([].concat(req.body?.order ?? '').pop() || '').split(',');
+    setUserHomeLayout(username, reorderShelfGroup(getUserHomeLayout(username), allKeys, groupKeys));
+    if (String(req.get('accept') || '').includes('application/json')) return res.json({ ok: true });
+    res.redirect(303, '/shelves');
   });
 
   app.post('/shelves/:id/home', requireWebAuth, (req, res) => {

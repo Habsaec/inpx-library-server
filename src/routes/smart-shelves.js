@@ -9,13 +9,18 @@ import { safePage } from '../utils/safe-int.js';
 import {
   listSmartShelves, getSmartShelf, createSmartShelf, updateSmartShelf, deleteSmartShelf, getSmartShelfBooks, setSmartShelfOnHome
 } from '../smart-shelves.js';
+import { getUserHomeLayout, orderShelves } from '../home-layout.js';
 
 const PAGE_SIZE = 24;
 
 /** @param {import('express').Application} app */
 export function registerSmartShelfRoutes(app) {
   app.get('/api/smart-shelves', requireApiAuth, (req, res) => {
-    res.json(listSmartShelves(req.user.username, { withPreview: req.query.preview === '1' }));
+    const username = req.user.username;
+    const list = listSmartShelves(username, { withPreview: req.query.preview === '1' });
+    // In the user's order (drag in the shelves list, homeLayout.shelfOrder).
+    res.json(orderShelves(list.map((s) => ({ ...s, kind: 'smart' })), getUserHomeLayout(username).shelfOrder)
+      .map(({ kind, ...s }) => s));
   });
 
   app.post('/api/smart-shelves', requireApiAuth, (req, res) => {
@@ -42,6 +47,15 @@ export function registerSmartShelfRoutes(app) {
       return apiFail(res, 404, ApiErrorCode.SHELF_NOT_FOUND, t('shelf.notFound'));
     }
     res.json({ ok: true });
+  });
+
+  /* Pin to the home page (web form: POST /shelves/smart/:id/home): { on } → { ok, onHome }. */
+  app.post('/api/smart-shelves/:id/home', requireApiAuth, (req, res) => {
+    const on = [true, 1, '1', 'true'].includes(req.body?.on);
+    if (!setSmartShelfOnHome(req.params.id, req.user.username, on)) {
+      return apiFail(res, 404, ApiErrorCode.SHELF_NOT_FOUND, t('shelf.notFound'));
+    }
+    res.json({ ok: true, onHome: on ? 1 : 0 });
   });
 
   app.get('/api/smart-shelves/:id/books', requireApiAuth, (req, res) => {
