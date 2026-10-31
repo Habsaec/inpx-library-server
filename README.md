@@ -24,8 +24,11 @@
   <a href="#android-приложение">Android</a> ·
   <a href="#opds-и-koreader">OPDS и KOReader</a> ·
   <a href="#настройка">Настройка</a> ·
-  <a href="CHANGELOG.md">Изменения</a> ·
-  <a href="https://boosty.to/habsaec/donate">Поддержать проект</a>
+  <a href="CHANGELOG.md">Изменения</a>
+</p>
+
+<p align="center">
+  <a href="https://boosty.to/habsaec/donate"><img src="https://img.shields.io/badge/%D0%9F%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C%20%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82-f15f2c?style=for-the-badge&logo=boosty&logoColor=white" alt="Поддержать проект на Boosty"></a>
 </p>
 
 Укажите папку с архивами Флибусты, Либрусека или своими FB2 / EPUB — сервер построит каталог с авторами, сериями, жанрами и полнотекстовым поиском. Читать можно прямо в браузере или в Android-приложении: позиция, закладки и заметки синхронизируются. Работает на NAS, Raspberry Pi и обычном ПК, рассчитан на библиотеки в сотни тысяч книг.
