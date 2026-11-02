@@ -4588,6 +4588,10 @@ body:has(.bottom-nav) .batch-fab {
   box-shadow:
     0 8px 28px rgba(0, 0, 0, 0.28),
     0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* Blur only while the bar is shown: hidden (opacity 0) it would still be redrawn on every scroll frame */
+.batch-fab.is-visible .batch-fab-inner {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
@@ -4753,8 +4757,6 @@ body:has(.bottom-nav) .batch-fab {
   border-radius: 50%;
   background: color-mix(in srgb, var(--surface) 85%, transparent);
   border: 2px solid color-mix(in srgb, var(--text) 30%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   cursor: pointer;
   opacity: 0;
@@ -12429,13 +12431,13 @@ html[data-theme="light"] .card-cover::after {
   box-shadow: none;
 }
 
-/* Подробнее: тонкое стекло, чтобы не спорить с главной кнопкой */
+/* Подробнее: тонкое стекло, чтобы не спорить с главной кнопкой.
+   Blur only while the actions are shown (hover block below): a hidden backdrop-filter on every
+   card still costs a render pass per frame while the page scrolls over the fixed background. */
 .card-cover-actions .card-cover-action {
   background-color: color-mix(in srgb, #14110e 46%, transparent);
   color: #f6f1e6;
   border-color: color-mix(in srgb, #f6f1e6 30%, transparent);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
 }
 
 /* Наведение как у остальных кнопок: тёмная тема — тёплый акцентный оттенок, светлая — темнее */
@@ -12510,6 +12512,13 @@ html[data-theme="light"] .card-cover-actions .download-menu-trigger:hover {
   .card:has(.download-menu[open]) .card-cover-actions {
     pointer-events: auto;
   }
+
+  .card:hover .card-cover-actions .card-cover-action,
+  .card-cover-actions:focus-within .card-cover-action,
+  .card:has(.download-menu[open]) .card-cover-actions .card-cover-action {
+    backdrop-filter: blur(12px) saturate(1.2);
+    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  }
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -12520,6 +12529,11 @@ html[data-theme="light"] .card-cover-actions .download-menu-trigger:hover {
 
   .card-cover-actions {
     pointer-events: auto;
+  }
+
+  /* Always shown on touch, so no glass (dozens of blurred buttons scroll at once): a denser fill instead */
+  .card-cover-actions .card-cover-action {
+    background-color: color-mix(in srgb, #14110e 64%, transparent);
   }
 }
 
