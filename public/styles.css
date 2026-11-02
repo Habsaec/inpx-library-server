@@ -13999,8 +13999,13 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
 }
 
 /* 3D book covers (mouse + motion allowed only): flat at rest, the book turns on hover.
-   Wrapper gets a page edge (::before); hero and book page also get a back plate (::after).
-   Cards: .card-cover wraps cover + hover actions, all lifted in front of the page edge. */
+   Wrapper gets a page edge (::before) and a back plate (::after); cards: .card-cover wraps
+   cover + hover actions, all lifted in front of the page edge.
+   At rest a cover is plain 2D — no preserve-3d, no translateZ, no edge / plate boxes — so a page
+   with hundreds of covers is not hundreds of GPU layers (that made every page sluggish on weaker
+   GPUs or without hardware acceleration). 3D switches on only for the book under the pointer and
+   switches off once it has turned back: the discrete properties (transform-style, display) and
+   the children's translateZ change after the 0.6 s turn (`allow-discrete` + delay). */
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   html:not([data-ui-book3d="0"]) .book-3d-body,
   html:not([data-ui-book3d="0"]) .card-cover {
@@ -14011,18 +14016,50 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
     --bk-lift: 0px;
     container-type: inline-size;
     position: relative;
-    transform-style: preserve-3d;
-    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
-    transition: transform 0.6s var(--ease-premium);
+    transition: transform 0.6s var(--ease-premium), transform-style 0s linear 0.6s;
+    transition-behavior: allow-discrete;
   }
 
   html:not([data-ui-book3d="0"]) .book-detail-cover .book-3d-body {
     --bk-persp: 1200px;
   }
 
+  /* The turning book: the outer .book-3d / .card-cover-hit stays still and catches the pointer,
+     so the turning body can't flicker at its edges. */
+  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover {
+    transform-style: preserve-3d;
+    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
+    transition-delay: 0s;
+  }
+
+  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body {
+    --bk-tilt: -20deg;
+  }
+
+  /* Hero covers also lift. */
+  html:not([data-ui-book3d="0"]) .hero-card-cover-side.book-3d:hover .book-3d-body {
+    --bk-lift: -8px;
+  }
+
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover {
+    --bk-tilt: -20deg;
+    --bk-lift: -8px;
+  }
+
+  html:not([data-ui-book3d="0"]) .card-cover-hit:active .card-cover {
+    --bk-lift: -1px;
+    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
+  }
+
+  /* Page edge and back plate: generated only while the book is in 3D (display: none at rest, kept
+     until the turn back has finished). */
   html:not([data-ui-book3d="0"]) .book-3d-body::before,
   html:not([data-ui-book3d="0"]) .card-cover::before {
     content: '';
+    display: none;
     position: absolute;
     top: 2px;
     bottom: 2px;
@@ -14031,13 +14068,16 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
     transform: rotateY(90deg);
     background: repeating-linear-gradient(90deg, #f4eedf 0 1px, #e3dac4 1px 2px);
     pointer-events: none;
+    transition: display 0s linear 0.6s;
+    transition-behavior: allow-discrete;
   }
 
-  /* Back plate; hidden at rest so a flat cover keeps its normal shadow. On cards it replaces
-     the old gradient (.card-cover::after), which moves to .card-cover-actions::before below. */
+  /* Back plate. On cards it replaces the old gradient (.card-cover::after), which moves to
+     .card-cover-actions::before below. */
   html:not([data-ui-book3d="0"]) .book-3d-body::after,
   html:not([data-ui-book3d="0"]) .card .card-cover::after {
     content: '';
+    display: none;
     position: absolute;
     inset: 0;
     height: auto;
@@ -14046,18 +14086,56 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
     background: #14110d;
     box-shadow: 0 22px 36px -16px rgba(0, 0, 0, 0.55);
     opacity: 0;
-    transition: opacity 0.45s var(--ease-premium);
     pointer-events: none;
+    transition: opacity 0.45s var(--ease-premium), display 0s linear 0.6s;
+    transition-behavior: allow-discrete;
   }
 
+  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::before,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::before,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover::before {
+    display: block;
+    transition-delay: 0s;
+  }
+
+  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::after,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::after,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover::after {
+    display: block;
+    opacity: 1;
+    transition-delay: 0s;
+  }
+
+  @starting-style {
+    html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::after,
+    html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::after,
+    html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover::after {
+      opacity: 0;
+    }
+  }
+
+  /* The cover and the hover actions sit in front of the edge only while turning; afterwards they
+     drop back flat (the cover keeps its spotlight / shadow transitions). */
   html:not([data-ui-book3d="0"]) .book-3d-body > .cover,
-  html:not([data-ui-book3d="0"]) .hero-card-cover-side:hover .book-3d-body > .hero-cover-link.cover,
   html:not([data-ui-book3d="0"]) .card-cover > .cover {
-    transform: translateZ(calc(var(--bk-depth) / 2));
+    transition: transform 0s linear 0.6s, box-shadow 0.35s var(--ease-premium), --spot 0.35s var(--ease-premium);
   }
 
   html:not([data-ui-book3d="0"]) .card-cover-actions {
+    transition: opacity 0.16s ease-out, transform 0s linear 0.6s;
+  }
+
+  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body > .cover,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover > .cover,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover > .cover {
+    transform: translateZ(calc(var(--bk-depth) / 2));
+    transition-delay: 0s;
+  }
+
+  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover-actions,
+  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover-actions {
     transform: translateZ(calc(var(--bk-depth) / 2 + 1px));
+    transition-delay: 0s;
   }
 
   html:not([data-ui-book3d="0"]) .card-cover-actions::before {
@@ -14083,33 +14161,6 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
         color-mix(in srgb, #2a2014 52%, transparent) 45%,
         color-mix(in srgb, #2a2014 16%, transparent) 78%,
         transparent 100%);
-  }
-
-  /* Hover over the cover only: the outer .book-3d stays still and catches the pointer,
-     so the turning body can't flicker at its edges. Hero covers also lift. */
-  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body {
-    --bk-tilt: -20deg;
-  }
-
-  html:not([data-ui-book3d="0"]) .hero-card-cover-side.book-3d:hover .book-3d-body {
-    --bk-lift: -8px;
-  }
-
-  html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::after,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::after {
-    opacity: 1;
-  }
-
-  html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover {
-    --bk-tilt: -20deg;
-    --bk-lift: -8px;
-    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
-  }
-
-  html:not([data-ui-book3d="0"]) .card-cover-hit:active .card-cover {
-    --bk-lift: -1px;
-    transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
   }
 }
 
