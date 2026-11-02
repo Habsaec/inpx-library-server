@@ -65,6 +65,7 @@ const ROOT_FILES = [
   'reset-admin.cmd',
   'LICENSE',
   'README.md',
+  'README.ru.md',
 ];
 
 // --- Files from subdirectories (not recursively) ---
