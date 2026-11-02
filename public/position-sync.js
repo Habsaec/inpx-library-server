@@ -281,23 +281,31 @@ export function tocChapterLabelForPosition(saved, flatToc) {
   return '';
 }
 
+/** Page language (web `<html lang>`, Android app / reader page): position details in English for `en`. */
+function positionDetailWords() {
+  const lang = typeof document !== 'undefined' ? String(document.documentElement?.lang || '') : '';
+  return lang.startsWith('en')
+    ? { page: (n, total) => `p. ${n} of ${total}`, section: 'section', chapter: 'chapter' }
+    : { page: (n, total) => `стр. ${n} из ${total}`, section: 'раздел', chapter: 'глава' };
+}
+
 export function formatPositionDetail(meta) {
   if (!meta) return '';
   const chapter = trimChapterLabel(meta.chapterLabel);
   if (chapter) return chapter;
   if (meta.paginatorPage != null && meta.paginatorPages != null) {
-    return `стр. ${meta.paginatorPage} из ${meta.paginatorPages}`;
+    return positionDetailWords().page(meta.paginatorPage, meta.paginatorPages);
   }
   if (meta.sectionIndex != null && Number.isFinite(Number(meta.sectionIndex))) {
-    return `раздел ${Number(meta.sectionIndex) + 1}`;
+    return `${positionDetailWords().section} ${Number(meta.sectionIndex) + 1}`;
   }
   const href = String(meta.fb2Href || '').trim();
-  if (href && isFb2HrefFormat(href)) return `глава ${href}`;
+  if (href && isFb2HrefFormat(href)) return `${positionDetailWords().chapter} ${href}`;
   const pos = String(meta.position || '').trim();
   if (/^(?:app:)?ch\d+(?::p\d+)?$/i.test(pos)) {
-    return `глава ${pos.replace(/^app:/i, '')}`;
+    return `${positionDetailWords().chapter} ${pos.replace(/^app:/i, '')}`;
   }
-  if (isFb2HrefFormat(pos)) return `глава ${pos}`;
+  if (isFb2HrefFormat(pos)) return `${positionDetailWords().chapter} ${pos}`;
   return '';
 }
 

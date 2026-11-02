@@ -68,6 +68,7 @@ import { db, getUserByUsername, hasAdminUser, initDb, applyDbMemorySettings, ens
 import { runDbMaintenance, stopDbMaintenance, shouldRunDbMaintenanceInThisProcess } from './services/db-maintenance.js';
 import {
   backfillCatalogSearchFields,
+  refreshGenreSearchNames,
   getConfiguredInpxFile,
   getLibraryRoot,
   getIndexStatus,
@@ -1430,6 +1431,12 @@ async function bootstrap() {
         console.error('[startup] FTS rebuild failed:', err.message);
         logSystemEvent('error', 'server', 'FTS rebuild failed on startup', { error: err.message });
       }
+    }
+
+    try {
+      refreshGenreSearchNames();
+    } catch (error) {
+      console.error('[startup] genre search names:', error.message);
     }
 
     if (isBackfillEnabled()) {

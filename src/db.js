@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import { normalizeLookupEmail } from './utils/email-address.js';
+import { formatGenreLabel, withGenreNameEn } from './genre-map.js';
 import Database from 'better-sqlite3';
 import { config, parseTelegramApiBase } from './config.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
@@ -5236,7 +5237,7 @@ export function getUserReadingStats(username) {
     byMonth,
     readByYear: _stmtReadByYear.all(username),
     topAuthors: _stmtReadTopAuthors.all(username),
-    topGenres: _stmtReadTopGenres.all(username)
+    topGenres: withGenreNameEn(_stmtReadTopGenres.all(username).map((g) => ({ ...g, displayName: formatGenreLabel(g.name) })))
   };
 }
 

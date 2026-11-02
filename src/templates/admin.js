@@ -33,7 +33,7 @@ function renderAdminTabs(group, tabs, ariaLabel = '') {
 function renderAdminTabPanel(group, id, body) {
   return `<div class="admin-tab-panel" data-admin-tab-group="${escapeHtml(group)}" data-admin-tab-panel="${escapeHtml(id)}" role="tabpanel">${body}</div>`;
 }
-import { getGenreGroups } from '../genre-map.js';
+import { getGenreGroups, localizeGenreGroupLabel } from '../genre-map.js';
 import { config } from '../config.js';
 import {
   FORMAT_LABELS,
@@ -934,7 +934,7 @@ export function renderAdminContent({
       <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:6px">
         <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
           <input type="checkbox" style="flex:none;width:auto" class="genre-group-toggle" data-group="${gid}" aria-label="${escapeHtml(t('admin.content.toggleAll'))}" ${allChecked ? 'checked' : ''} ${!allChecked && !noneChecked ? 'data-indeterminate="1"' : ''} onclick="event.stopPropagation()">
-          <span style="flex:1 1 auto;font-weight:600;font-size:15px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escapeHtml(groupName)}</span>
+          <span style="flex:1 1 auto;font-weight:600;font-size:15px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escapeHtml(localizeGenreGroupLabel(groupName))}</span>
           <span style="flex:none;font-size:13px;color:var(--muted)">${items.length}${excludedInGroup > 0 ? ' / -' + excludedInGroup : ''}</span>
           <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>
         </div>

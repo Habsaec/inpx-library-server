@@ -998,7 +998,7 @@ function attachCatalogFilters() {
       const html = items.map((g) => {
         const name = String(g.name || '');
         if (!name || selected.has(name)) return '';
-        const label = String(g.displayName || name);
+        const label = String((document.documentElement.lang === 'en' && g.displayNameEn) || g.displayName || name);
         const count = Number.isFinite(Number(g.bookCount)) ? Math.max(0, Math.floor(Number(g.bookCount))) : null;
         const searchHay = `${name} ${label}`.toLowerCase();
         const countHtml = count != null

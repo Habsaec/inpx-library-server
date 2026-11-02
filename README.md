@@ -209,7 +209,7 @@ The interface is available in English and Russian, with light, dark and automati
 
 ## Android app
 
-[**INPX Book Reader**](https://github.com/Habsaec/inpx-book-reader) is an Android reader that works with this server: catalog, offline reading, read aloud, E-Ink mode and position sync shared with the web reader. Its interface is currently in Russian only.
+[**INPX Book Reader**](https://github.com/Habsaec/inpx-book-reader) is an Android reader that works with this server: catalog, offline reading, read aloud, E-Ink mode and position sync shared with the web reader. Its interface is in English and Russian (follows the phone language, switchable in the app).
 
 1. Install the APK from the [app releases](https://github.com/Habsaec/inpx-book-reader/releases/latest) — the link and a QR code are also in the web interface sidebar («App»).
 2. Open the sign-in window there: the server shows a one-time QR code (valid for 10 minutes). Scan it in the app — no need to type the address, login or password.

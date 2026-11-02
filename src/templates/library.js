@@ -20,7 +20,7 @@ import {
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
   formatLocaleDateLong, clientI18nScriptUrl,
   formatAuthorLabel, formatLanguageLabel,
-  formatGenreLabel, parseGenreCodes
+  formatGenreLabel, localizeGenreLabel, facetItemLabel, parseGenreCodes
 } from './shared.js';
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
 import { encodeBookRef } from '../utils/book-ref.js';
@@ -239,12 +239,14 @@ function renderCatalogSearchHints(searchHints, query = '') {
 
 /* One collator instead of localeCompare(…, options) per comparison (same order, far cheaper). */
 const GENRE_COLLATOR = new Intl.Collator('ru', { sensitivity: 'base' });
+const GENRE_COLLATOR_EN = new Intl.Collator('en', { sensitivity: 'base' });
 
 function sortGenreOptionsAlpha(options = []) {
+  const collator = getLocale() === 'en' ? GENRE_COLLATOR_EN : GENRE_COLLATOR;
   return [...(Array.isArray(options) ? options : [])].sort((a, b) => {
-    const la = String(a?.displayName || a?.name || '').trim();
-    const lb = String(b?.displayName || b?.name || '').trim();
-    return GENRE_COLLATOR.compare(la, lb);
+    const la = localizeGenreLabel(a?.name, a?.displayName).trim();
+    const lb = localizeGenreLabel(b?.name, b?.displayName).trim();
+    return collator.compare(la, lb);
   });
 }
 
@@ -307,7 +309,7 @@ function renderCatalogFilterPanel({
   const genreChecks = memoGenreChecksHtml(genreOptions, genreChecksKey, () => sortGenreOptionsAlpha(genreOptions).map((g) => {
     const name = g.name || '';
     if (selected.has(name)) return '';
-    const label = g.displayName || formatGenreLabel(name);
+    const label = localizeGenreLabel(name, g.displayName);
     const count = Number.isFinite(Number(g.bookCount)) ? Math.max(0, Math.floor(Number(g.bookCount))) : null;
     const search = `${name} ${label}`.toLowerCase();
     const countHtml = count != null
@@ -1476,7 +1478,7 @@ export function renderAuthorFacetPage({
   const genreChips =
     summary.secondaryItems?.length && summary.secondaryPath
       ? `<div class="author-facet-genres" aria-label="${escapeHtml(summary.secondaryTitle || '')}">${
-          summary.secondaryItems.slice(0, 8).map((item) => `<a class="author-facet-genre-chip" href="${summary.secondaryPath}/${encodeURIComponent(item.name)}">${escapeHtml(item.displayName || item.name)}</a>`).join('')
+          summary.secondaryItems.slice(0, 8).map((item) => `<a class="author-facet-genre-chip" href="${summary.secondaryPath}/${encodeURIComponent(item.name)}">${escapeHtml(facetItemLabel(item, summary.secondaryPath))}</a>`).join('')
         }</div>`
       : '';
 

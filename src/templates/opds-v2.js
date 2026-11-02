@@ -2,7 +2,9 @@
  * OPDS 2.0 (JSON) template functions.
  * Spec: https://drafts.opds.io/opds-2.0
  */
-import { siteTitleForDisplay, t, FORMAT_LABELS, formatGenreLabel, downloadBookPath, apiBookPath } from './shared.js';
+import { siteTitleForDisplay, t, FORMAT_LABELS, downloadBookPath, apiBookPath } from './shared.js';
+// OPDS keeps the stored (Russian) genre names, like the genre navigation in routes/opds-v2.js.
+import { formatGenreLabel } from '../genre-map.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
 
 const OPDS_MIME_FOR_SOURCE = {

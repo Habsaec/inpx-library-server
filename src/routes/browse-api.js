@@ -32,7 +32,7 @@ import {
   readFlibustaAuthorPortraitForAuthorName
 } from '../flibusta-sidecar.js';
 import { parseEnvTimeoutMs, promiseWithTimeout } from '../utils/async-timeout.js';
-import { getGenreGroups } from '../genre-map.js';
+import { getGenreGroups, localizeGenreGroupLabel } from '../genre-map.js';
 import { getLocale } from '../i18n.js';
 import { getRecommendedLibraryView } from '../services/recommendations.js';
 import { requireBrowseAuth } from '../middleware/auth.js';
@@ -243,11 +243,11 @@ export function registerBrowseApiRoutes(app) {
     for (const [groupName, codes] of entries) {
       const codesSet = new Set(codes);
       const items = allGenres.filter((g) => codesSet.has(g.name));
-      if (items.length) grouped.push({ groupName, items });
+      if (items.length) grouped.push({ groupName, groupNameEn: localizeGenreGroupLabel(groupName, 'en'), items });
     }
     const allGrouped = new Set(Object.values(groups).flat());
     const uncategorized = allGenres.filter((g) => !allGrouped.has(g.name));
-    if (uncategorized.length) grouped.push({ groupName: t('genre.other'), items: uncategorized });
+    if (uncategorized.length) grouped.push({ groupName: t('genre.other'), groupNameEn: 'Other', items: uncategorized });
     // groups — иерархия [{ groupName, items }], как genreGroups в HTML /genres
     // (не сырой map из getGenreGroups — его Android-клиент не умеет рендерить)
     res.json({ total: allGenres.length, items: allGenres, groups: grouped, page: 1, pageSize: allGenres.length });
@@ -353,6 +353,7 @@ export function registerBrowseApiRoutes(app) {
       authorsList: book.authorsList,
       genres: book.genres,
       genresDisplayList: book.genresDisplayList,
+      genresDisplayListEn: book.genresDisplayListEn,
       series: book.series || '',
       seriesNo: book.seriesNo || '',
       seriesList: book.seriesList || [],

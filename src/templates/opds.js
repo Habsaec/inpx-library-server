@@ -1,7 +1,9 @@
 /**
  * OPDS (Open Publication Distribution System) template functions.
  */
-import { escapeHtml, sanitizeHtml, siteTitleForDisplay, t, FORMAT_LABELS, formatGenreLabel, downloadBookPath, apiBookPath } from './shared.js';
+import { escapeHtml, sanitizeHtml, siteTitleForDisplay, t, FORMAT_LABELS, downloadBookPath, apiBookPath } from './shared.js';
+// OPDS keeps the stored (Russian) genre names, like the genre navigation in routes/opds.js.
+import { formatGenreLabel } from '../genre-map.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
 import { withOpdsProgress } from '../opds-progress.js';
 

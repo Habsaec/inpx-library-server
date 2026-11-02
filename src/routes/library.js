@@ -72,7 +72,7 @@ import {
   isFavoriteAuthor,
   isFavoriteSeries,
   listAuthors,
-  listGenres,
+  listGenresForLocale,
   listAuthorsByGenre,
   listSeriesByGenre,
   listAuthorsByLanguage,
@@ -106,7 +106,7 @@ import {
   readFlibustaBookReviewHtml,
   readFlibustaAuthorBioHtml
 } from '../flibusta-sidecar.js';
-import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroup } from '../genre-map.js';
+import { formatAuthorLabel, localizeGenreLabel, formatLanguageLabel, getGenreGroup } from '../genre-map.js';
 import { clearCardHtmlCache } from '../templates/shared.js';
 import { getUserHomeLayout, setUserHomeLayout, isHomeSectionVisible, orderShelves, homeShelfKey, reorderShelfGroup } from '../home-layout.js';
 
@@ -766,8 +766,9 @@ export function registerLibraryRoutes(app, deps) {
     const pageSize = 50;
     const stats = getCachedStats();
     const genreLangs = effectiveContentLangs(req.user?.username);
-    const cacheKey = `browse:genres:${contentLangCacheKey(genreLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, order, letter, langs: genreLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const locale = getLocale();
+    const cacheKey = `browse:genres:${locale}:${contentLangCacheKey(genreLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listGenresForLocale({ query, page, pageSize, sort, order, letter, langs: genreLangs }, locale), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.genres'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
@@ -886,7 +887,7 @@ export function registerLibraryRoutes(app, deps) {
         : facet === 'languages'
           ? formatLanguageLabel(value)
           : facet === 'genres'
-            ? formatGenreLabel(value)
+            ? localizeGenreLabel(value)
             : facet === 'series'
               ? getSeriesCatalogDisplayName(value)
               : value;

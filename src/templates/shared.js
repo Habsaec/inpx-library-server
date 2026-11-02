@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, parseGenreCodes } from '../genre-map.js';
+import { formatAuthorLabel, localizeGenreLabel, formatLanguageLabel, parseGenreCodes } from '../genre-map.js';
 import { getAvailableDownloadFormats, getConfiguredDownloadFormats, FORMAT_LABELS, isDownloadFormatEnabled } from '../conversion.js';
 import { resolveTelegramRuntimeConfig, getUserDownloadFormat } from '../db.js';
 import { config } from '../config.js';
@@ -33,7 +33,12 @@ import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarku
 import { APP_DOWNLOAD_URL, appDownloadQrSvg } from '../app-download-qr.js';
 
 export { t, tp, getLocale, plural, countLabel, formatLocaleInt, formatLocaleDateShort, formatLocaleDateTimeShort, formatLocaleDateLong, serializeClientI18n, clientI18nScriptUrl };
-export { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, parseGenreCodes };
+export { formatAuthorLabel, formatLanguageLabel, parseGenreCodes, localizeGenreLabel };
+
+/** Genre name for display in the request's UI language (English names when the page is English). */
+export function formatGenreLabel(value = '') {
+  return localizeGenreLabel(value);
+}
 export { getAvailableDownloadFormats, FORMAT_LABELS };
 export { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath };
 
@@ -1130,7 +1135,7 @@ export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', e
   return `
     <div class="table-list entity-list">
       ${items.map((item) => {
-        const rawLabel = item.displayName || item.name;
+        const rawLabel = facetItemLabel(item, facetBasePath);
         const label = isAuthors ? (formatSingleAuthorName(rawLabel) || rawLabel) : rawLabel;
         return `
         <a class="table-row table-row-link" href="${facetBasePath}/${encodeURIComponent(item.name)}">
@@ -1409,6 +1414,12 @@ export function renderBookFlibustaList(books = [], { user = null, batchSelect = 
   </div>`;
 }
 
+/** Label of a facet row ({ name, displayName }); genre rows follow the UI language. */
+export function facetItemLabel(item, path = '') {
+  if (String(path).endsWith('/genres')) return localizeGenreLabel(item?.name, item?.displayName);
+  return item?.displayName || item?.name || '';
+}
+
 export function renderFacetSummaryBlock(title, items = [], path = '') {
   if (!title || !items.length || !path) {
     return '';
@@ -1417,7 +1428,7 @@ export function renderFacetSummaryBlock(title, items = [], path = '') {
   return `
     <section class="facet-summary-block">
       <span class="facet-summary-label">${escapeHtml(title)}:</span>
-      ${items.map((item) => `<a class="facet-summary-link" href="${path}/${encodeURIComponent(item.name)}">${escapeHtml(item.displayName || item.name)}</a>`).join('<span class="facet-summary-sep">,</span>')}
+      ${items.map((item) => `<a class="facet-summary-link" href="${path}/${encodeURIComponent(item.name)}">${escapeHtml(facetItemLabel(item, path))}</a>`).join('<span class="facet-summary-sep">,</span>')}
     </section>`;
 }
 

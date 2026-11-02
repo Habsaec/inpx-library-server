@@ -69,9 +69,9 @@ import {
 export { clearWarmSearchBooksPages, resolveSearchRouteField, warmupSearchFts };
 import { config } from './config.js';
 import { PAGE_CACHE_TTL_MS } from './constants.js';
-import { formatGenreLabel, formatGenreList, capitalizeAuthorNamePart } from './genre-map.js';
+import { formatGenreLabel, formatGenreList, formatGenreListEn, withGenreNameEn, genreLabelEn, capitalizeAuthorNamePart } from './genre-map.js';
 import { getAvailableDownloadFormats, FORMAT_LABELS } from './download-formats.js';
-import { t } from './i18n.js';
+import { t, getLocale } from './i18n.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { logSystemEvent } from './services/system-events.js';
 import { invalidateAllRecommendations } from './services/recommendations.js';
@@ -742,7 +742,7 @@ export function genreSortName(value = '') {
 }
 
 export function genreSearchName(value = '') {
-  return [value, genreDisplayName(value)]
+  return [value, genreDisplayName(value), genreLabelEn(value)]
     .map((item) => createSortKey(item))
     .filter(Boolean)
     .filter((item, index, items) => items.indexOf(item) === index)
@@ -766,6 +766,28 @@ const BOOK_SEARCH_BACKFILL_CHUNK = 40;
  * Также вызывается после завершения полной индексации.
  * Работает порциями через setImmediate — не блокирует HTTP.
  */
+/**
+ * One-time: English genre names joined genres_catalog.search_name (genre list filter q=) after
+ * the catalog was indexed. genres_catalog is a few hundred rows — one short transaction.
+ */
+export function refreshGenreSearchNames() {
+  if (getMeta('genre_search_en_v1') === 'done' || indexState.active) return 0;
+  const rows = db.prepare('SELECT id, name, search_name AS searchName FROM genres_catalog').all();
+  const update = db.prepare('UPDATE genres_catalog SET search_name = ? WHERE id = ?');
+  let changed = 0;
+  db.transaction(() => {
+    for (const row of rows) {
+      const searchName = genreSearchName(row.name);
+      if (searchName !== row.searchName) {
+        update.run(searchName, row.id);
+        changed += 1;
+      }
+    }
+  })();
+  setMeta('genre_search_en_v1', 'done');
+  return changed;
+}
+
 export function backfillCatalogSearchFields() {
   const catalogDone = getMeta('catalog_normalization_v1') === 'done';
   const booksDone = getMeta('yo_normalization_v1') === 'done';
@@ -3471,6 +3493,7 @@ function mapBookListRow(row) {
     seriesNo: normalizeSeriesNo(row.seriesNo),
     genresList: splitFacetValues(row.genres),
     genresDisplayList: formatGenreList(row.genres),
+    genresDisplayListEn: formatGenreListEn(row.genres),
     authorsList: splitAuthorValues(row.authors),
     downloadFormats
   };
@@ -5011,11 +5034,11 @@ export function listSearchGenres({
     return { items: [], scoped: false };
   }
 
-  const mapRows = (rows) => (rows || []).map((row) => ({
+  const mapRows = (rows) => withGenreNameEn((rows || []).map((row) => ({
     name: row.name,
     displayName: row.displayName || row.name,
     bookCount: Math.max(0, Math.floor(Number(row.bookCount) || 0))
-  }));
+  })));
 
   const runGrouped = (fromSql, params) => mapRows(db.prepare(`
     SELECT g.name AS name,
@@ -6456,7 +6479,7 @@ export function listGenresGrouped({ sort = 'count' } = {}) {
     `);
     rows = _stmtGenresGroupedCount.all();
   }
-  return excludedSet.size ? rows.filter(g => !excludedSet.has(g.name)) : rows;
+  return withGenreNameEn(excludedSet.size ? rows.filter(g => !excludedSet.has(g.name)) : rows);
 }
 
 function listGenresForLangs({ page, pageSize, sort, order, letterNorm, query, langClause, langs }) {
@@ -6497,7 +6520,7 @@ function listGenresForLangs({ page, pageSize, sort, order, letterNorm, query, la
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `).all(...params, pageSize, offset);
-    return { total, items };
+    return { total, items: withGenreNameEn(items) };
   }
   const from = `
     FROM genres_catalog g
@@ -6519,7 +6542,7 @@ function listGenresForLangs({ page, pageSize, sort, order, letterNorm, query, la
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
   `).all(...params, pageSize, offset);
-  return { total, items };
+  return { total, items: withGenreNameEn(items) };
 }
 
 export function listGenres({ page = 1, pageSize = 50, query = '', sort = 'name', order = '', letter = '', langs = null }) {
@@ -6562,7 +6585,28 @@ export function listGenres({ page = 1, pageSize = 50, query = '', sort = 'name',
     LIMIT ? OFFSET ?
   `).all(...whereParams, pageSize, offset);
 
-  return { total, items };
+  return { total, items: withGenreNameEn(items) };
+}
+
+/**
+ * listGenres in the UI language. English: names from GENRE_LABELS_EN (displayName = displayNameEn),
+ * letter filter and name order by them — the whole (small, a few hundred rows) list is sorted in JS,
+ * because genres_catalog.sort_name is the Russian name.
+ */
+const GENRE_NAME_COLLATOR_EN = new Intl.Collator('en', { sensitivity: 'base' });
+export function listGenresForLocale(opts = {}, locale = getLocale()) {
+  if (locale !== 'en') return listGenres(opts);
+  const { page = 1, pageSize = 50, sort = 'name', order = '', letter = '' } = opts;
+  let items = listGenres({ ...opts, page: 1, pageSize: 100000, letter: '' }).items
+    .map((g) => ({ ...g, displayName: g.displayNameEn || g.displayName }));
+  const letterNorm = String(letter || '').trim().toLowerCase();
+  if (letterNorm) items = items.filter((g) => String(g.displayName || '').toLowerCase().startsWith(letterNorm));
+  if (sort === 'name') {
+    items.sort((a, b) => GENRE_NAME_COLLATOR_EN.compare(a.displayName || a.name, b.displayName || b.name));
+    if (order === 'desc') items.reverse();
+  }
+  const start = Math.max(0, (page - 1) * pageSize);
+  return { total: items.length, items: items.slice(start, start + pageSize) };
 }
 
 /**
@@ -7845,12 +7889,12 @@ export function listRecentSectionGenres({
   `).all(...whereParams);
 
   const filtered = excludedSet.size ? rows.filter((g) => !excludedSet.has(g.name)) : rows;
-  return filtered
+  return withGenreNameEn(filtered
     .map((row) => ({
       name: row.name,
       displayName: row.displayName || row.name,
       bookCount: Math.max(0, Math.floor(Number(row.bookCount) || 0))
-    }))
+    })))
     .sort((a, b) => String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''), 'ru', { sensitivity: 'base' }));
 }
 

@@ -11,6 +11,7 @@ import {
   canDownloadInUi,
   formatAuthorLabel,
   formatGenreLabel,
+  localizeGenreLabel,
   formatLanguageLabel,
   getAvailableDownloadFormats,
   FORMAT_LABELS,
@@ -330,13 +331,13 @@ export function renderLiteBrowsePage({
     list = `<div class="lite-entity-list">${flat.map((it) => {
       const name = it.name || it.displayName || '';
       const count = it.bookCount ?? it.count ?? 0;
-      return renderLiteEntityCountRow(`${LITE_BASE}/facet/genres/${encodeURIComponent(name)}`, it.displayName || name, count);
+      return renderLiteEntityCountRow(`${LITE_BASE}/facet/genres/${encodeURIComponent(name)}`, localizeGenreLabel(name, it.displayName), count);
     }).join('')}</div>`;
   } else {
     list = `<div class="lite-entity-list">${items.map((it) => {
       const name = it.name || it.displayName || '';
       const count = it.count ?? it.bookCount ?? 0;
-      return renderLiteEntityCountRow(liteFacetHref(path, name), name, count);
+      return renderLiteEntityCountRow(liteFacetHref(path, name), path.endsWith('/genres') ? localizeGenreLabel(it.name, it.displayName) : name, count);
     }).join('')}</div>`;
   }
   const content = `

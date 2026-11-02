@@ -1,3 +1,6 @@
+import { getLocale } from './i18n.js';
+import { GENRE_LABELS_EN, GENRE_GROUP_LABELS_EN } from './genre-labels-en.js';
+
 const GENRE_LABELS = {
   sf_history: 'Альтернативная история',
   sf_action: 'Боевая фантастика',
@@ -394,6 +397,41 @@ export function formatGenreLabel(value = '') {
   return GENRE_LABELS[raw] || raw;
 }
 
+/** English name of a genre code; '' when the code has none. */
+export function genreLabelEn(value = '') {
+  const raw = String(value || '').trim();
+  return (raw && GENRE_LABELS_EN[raw.toLowerCase()]) || '';
+}
+
+/**
+ * Genre name for the UI language (default: the request locale). Russian = formatGenreLabel;
+ * English = the English name, else `fallback` (stored display_name), else the Russian label / code.
+ * Stored display_name / search fields stay Russian — use formatGenreLabel there.
+ */
+export function localizeGenreLabel(value = '', fallback = '', locale = getLocale()) {
+  if (locale === 'en') {
+    const en = genreLabelEn(value);
+    if (en) return en;
+  }
+  return fallback || formatGenreLabel(value);
+}
+
+/** Genre group name (GENRE_GROUPS key) for the UI language. */
+export function localizeGenreGroupLabel(groupName = '', locale = getLocale()) {
+  return locale === 'en' ? (GENRE_GROUP_LABELS_EN[groupName] || groupName) : groupName;
+}
+
+/** Additive API field: displayNameEn on genre rows ({ name, displayName }), in place. */
+export function withGenreNameEn(items) {
+  if (!Array.isArray(items)) return items;
+  for (const item of items) {
+    if (item && typeof item === 'object' && item.name != null) {
+      item.displayNameEn = genreLabelEn(item.name) || item.displayName || String(item.name);
+    }
+  }
+  return items;
+}
+
 /** Сырые коды жанров из поля книги (разделители как в .inpx) */
 export function parseGenreCodes(value = '') {
   return String(value || '')
@@ -404,6 +442,10 @@ export function parseGenreCodes(value = '') {
 
 export function formatGenreList(value = '') {
   return parseGenreCodes(value).map((code) => formatGenreLabel(code));
+}
+
+export function formatGenreListEn(value = '') {
+  return parseGenreCodes(value).map((code) => genreLabelEn(code) || formatGenreLabel(code));
 }
 
 export function capitalizeAuthorNamePart(part = '') {
@@ -485,3 +527,7 @@ export function getGenreGroups() {
 }
 
 export { GENRE_TO_GROUP };
+
+export function getGenreGroupLabelsEn() {
+  return GENRE_GROUP_LABELS_EN;
+}

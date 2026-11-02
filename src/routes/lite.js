@@ -32,6 +32,7 @@ import {
   isBookRead,
   listAuthors,
   listGenres,
+  listGenresForLocale,
   listGenresGrouped,
   listSeries,
   resolveAuthorName,
@@ -44,7 +45,7 @@ import {
   getReadBooks,
   recordReadingHistory
 } from '../inpx.js';
-import { formatAuthorLabel, formatGenreLabel, formatLanguageLabel, getGenreGroups } from '../genre-map.js';
+import { formatAuthorLabel, localizeGenreLabel, localizeGenreGroupLabel, formatLanguageLabel, getGenreGroups } from '../genre-map.js';
 import { verifyPassword } from '../auth.js';
 import { invalidateSessionUserCache } from '../middleware/auth.js';
 import { createSessionValue } from '../services/session.js';
@@ -224,13 +225,18 @@ export function registerLiteRoutes(app, { getCachedStats }) {
         : getStaleOrSchedule(`browse:genres:grouped:${sort}`, () => listGenresGrouped({ sort }), PAGE_CACHE_TTL_MS, []);
       const groups = getGenreGroups();
       const grouped = [];
+      const locale = getLocale();
+      const byLabel = (a, b) => a.localeCompare(b, locale, { sensitivity: 'base' });
       const entries = sort === 'name'
-        ? Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0], getLocale()))
+        ? Object.entries(groups).sort((a, b) => byLabel(localizeGenreGroupLabel(a[0], locale), localizeGenreGroupLabel(b[0], locale)))
         : Object.entries(groups);
       for (const [groupName, codes] of entries) {
         const codesSet = new Set(codes);
-        const items = allGenres.filter(g => codesSet.has(g.name));
-        if (items.length) grouped.push({ groupName, items });
+        let items = allGenres.filter(g => codesSet.has(g.name));
+        if (sort === 'name' && locale === 'en') {
+          items = items.slice().sort((a, b) => byLabel(localizeGenreLabel(a.name, a.displayName, locale), localizeGenreLabel(b.name, b.displayName, locale)));
+        }
+        if (items.length) grouped.push({ groupName: localizeGenreGroupLabel(groupName, locale), items });
       }
       const allGrouped = new Set(Object.values(groups).flat());
       const uncategorized = allGenres.filter(g => !allGrouped.has(g.name));
@@ -244,8 +250,9 @@ export function registerLiteRoutes(app, { getCachedStats }) {
       return;
     }
     const langs = effectiveContentLangs(req.user?.username);
-    const cacheKey = `lite:genres:${contentLangCacheKey(langs)}:${page}:${sort}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listGenres({ query, page, pageSize, sort, order: '', letter: '', langs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const locale = getLocale();
+    const cacheKey = `lite:genres:${locale}:${contentLangCacheKey(langs)}:${page}:${sort}:${query}`;
+    const result = getStaleOrSchedule(cacheKey, () => listGenresForLocale({ query, page, pageSize, sort, order: '', letter: '', langs }, locale), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderLiteBrowsePage({
       title: t('nav.genres'),
       ...result, page, pageSize, user: req.user || null, stats, query,
@@ -295,7 +302,7 @@ export function registerLiteRoutes(app, { getCachedStats }) {
         }));
         return;
       }
-      const displayValue = facet === 'genres' ? formatGenreLabel(value) : value;
+      const displayValue = facet === 'genres' ? localizeGenreLabel(value) : value;
       let authorFilter = facet === 'series' ? String(req.query.author || '').trim() : '';
       if (authorFilter) {
         const canonical = resolveAuthorName(authorFilter);
