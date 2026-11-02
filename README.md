@@ -1,6 +1,11 @@
 <h1 align="center">INPX Library Server</h1>
 
 <p align="center">
+  Self-hosted ebook library for INPX collections and plain book folders:<br>
+  catalog and search, in-browser reader, OPDS, send to e-reader and an <a href="https://github.com/Habsaec/inpx-book-reader">Android app</a>.
+</p>
+
+<p align="center">
   Домашняя библиотека электронных книг для коллекций INPX / FB2:<br>
   каталог и поиск, чтение в браузере, OPDS, отправка на ридер и <a href="https://github.com/Habsaec/inpx-book-reader">Android-приложение</a>.
 </p>
@@ -18,6 +23,7 @@
 </p>
 
 <p align="center">
+  <a href="#english">English</a> ·
   <a href="#установка">Установка</a> ·
   <a href="#первые-шаги">Первые шаги</a> ·
   <a href="#возможности">Возможности</a> ·
@@ -30,6 +36,43 @@
 <p align="center">
   <a href="https://boosty.to/habsaec/donate"><img src="https://img.shields.io/badge/%D0%9F%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C%20%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82-f15f2c?style=for-the-badge&logo=boosty&logoColor=white" alt="Поддержать проект на Boosty"></a>
 </p>
+
+## English
+
+Point the server at a folder of books and it builds a searchable catalog with authors, series, genres and covers. Read in the browser or in the Android app — reading position, bookmarks and highlights stay in sync. Runs on a NAS, a Raspberry Pi or a regular PC and handles libraries of hundreds of thousands of books.
+
+**What it reads:** plain folders with FB2 / EPUB / MOBI / AZW3 files (loose or inside ZIP / 7z), and INPX collections (`.inpx` index + ZIP / 7z archives — the format of large Russian-language library dumps). Metadata comes from the books themselves; for EPUB that includes the series written by Calibre.
+
+**Quick start (Docker, amd64 / arm64):**
+
+```bash
+docker run -d \
+  --name inpx-library \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v inpx-app:/app \
+  -v inpx-data:/app/data \
+  -v /path/to/books:/library:ro \
+  -e LIBRARY_ROOT=/library \
+  habsaec/inpx-library-server:latest
+```
+
+Open http://localhost:3000, sign in as **admin / admin** and change the password. Switch the interface to English with **EN** in the top bar. Then go to **Admin → Book sources → Add source** and enter `/library` (the path inside the container). Back up the `inpx-data` volume — it holds the database and settings. Windows (portable, no system Node.js needed), Linux and macOS installs are described in the Russian section [Установка](#установка); the commands are the same.
+
+**Features**
+
+- **Catalog and search** — full-text search with suggestions and typo correction; authors, series, genres, languages; filters by genre, language, format, year and rating; new arrivals, recommendations, curated lists.
+- **Reading** — FB2 and EPUB in the browser: themes, fonts, bookmarks, colored highlights with notes, read aloud; position syncs across devices without jumps; export notes to Markdown / HTML.
+- **Personal library** — reading, want to read, finished, your ratings, favorite authors and series with «new from favorites», shelves and smart shelves (saved searches), yearly goal and stats, Goodreads CSV import.
+- **Delivery** — download as FB2, EPUB, MOBI, AZW3 and more (conversion via [fb2cng](https://github.com/rupor-github/fb2cng)), batch ZIP, send to an e-reader by e-mail (Kindle, PocketBook, Kobo) or to Telegram.
+- **Clients** — OPDS 1.x / 2 at `/opds` (KOReader, FBReader, Moon+ Reader, Librera) with reading progress in titles; KOReader progress sync (KOSync) at `/kosync`; Telegram bot with search.
+- **Admin** — users and permissions, anonymous access, OIDC / SSO, SMTP, look and feel (logo, header, background, palette), duplicate cleanup, folder watching, monitoring, backups, in-place updates.
+
+The web interface is available in English and Russian, with light, dark and automatic themes. The [Android app](https://github.com/Habsaec/inpx-book-reader) currently has a Russian interface only. Reindexing or removing a source never loses users' bookmarks, positions or shelves.
+
+Issues and pull requests in English are welcome. Licensed under [MIT](LICENSE).
+
+<p align="center">· · ·</p>
 
 Укажите папку с архивами Флибусты, Либрусека или своими FB2 / EPUB — сервер построит каталог с авторами, сериями, жанрами и полнотекстовым поиском. Читать можно прямо в браузере или в Android-приложении: позиция, закладки и заметки синхронизируются. Работает на NAS, Raspberry Pi и обычном ПК, рассчитан на библиотеки в сотни тысяч книг.
 
