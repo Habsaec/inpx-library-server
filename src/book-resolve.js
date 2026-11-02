@@ -49,7 +49,7 @@ function uniqueMatch(rows, ref) {
  * which gets a new source id) onto this library. The title must match in every branch,
  * and a candidate is accepted only when it is the single match:
  *   1. the id itself is an active book;
- *   2. same lib id (from `libId` or the `<src>:<lib>` id) + title (+ ext);
+ *   2. same lib id (from `libId` or the `<src>:<lib>` id; Calibre books: `calibre:<uuid>`) + title (+ ext);
  *   3. title + authors (+ ext).
  * @param {{ id: string, title?: string, authors?: string|string[], ext?: string, libId?: string }} ref
  * @returns {{ id: string, bookId: string|null, match: 'id'|'libId'|'title'|null }}
@@ -65,7 +65,7 @@ export function resolveBookRef(ref) {
   if (!foldText(title)) return none;
 
   const libId = String(ref?.libId ?? '').trim() || (INPX_BOOK_ID.exec(id)?.[1] ?? '');
-  if (/^\d+$/.test(libId)) {
+  if (/^\d+$/.test(libId) || /^calibre:[0-9a-f-]{8,64}$/i.test(libId)) {
     // Candidates from `books` (indexed); `active_books` is checked per row — the view scans.
     _stmtByLibId ??= db.prepare(`
       SELECT id, title, authors, ext FROM books

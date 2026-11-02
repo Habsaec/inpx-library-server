@@ -13,6 +13,14 @@ import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 const BOOK_EXTENSIONS = new Set(['fb2', 'epub', 'mobi', 'azw3', 'zip', '7z']);
 const COALESCE_MS = 1000;
 
+const CALIBRE_DB_NAMES = new Set(['metadata.db', 'metadata.db-journal']);
+
+/** Calibre-библиотека: каталог — только metadata.db (файлы книг и cover.jpg Calibre меняет вместе с ним). */
+export function isRelevantCalibreWatchName(filename) {
+  const name = String(filename ?? '').replace(/\\/g, '/').split('/').pop() || '';
+  return CALIBRE_DB_NAMES.has(name.toLowerCase());
+}
+
 /** Событие интересно, если это книга/архив или каталог (имя без расширения). Временные .part/.tmp и картинки — нет. */
 export function isRelevantWatchName(filename) {
   const name = String(filename ?? '').replace(/\\/g, '/').split('/').pop() || '';
@@ -27,8 +35,11 @@ if (!isMainThread && parentPort) {
   let pending = false;
   const post = (message) => parentPort.postMessage(message);
   try {
-    const watcher = fs.watch(workerData.path, { recursive: true }, (_eventType, filename) => {
-      if (!isRelevantWatchName(filename) || pending) return;
+    // Calibre: только корень (metadata.db), без рекурсивного обхода дерева.
+    const calibre = Boolean(workerData.calibre);
+    const relevant = calibre ? isRelevantCalibreWatchName : isRelevantWatchName;
+    const watcher = fs.watch(workerData.path, { recursive: !calibre }, (_eventType, filename) => {
+      if (!relevant(filename) || pending) return;
       pending = true;
       setTimeout(() => {
         pending = false;

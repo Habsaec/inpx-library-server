@@ -7841,17 +7841,55 @@ function attachAddSourceForm() {
   const pathInput = form.querySelector('#source-path');
   const fastScanInput = form.querySelector('#source-fast-scan');
   const submitBtn = form.querySelector('#add-source-btn');
+  const calibreOptions = form.querySelector('#source-calibre-options');
+  const calibreTagsInput = form.querySelector('#source-calibre-tags');
+  const calibreDetected = form.querySelector('#source-calibre-detected');
 
   async function addSource(name, type, sourcePath, fastScan = false) {
+    const body = { name, type, path: sourcePath, fast_scan: fastScan ? 1 : 0 };
+    if (type === 'calibre' && calibreTagsInput) body.calibre_tags = calibreTagsInput.value;
     const res = await fetch('/admin/sources/add', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ name, type, path: sourcePath, fast_scan: fastScan ? 1 : 0 })
+      body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();
   }
+
+  /* Calibre-библиотека (metadata.db в папке): показываем режим тегов ещё до «Добавить». */
+  function showCalibreOptions(probe) {
+    const isCalibre = Boolean(probe?.ok && probe.exists && probe.isCalibre);
+    if (calibreOptions) calibreOptions.hidden = !isCalibre;
+    // Быстрое сканирование — только для обычных папок: Calibre и так не распаковывает книги.
+    const fastScanGroup = fastScanInput?.closest('.admin-field-group');
+    if (fastScanGroup) fastScanGroup.hidden = isCalibre;
+    if (calibreDetected) {
+      calibreDetected.textContent = isCalibre && probe.calibreBooks != null
+        ? uiTp('app.adminCalibreDetected', { count: probe.calibreBooks })
+        : '';
+    }
+  }
+
+  pathInput?.addEventListener('change', async () => {
+    const sourcePath = pathInput.value.trim();
+    if (!sourcePath || sourcePath.toLowerCase().endsWith('.inpx')) {
+      showCalibreOptions(null);
+      return;
+    }
+    try {
+      const probe = await fetch('/api/sources/probe', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ path: sourcePath })
+      }).then((r) => (r.ok ? r.json() : null));
+      if (pathInput.value.trim() === sourcePath) showCalibreOptions(probe);
+    } catch {
+      showCalibreOptions(null);
+    }
+  });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -7887,6 +7925,13 @@ function attachAddSourceForm() {
 
       if (probe.isFile && probe.isInpx) {
         const result = await addSource(name, 'inpx', sourcePath);
+        if (result.ok) { window.location.reload(); return; }
+        showToast(result.error || uiT('app.adminAddFail'), 'error');
+        return;
+      }
+
+      if (probe.isCalibre) {
+        const result = await addSource(name, 'calibre', sourcePath);
         if (result.ok) { window.location.reload(); return; }
         showToast(result.error || uiT('app.adminAddFail'), 'error');
         return;

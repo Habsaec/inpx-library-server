@@ -74,6 +74,16 @@ describe('resolve book ids from another catalog', () => {
     assert.equal(resolveBookRef({ id: 'd'.repeat(64), title: 'Дубль', authors: 'Один Автор' }).bookId, null);
   });
 
+  it('maps a Calibre book by calibre:<uuid> + title even when the authors differ', () => {
+    const uuid = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    insertBook({ id: '1'.repeat(32), title: 'Foundation', authors: 'Asimov,Isaac', ext: 'epub', libId: `calibre:${uuid}` });
+    assert.deepEqual(
+      resolveBookRef({ id: '2'.repeat(32), title: 'Foundation', authors: 'Isaac Asimov', ext: 'epub', libId: `calibre:${uuid}` }),
+      { id: '2'.repeat(32), bookId: '1'.repeat(32), match: 'libId' },
+    );
+    assert.equal(resolveBookRef({ id: '2'.repeat(32), title: 'Foundation', libId: 'calibre:bad id' }).bookId, null);
+  });
+
   it('reader-sync-index lists ids this catalog does not have', () => {
     const local = `local:${'e'.repeat(64)}`;
     const index = getReaderSyncIndex(USERNAME, ['6:857614', '9:857614', local]);

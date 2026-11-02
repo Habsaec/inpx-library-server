@@ -19,6 +19,7 @@ import {
 import { ensureEpubZipFromBookBuffer } from './epub-seven-zip.js';
 import { mergedFb2CacheKey, readMergedFb2, storeMergedFb2, withMergedFb2Lock } from './fb2-sidecar-cache.js';
 import { normalizeCachedAnnotation, unwrapEscapedMarkup } from './html-sanitize.js';
+import { isCalibreBook, readCalibreBookDetails } from './calibre.js';
 
 /** Кэш по корню источника: есть ли на диске covers|images (без обхода при каждой книге). */
 const coverImageMediaRootCache = new Map();
@@ -475,6 +476,10 @@ export async function getBookPublishInfo(book) {
   if (!book?.id) return empty;
   const cached = getCachedBookDetails(book.id);
   if (cached?.metaResolved) return { publishYear: cached.publishYear, isbn: cached.isbn };
+  if (isCalibreBook(book)) {
+    const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
+    return details?.metaResolved ? { publishYear: details.publishYear || null, isbn: details.isbn || '' } : empty;
+  }
   if (String(book.ext || 'fb2').toLowerCase() !== 'fb2') return empty;
   const pending = publishInfoInFlight.get(book.id);
   if (pending) return pending;
@@ -524,7 +529,8 @@ const FAILED_EXTRACT_TTL_MS = 600_000; // 10 минут: при постоянн
 export async function getOrExtractBookDetails(book, { skipCoverAugment = false } = {}) {
   const cached = getCachedBookDetails(book.id);
   if (cached) {
-    if (!cached.cover && !book.archiveName) {
+    // Calibre: обложка (cover.jpg) уже в кэше или её нет (has_cover = 0) — не перебираем файлы рядом.
+    if (!cached.cover && !book.archiveName && !isCalibreBook(book)) {
       const nearCover = findNearFileCover(book);
       if (nearCover) return { ...cached, cover: nearCover };
     }
@@ -550,6 +556,19 @@ export async function getOrExtractBookDetails(book, { skipCoverAugment = false }
     cover: null
   };
   let extractFailed = false;
+
+  // Calibre: аннотация, год, ISBN — из снимка metadata.db, обложка — cover.jpg; книга не распаковывается.
+  if (isCalibreBook(book)) {
+    const calibre = await readCalibreBookDetails(book).catch(() => null);
+    if (calibre) {
+      try {
+        saveCachedBookDetails(book.id, calibre);
+      } catch {
+        /* кэш необязателен */
+      }
+      return calibre;
+    }
+  }
 
   /*
    * Flibusta: prefer sidecar annotation/cover BEFORE unzipping the book archive.

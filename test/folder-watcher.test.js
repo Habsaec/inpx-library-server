@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { initDb, db, addSource, updateSourceIndexedAt, setSetting, getMeta } from '../src/db.js';
+import { initDb, db, addSource, updateSourceIndexedAt, setSetting, getMeta, setMeta } from '../src/db.js';
+import { calibreDbFingerprint } from '../src/calibre.js';
 import {
   startFolderWatcher, stopFolderWatcher, reconcileFolderWatchers, getFolderWatchConfig, readFolderWatchStatus,
   notifyIndexCompleted
@@ -90,6 +91,37 @@ test('admin settings override env defaults; turning watching off stops triggers 
     db.prepare("DELETE FROM settings WHERE key IN ('folder_watch_enabled', 'folder_watch_quiet_sec')").run();
     db.prepare('DELETE FROM sources WHERE path = ?').run(folder);
     fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('Calibre: metadata.db changed since the last index is picked up by polling, not only by fs.watch', async () => {
+  const library = fs.mkdtempSync(path.join(os.tmpdir(), 'watch-calibre-'));
+  const dbFile = path.join(library, 'metadata.db');
+  const calls = [];
+  let sourceId = 0;
+  try {
+    fs.writeFileSync(dbFile, 'calibre');
+    const source = addSource({ name: 'Calibre poll', type: 'calibre', path: library });
+    sourceId = source.id;
+    updateSourceIndexedAt(source.id);
+    // Calibre edited the library while the server was down: no fs event will ever come for that.
+    setMeta(`calibre_db_fp_${source.id}`, 'stale');
+
+    startFolderWatcher({ trigger: (id) => { calls.push(id); return true; }, quietMs: 300, reconcileMs: 60_000 });
+    assert.ok(await waitFor(() => calls.includes(source.id), 5000), 'the startup poll queues an incremental pass');
+
+    // The pass stored the current fingerprint: polls with nothing new must not queue anything.
+    setMeta(`calibre_db_fp_${source.id}`, calibreDbFingerprint(fs.statSync(dbFile)));
+    calls.length = 0;
+    reconcileFolderWatchers();
+    reconcileFolderWatchers();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    assert.deepEqual(calls, [], 'unchanged metadata.db → no pass');
+  } finally {
+    stopFolderWatcher();
+    db.prepare('DELETE FROM sources WHERE path = ?').run(library);
+    if (sourceId) db.prepare('DELETE FROM meta WHERE key = ?').run(`calibre_db_fp_${sourceId}`);
+    fs.rmSync(library, { recursive: true, force: true });
   }
 });
 

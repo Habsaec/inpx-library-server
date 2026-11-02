@@ -73,6 +73,7 @@ import {
   listFlibustaIllustrationsForBook, refreshFlibustaSidecarForSource
 } from '../flibusta-sidecar.js';
 import { clearArchiveReadCaches } from '../archives.js';
+import { probeCalibreLibrary, forgetCalibreSource } from '../calibre.js';
 import { clearOidcDiscoveryCache } from '../services/oidc.js';
 import {
   SYSTEM_EVENTS_MAX_COUNT, SYSTEM_EVENTS_RETAIN_COUNT, SAFE_ADMIN_REDIRECTS
@@ -390,7 +391,17 @@ export function registerAdminRoutes(app, deps) {
         return res.json({ ok: false, code: ApiErrorCode.PROBE_PATH_INVALID, error: t('admin.probe.pathInvalid') });
       }
       fs.readdirSync(resolvedPath);
-      return res.json({ ok: true, exists: true, isFile: false, isInpx: false, inpxFiles: findInpxFiles(resolvedPath, { maxDepth: 2 }) });
+      // Additive: Calibre-библиотека (metadata.db в корне) + число книг в ней.
+      const calibre = probeCalibreLibrary(resolvedPath);
+      return res.json({
+        ok: true,
+        exists: true,
+        isFile: false,
+        isInpx: false,
+        inpxFiles: findInpxFiles(resolvedPath, { maxDepth: 2 }),
+        isCalibre: Boolean(calibre),
+        calibreBooks: calibre ? calibre.books : null
+      });
     } catch {
       return res.json({ ok: false, code: ApiErrorCode.PROBE_PATH_UNREADABLE, error: t('admin.probe.pathUnreadable') });
     }
@@ -1212,14 +1223,14 @@ export function registerAdminRoutes(app, deps) {
     const isJson = req.headers.accept?.includes('application/json');
     try {
       const name = String(req.body.name || '').trim();
-      const type = req.body.type === 'inpx' ? 'inpx' : 'folder';
+      const type = ['inpx', 'calibre'].includes(req.body.type) ? req.body.type : 'folder';
       const sourcePath = String(req.body.path || '').trim();
       if (!name || !sourcePath) {
         if (isJson) return apiFail(res, 400, ApiErrorCode.ADMIN_SOURCE_NAME_PATH, t('admin.sources.errorNamePath'));
         return res.redirect('/admin/sources?flash=' + encodeURIComponent(t('admin.sources.errorNamePath')));
       }
       const fastScan = ['1', 'true'].includes(String(req.body.fast_scan));
-      const source = addSource({ name, type, path: sourcePath, fastScan });
+      const source = addSource({ name, type, path: sourcePath, fastScan, calibreTags: req.body.calibre_tags });
       reconcileFolderWatchers();
       clearPageDataCache();
       markLibraryDedupProjectionStale();
@@ -1237,7 +1248,8 @@ export function registerAdminRoutes(app, deps) {
       const id = Number(req.params.id);
       const name = req.body.name !== undefined ? String(req.body.name).trim() : undefined;
       const enabled = req.body.enabled !== undefined ? req.body.enabled === '1' : undefined;
-      updateSource(id, { name, enabled });
+      const calibreTags = req.body.calibre_tags !== undefined ? String(req.body.calibre_tags) : undefined;
+      updateSource(id, { name, enabled, calibreTags });
       reconcileFolderWatchers();
       if (enabled !== undefined) {
         await refreshCatalogBookCounts();
@@ -1245,8 +1257,8 @@ export function registerAdminRoutes(app, deps) {
       clearArchiveReadCaches();
       clearPageDataCache();
       markLibraryDedupProjectionStale();
-      logSystemEvent('info', 'settings', 'source updated', { actor: req.user.username, sourceId: id });
-      res.redirect('/admin/sources?flash=' + encodeURIComponent(t('admin.sources.flashUpdated')));
+      logSystemEvent('info', 'settings', 'source updated', { actor: req.user.username, sourceId: id, calibreTags });
+      res.redirect('/admin/sources?flash=' + encodeURIComponent(t(calibreTags !== undefined ? 'admin.sources.calibreTagsSaved' : 'admin.sources.flashUpdated')));
     } catch (error) {
       res.redirect('/admin/sources?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
@@ -1339,6 +1351,7 @@ export function registerAdminRoutes(app, deps) {
           deleteSourceRow: true,
           onProgress(p) { operationsState.sourceDeleteProgress = { ...p, sourceId: id, sourceName: source.name }; }
         });
+        if (source.type === 'calibre') forgetCalibreSource(id);
         logSystemEvent('info', 'settings', 'source deleted', { actor: req.user.username, source: source.name, sourceId: id, mode: 'inline' });
       } catch (error) {
         const message = String(error?.message || error);

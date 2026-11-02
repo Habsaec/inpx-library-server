@@ -2291,6 +2291,21 @@ async function indexSingleSource(sourceId, force = false) {
 
   if (source.type === 'inpx') {
     await ensureInpxSourceIndex(source, force);
+  } else if (source.type === 'calibre') {
+    const { indexCalibre } = await import('./calibre-indexer.js');
+    await indexCalibre(source, {
+      incremental: !force,
+      control: {
+        waitIfPaused: waitIfIndexPaused,
+        throwIfCancelled: throwIfIndexCancelled
+      },
+      onProgress: ({ processed, total, imported, currentArchive }) => {
+        indexState.processedArchives = processed;
+        indexState.totalArchives = total;
+        indexState.importedBooks = imported;
+        indexState.currentArchive = currentArchive ?? `${source.name}: ${processed}/${total}`;
+      }
+    });
   } else if (source.type === 'folder') {
     const { indexFolder } = await import('./folder-indexer.js');
     await indexFolder(source, {
@@ -2358,6 +2373,22 @@ async function indexAllSources(force = false, incremental = true) {
       });
       if (source.type === 'inpx') {
         await ensureInpxSourceIndex(source, force, incremental);
+      } else if (source.type === 'calibre') {
+        const { indexCalibre } = await import('./calibre-indexer.js');
+        const baseImported = indexState.importedBooks;
+        await indexCalibre(source, {
+          incremental: !force && incremental,
+          control: {
+            waitIfPaused: waitIfIndexPaused,
+            throwIfCancelled: throwIfIndexCancelled
+          },
+          onProgress: ({ processed, total, imported, currentArchive }) => {
+            indexState.processedArchives = processed;
+            indexState.totalArchives = total;
+            indexState.importedBooks = baseImported + imported;
+            indexState.currentArchive = currentArchive ?? `${source.name}: ${processed}/${total}`;
+          }
+        });
       } else if (source.type === 'folder') {
         const { indexFolder } = await import('./folder-indexer.js');
         const baseImported = indexState.importedBooks;

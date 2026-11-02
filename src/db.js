@@ -2018,6 +2018,10 @@ WHERE rp.progress >= 99
     if (!cols.includes('fast_scan')) {
       db.exec(`ALTER TABLE sources ADD COLUMN fast_scan INTEGER NOT NULL DEFAULT 0`);
     }
+    // Calibre-библиотека: куда идут теги — genres | keywords | ignore.
+    if (!cols.includes('calibre_tags')) {
+      db.exec(`ALTER TABLE sources ADD COLUMN calibre_tags TEXT NOT NULL DEFAULT 'genres'`);
+    }
   }
 
   const SCHEMA_BOOT_KEY = 'schema_bootstrap_v6';
@@ -2533,7 +2537,7 @@ export function getSources() {
   _stmtGetSources ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
     FROM sources
     ORDER BY created_at ASC
   `);
@@ -2545,7 +2549,7 @@ export function getEnabledSources() {
   _stmtGetEnabledSources ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
     FROM sources
     WHERE enabled = 1
     ORDER BY created_at ASC
@@ -2558,7 +2562,7 @@ export function getSourceById(id) {
   _stmtGetSourceById ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
     FROM sources
     WHERE id = ?
   `);
@@ -2570,7 +2574,7 @@ export function getSourceByPath(sourcePath) {
   _stmtGetSourceByPath ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
     FROM sources
     WHERE path = ?
   `);
@@ -2578,26 +2582,46 @@ export function getSourceByPath(sourcePath) {
 }
 
 let _stmtAddSource = null;
-export function addSource({ name, type, path: sourcePath, fastScan = false }) {
+export const SOURCE_TYPES = new Set(['inpx', 'folder', 'calibre']);
+export const CALIBRE_TAG_MODES = new Set(['genres', 'keywords', 'ignore']);
+
+export function normalizeCalibreTagsMode(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return CALIBRE_TAG_MODES.has(mode) ? mode : 'genres';
+}
+
+export function addSource({ name, type, path: sourcePath, fastScan = false, calibreTags = 'genres' }) {
   const trimmedName = String(name || '').trim();
   const trimmedPath = String(sourcePath || '').trim();
-  const normalizedType = type === 'inpx' ? 'inpx' : 'folder';
+  const normalizedType = SOURCE_TYPES.has(type) ? type : 'folder';
   if (!trimmedName) throw new Error('Название источника не указано');
   if (!trimmedPath) throw new Error('Путь к источнику не указан');
   const existing = getSourceByPath(trimmedPath);
   if (existing) throw new Error('Источник с таким путём уже существует');
   _stmtAddSource ??= db.prepare(`
-    INSERT INTO sources(name, type, path, fast_scan) VALUES(?, ?, ?, ?)
+    INSERT INTO sources(name, type, path, fast_scan, calibre_tags) VALUES(?, ?, ?, ?, ?)
   `);
   // fast_scan имеет смысл только для папок (INPX и так не читает файлы книг).
   const fastScanValue = normalizedType === 'folder' && fastScan ? 1 : 0;
-  const result = _stmtAddSource.run(trimmedName, normalizedType, trimmedPath, fastScanValue);
+  const result = _stmtAddSource.run(trimmedName, normalizedType, trimmedPath, fastScanValue, normalizeCalibreTagsMode(calibreTags));
   return getSourceById(result.lastInsertRowid);
 }
 
-export function updateSource(id, { name, enabled, path: sourcePath }) {
+export function updateSource(id, { name, enabled, path: sourcePath, calibreTags }) {
   const parts = [];
   const params = [];
+  if (calibreTags !== undefined) {
+    const mode = normalizeCalibreTagsMode(calibreTags);
+    const current = getSourceById(id);
+    if (current?.type === 'calibre' && current.calibreTags !== mode) {
+      parts.push('calibre_tags = ?');
+      params.push(mode);
+      // Теги лежат в строках книг: следующий инкрементальный проход перечитает все книги
+      // (сбрасываем и отпечаток metadata.db — иначе неизменённая библиотека пропускается целиком).
+      db.prepare('DELETE FROM calibre_book_state WHERE source_id = ?').run(Number(id));
+      db.prepare('DELETE FROM meta WHERE key = ?').run(`calibre_db_fp_${Number(id)}`);
+    }
+  }
   if (name !== undefined) {
     const trimmed = String(name || '').trim();
     if (!trimmed) throw new Error('Название источника не указано');
@@ -2669,6 +2693,21 @@ db.exec(`
   db.exec('CREATE INDEX IF NOT EXISTS idx_detached_book_refs_source ON detached_book_refs(source_id) WHERE source_id IS NOT NULL');
 }
 
+// Calibre-источник: отпечаток книги metadata.db на момент индексации (инкрементальный проход сравнивает
+// last_modified + список форматов); book_id = sha256(source:calibre:uuid) — книга нашего каталога.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS calibre_book_state (
+    source_id INTEGER NOT NULL,
+    calibre_id INTEGER NOT NULL,
+    book_id TEXT NOT NULL,
+    uuid TEXT NOT NULL,
+    last_modified TEXT NOT NULL,
+    formats TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (source_id, calibre_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_calibre_book_state_book ON calibre_book_state(book_id);
+`);
+
 const isAllSources = (sourceId) => sourceId == null || sourceId === '';
 
 /**
@@ -2731,7 +2770,19 @@ export function reattachDetachedUserData(sourceId) {
     WHERE ${all ? '1' : 'b.source_id = ?'}
     GROUP BY d.old_book_id
   `);
-  const matches = all ? matchStmt.all() : matchStmt.all(sid);
+  const found = all ? matchStmt.all() : matchStmt.all(sid);
+  // Calibre: путь и формат книги меняются в Calibre (правка названия, новый основной формат), uuid — нет.
+  // lib_id = calibre:<uuid> уникален, поэтому совпадения по нему одного достаточно.
+  const calibreStmt = db.prepare(`
+    SELECT d.old_book_id AS oldId, MIN(b.id) AS newId
+    FROM detached_book_refs d
+    JOIN books b ON b.lib_id = d.lib_id AND b.deleted = 0
+     AND (d.source_id IS NULL OR d.source_id = b.source_id)
+    WHERE d.lib_id LIKE 'calibre:%' AND ${all ? '1' : 'b.source_id = ?'}
+    GROUP BY d.old_book_id
+  `);
+  const seen = new Set(found.map((m) => m.oldId));
+  const matches = [...found, ...(all ? calibreStmt.all() : calibreStmt.all(sid)).filter((m) => !seen.has(m.oldId))];
   if (!matches.length) return 0;
 
   const dropRef = db.prepare('DELETE FROM detached_book_refs WHERE old_book_id = ?');
@@ -2903,6 +2954,7 @@ export async function deleteSourceProgressive(
     onProgress?.({ deleted: 0, total, stage: 'cleanup' });
     db.prepare('DELETE FROM flibusta_author_shard WHERE source_id = ?').run(sid);
     db.prepare('DELETE FROM book_reviews WHERE source_id = ?').run(sid);
+    db.prepare('DELETE FROM calibre_book_state WHERE source_id = ?').run(sid);
     db.prepare('DELETE FROM book_details_cache WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
     // Пользовательские данные (позиции, закладки, «прочитано» и т.д.) не удаляем:
     // запоминаем отпечаток книг и перепривязываем после повторной индексации.
@@ -3056,6 +3108,7 @@ export function forceDetachSourceRowUnsafe(id) {
 
   try {
     try { stashUserDataRefsForSource(sid); } catch { /* best-effort */ }
+    try { db.prepare('DELETE FROM calibre_book_state WHERE source_id = ?').run(sid); } catch { /* best-effort */ }
 
     dropBooksFtsTriggers();
     try {

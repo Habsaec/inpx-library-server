@@ -35,7 +35,7 @@
   <a href="https://boosty.to/habsaec/donate"><img src="https://img.shields.io/badge/Support%20the%20project-f15f2c?style=for-the-badge&logo=boosty&logoColor=white" alt="Support the project on Boosty"></a>
 </p>
 
-Point the server at a folder of books — an INPX collection (the format of large library dumps such as Flibusta and Librusec) or your own FB2 / EPUB files — and it builds a catalog with authors, series, genres and full-text search. Read in the browser or in the Android app: reading position, bookmarks and notes stay in sync. Runs on a NAS, a Raspberry Pi or a regular PC and is built for libraries of hundreds of thousands of books.
+Point the server at a folder of books — an INPX collection (the format of large library dumps such as Flibusta and Librusec), a [Calibre library](#calibre-libraries) or your own FB2 / EPUB files — and it builds a catalog with authors, series, genres and full-text search. Read in the browser or in the Android app: reading position, bookmarks and notes stay in sync. Runs on a NAS, a Raspberry Pi or a regular PC and is built for libraries of hundreds of thousands of books.
 
 ## What it looks like
 
@@ -185,13 +185,23 @@ sudo ./install.sh
 ## Getting started
 
 1. Sign in as **admin / admin** and change the password in your profile right away. To switch the interface to English, press **EN** in the top bar.
-2. **Admin → Book sources → Add source**: the path to a `.inpx` file or to a folder with books (in Docker, the path inside the container, e.g. `/library`).
+2. **Admin → Book sources → Add source**: the path to a `.inpx` file, to a Calibre library or to a folder with books (in Docker, the path inside the container, e.g. `/library`).
 3. Wait for indexing. Progress is shown in the admin panel; the full Flibusta collection takes about 45 minutes.
 4. Create users in **Admin → Users**, or turn on anonymous access there.
 5. To send books to e-readers, fill in **Admin → Mail**; for Telegram, **Admin → Telegram bot**.
 6. Backup: **Admin → Backups & updates → Download DB backup** (or copy `data/library.db`).
 
 Behind HTTPS / a reverse proxy (nginx, Caddy, Traefik), set `TRUST_PROXY=1` and `SESSION_SECURE_COOKIE=true`.
+
+## Calibre libraries
+
+Keep your books in [Calibre](https://calibre-ebook.com)? Add the library folder (the one with `metadata.db`) as a source: the admin panel recognizes it and adds it as a **Calibre library**.
+
+- The catalog comes from `metadata.db` — the titles and authors you fixed in Calibre, series and series numbers, tags, ratings, languages, publisher, description, ISBN and `cover.jpg`. Book files are not opened during indexing, so even a large library indexes in minutes.
+- One catalog entry per Calibre book. When a book has several formats, the server serves the first of EPUB → AZW3 → MOBI → FB2. Books that only have PDF, DJVU, CBZ or other formats are not shown yet.
+- **Tags** become genres by default. If your tags are mostly workflow labels («to read», «kobo»), switch the source to «search only» (or «ignore») in the sources table.
+- Renaming a book or an author in Calibre does not break reading positions, bookmarks or shelves: books are identified by Calibre's book UUID, not by the file path.
+- The server only reads the library: it copies `metadata.db` to its `data/calibre` folder and reads that copy (one copy per library, roughly 1–3 KB per book), so Calibre can stay open and the folder can be mounted read-only. With folder watching on, a change in Calibre is picked up after the quiet period; otherwise run an incremental index or use the schedule.
 
 ## Features
 
@@ -202,7 +212,7 @@ Behind HTTPS / a reverse proxy (nginx, Caddy, Traefik), set `TRUST_PROXY=1` and 
 | **Personal library** | Reading · Want to read · Finished · My ratings · favorite authors and series · «New from favorites» · shelves and smart shelves · yearly goal and stats · import from Goodreads / LiveLib |
 | **Delivery** | FB2, FB2.ZIP, EPUB, MOBI, AZW3 and more via [fb2cng](https://github.com/rupor-github/fb2cng) · batch ZIP · send to an e-reader by e-mail (Kindle, PocketBook, Kobo) and to Telegram |
 | **Clients** | Android app · OPDS 1.x / 2 with reading progress · KOReader progress sync (KOSync) · Telegram bot with search |
-| **Sources** | INPX collections (ZIP / 7z, including PPMd) and plain folders · several sources at once · duplicate cleanup · folder watching · covers, illustrations (JPEG XL, WebP), reviews and author portraits from Flibusta sidecar files |
+| **Sources** | INPX collections (ZIP / 7z, including PPMd), Calibre libraries and plain folders · several sources at once · duplicate cleanup · folder watching · covers, illustrations (JPEG XL, WebP), reviews and author portraits from Flibusta sidecar files |
 | **Admin** | Users and permissions, anonymous access, OIDC / SSO · SMTP and Telegram · look and feel (logo, header, background, palette) · monitoring, log, backup, update from ZIP |
 
 The interface is available in English and Russian, with light, dark and automatic themes. Rebuilding the index or removing a source never loses users' bookmarks, positions or shelves.

@@ -1,6 +1,8 @@
 # 004 — Calibre library as a book source (plan)
 
-Status: proposed — plan only, nothing implemented yet. Waiting for review.
+Status: phase 1 implemented (`src/calibre.js`, `src/calibre-indexer.js`, `test/calibre-source.test.js`); phases 2–3 proposed.
+Phase 1 indexes only the formats the readers open (`CALIBRE_PRIMARY_FORMATS` = epub > azw3 > mobi > fb2); the
+longer preference list below applies once phase 3 adds PDF / DJVU / CBZ…
 
 ## Why
 

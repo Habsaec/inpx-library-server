@@ -11,6 +11,10 @@
  * Настройки и список источников сверяются раз в минуту, поэтому изменения в админке подхватываются сами.
  * Источник без завершённой первой индексации не трогаем — первую индексацию запускает пользователь.
  * Статус каждого источника публикуется в meta (`folder_watch_status`) для админки.
+ *
+ * Calibre: кроме fs.watch на корне библиотеки раз в минуту (на сверке) сравниваем mtime + size одного файла
+ * metadata.db с отпечатком последней успешной индексации. На SMB/NFS fs.watch часто падает или молчит,
+ * а такой опрос стоит один асинхронный stat. Работает и когда наблюдатель в повторе / отключён после ошибок.
  */
 import fs from 'node:fs';
 import cluster from 'node:cluster';
@@ -18,6 +22,7 @@ import { Worker } from 'node:worker_threads';
 import { config } from '../config.js';
 import { db, getEnabledSources, getSourceById, setMeta } from '../db.js';
 import { startSourceIndexing, onIndexComplete } from '../inpx.js';
+import { calibreDbFingerprint, calibreDbPath, getStoredCalibreFingerprint } from '../calibre.js';
 import { logSystemEvent } from './system-events.js';
 
 const RECONCILE_MS = 60_000;
@@ -58,6 +63,7 @@ function publishStatus(enabled) {
   for (const [id, state] of watchers) {
     let status = 'unavailable';
     if (state.worker) status = state.readyAt ? 'watching' : 'starting';
+    else if (state.calibre && state.dbFp) status = 'polling';
     else if (state.gaveUp) status = 'failed';
     else if (state.failures > 0) status = 'retry';
     sources[id] = { status, error: state.lastError || '', retryAt: status === 'retry' ? state.retryAt : 0 };
@@ -95,7 +101,7 @@ function stopWatcher(id) {
 function failWatcher(id, state, reason) {
   const { worker } = state;
   state.worker = null;
-  clearTimeout(state.timer);
+  // Таймер тишины не сбрасываем: замеченные до сбоя изменения (и опрос metadata.db у Calibre) всё равно проиндексируем.
   if (worker) worker.terminate().catch(() => {});
   if (state.readyAt && Date.now() - state.readyAt > STABLE_AFTER_MS) state.failures = 0;
   state.readyAt = 0;
@@ -159,12 +165,33 @@ function schedule(id) {
   state.timer.unref?.();
 }
 
+/**
+ * Опрос metadata.db: отличается от отпечатка последней индексации и изменился с прошлой проверки → пауза
+ * тишины и инкрементальный проход. «С прошлой проверки» — чтобы ежеминутный опрос не сбрасывал уже идущий
+ * таймер тишины; занятый индексатор обрабатывает fire() (dirty → после успешного завершения).
+ */
+async function pollCalibreDb(id, state) {
+  if (state.polling) return;
+  state.polling = true;
+  try {
+    const live = calibreDbFingerprint(await fs.promises.stat(calibreDbPath(state.path)));
+    if (watchers.get(id) !== state) return;
+    const changedSincePoll = live !== state.dbFp;
+    state.dbFp = live;
+    if (changedSincePoll && live !== getStoredCalibreFingerprint(id)) schedule(id);
+  } catch {
+    // Нет файла / диск не смонтирован: индексатор сам сообщит об этом при проходе.
+  } finally {
+    state.polling = false;
+  }
+}
+
 function startWatcher(source) {
   let state = watchers.get(source.id);
   if (!state) {
     state = {
       path: source.path, worker: null, timer: null, failures: 0, retryAt: 0, readyAt: 0, gaveUp: false, lastError: '',
-      dirty: false
+      dirty: false, calibre: source.type === 'calibre'
     };
     watchers.set(source.id, state);
   }
@@ -174,7 +201,7 @@ function startWatcher(source) {
   }
   state.lastError = '';
   const worker = new Worker(new URL('./folder-watch-worker.js', import.meta.url), {
-    workerData: { path: source.path }
+    workerData: { path: source.path, calibre: source.type === 'calibre' }
   });
   worker.unref();
   state.worker = worker;
@@ -210,11 +237,11 @@ export function reconcileFolderWatchers() {
   }
   const desired = new Map();
   for (const source of getEnabledSources()) {
-    if (source.type === 'folder' && source.path) desired.set(source.id, source);
+    if ((source.type === 'folder' || source.type === 'calibre') && source.path) desired.set(source.id, source);
   }
   for (const [id, state] of [...watchers]) {
     const source = desired.get(id);
-    if (!source || source.path !== state.path) stopWatcher(id);
+    if (!source || source.path !== state.path || (source.type === 'calibre') !== Boolean(state.calibre)) stopWatcher(id);
   }
   const now = Date.now();
   for (const [id, source] of desired) {
@@ -227,6 +254,12 @@ export function reconcileFolderWatchers() {
       if (current) failWatcher(id, current, err.message);
     }
   }
+  const polls = [];
+  for (const [id, source] of desired) {
+    const state = watchers.get(id);
+    if (source.type === 'calibre' && state) polls.push(pollCalibreDb(id, state));
+  }
+  if (polls.length) Promise.allSettled(polls).then(() => publishStatus(true));
   publishStatus(true);
 }
 

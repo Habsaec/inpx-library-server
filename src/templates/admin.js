@@ -1351,7 +1351,7 @@ function formatNextRunLine(mode, nextRunAtIso) {
 }
 
 function renderFolderWatchLine(source, folderWatch) {
-  if (source.type !== 'folder' || !folderWatch) return '';
+  if ((source.type !== 'folder' && source.type !== 'calibre') || !folderWatch) return '';
   const entry = folderWatch.status?.sources?.[source.id];
   let text;
   if (!folderWatch.config.enabled || folderWatch.status?.enabled === false) text = t('admin.sources.watch.statusOff');
@@ -1359,6 +1359,7 @@ function renderFolderWatchLine(source, folderWatch) {
   else if (!entry) text = t('admin.sources.watch.statusPending');
   else if (entry.status === 'watching') text = t('admin.sources.watch.statusWatching');
   else if (entry.status === 'starting') text = t('admin.sources.watch.statusStarting');
+  else if (entry.status === 'polling') text = t('admin.sources.watch.statusPolling');
   else if (entry.status === 'retry') text = tp('admin.sources.watch.statusRetry', { when: formatLocaleDateTimeShort(new Date(entry.retryAt).toISOString()) });
   else if (entry.status === 'failed') text = t('admin.sources.watch.statusFailed');
   else text = t('admin.sources.watch.statusPending');
@@ -1403,7 +1404,8 @@ function renderFolderWatchForm({ csrfToken, folderWatch }) {
 export function renderAdminSources({ user, stats, indexStatus, sources = [], flash = '', csrfToken = '', scanIntervalHours = 0, scanSchedule = null, scanScheduleNextRunAt = null, scanScheduleLog = [], folderWatch = null, coverWidth = 220, coverHeight = 320, coverQuality = 86 }) {
   const typeBadge = (stype) => stype === 'inpx'
     ? '<span class="admin-chip admin-compact-btn">INPX</span>'
-    : `<span class="admin-chip admin-compact-btn">${escapeHtml(t('admin.sources.typeFolder'))}</span>`;
+    : `<span class="admin-chip admin-compact-btn">${escapeHtml(t(stype === 'calibre' ? 'admin.sources.typeCalibre' : 'admin.sources.typeFolder'))}</span>`;
+  const calibreTagOptions = (s) => ['genres', 'keywords', 'ignore'].map((mode) => `<option value="${mode}"${(s?.calibreTags || 'genres') === mode ? ' selected' : ''}>${escapeHtml(t(`admin.sources.calibreTags${mode[0].toUpperCase()}${mode.slice(1)}`))}</option>`).join('');
   const fmtDate = (d) => formatLocaleDateTimeShort(d);
 
   const sourceRows = sources.map((s) => `
@@ -1415,6 +1417,13 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
           <span class="muted admin-compact-btn source-path-text" style="word-break:break-all" data-path-status="${s.id}">${escapeHtml(s.path)}</span>
         </div>
         ${renderFolderWatchLine(s, folderWatch)}
+        ${s.type === 'calibre' ? `
+          <form action="/admin/sources/${s.id}/update" method="post" class="admin-inline-form" style="margin-top:6px;gap:6px;align-items:center" title="${escapeHtml(t('admin.sources.calibreTagsHint'))}">
+            ${csrfHiddenField(csrfToken)}
+            <label class="muted admin-compact-btn" for="calibre-tags-${s.id}">${escapeHtml(t('admin.sources.calibreTagsLabel'))}</label>
+            <select id="calibre-tags-${s.id}" name="calibre_tags" class="admin-input-sm">${calibreTagOptions(s)}</select>
+            <button type="submit" class="admin-compact-btn">${escapeHtml(t('admin.save'))}</button>
+          </form>` : ''}
       </td>
       <td data-label="${escapeHtml(t('admin.sources.thBooks'))}" style="text-align:center" data-source-books>${formatLocaleInt(Number(s.bookCount || 0))}</td>
       <td data-label="${escapeHtml(t('admin.sources.thEnabled'))}" style="text-align:center">${s.enabled ? escapeHtml(t('common.yes')) : escapeHtml(t('common.no'))}</td>
@@ -1501,6 +1510,12 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
             ${escapeHtml(t('admin.sources.fastScanLabel'))}
           </label>
           <span class="admin-field-hint">${escapeHtml(t('admin.sources.fastScanHint'))}</span>
+        </div>
+        <div class="admin-field-group" id="source-calibre-options" hidden>
+          <label for="source-calibre-tags">${escapeHtml(t('admin.sources.calibreTagsLabel'))}</label>
+          <select id="source-calibre-tags" name="calibre_tags">${calibreTagOptions(null)}</select>
+          <span class="admin-field-hint" id="source-calibre-detected"></span>
+          <span class="admin-field-hint">${escapeHtml(t('admin.sources.calibreTagsHint'))}</span>
         </div>
         <div class="admin-actions-row">
           <button type="submit" id="add-source-btn" class="button-primary">${escapeHtml(t('admin.sources.addBtn'))}</button>
