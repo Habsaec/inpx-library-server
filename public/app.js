@@ -7874,6 +7874,7 @@ function attachAddSourceForm() {
   const nameInput = form.querySelector('#source-name');
   const pathInput = form.querySelector('#source-path');
   const fastScanInput = form.querySelector('#source-fast-scan');
+  const folderSeriesInput = form.querySelector('#source-folder-series');
   const submitBtn = form.querySelector('#add-source-btn');
   const calibreOptions = form.querySelector('#source-calibre-options');
   const calibreTagsInput = form.querySelector('#source-calibre-tags');
@@ -7882,6 +7883,7 @@ function attachAddSourceForm() {
   async function addSource(name, type, sourcePath, fastScan = false) {
     const body = { name, type, path: sourcePath, fast_scan: fastScan ? 1 : 0 };
     if (type === 'calibre' && calibreTagsInput) body.calibre_tags = calibreTagsInput.value;
+    if (type === 'folder' && folderSeriesInput?.checked) body.folder_series = 1;
     const res = await fetch('/admin/sources/add', {
       method: 'POST',
       credentials: 'same-origin',
@@ -7899,6 +7901,8 @@ function attachAddSourceForm() {
     // Быстрое сканирование — только для обычных папок: Calibre и так не распаковывает книги.
     const fastScanGroup = fastScanInput?.closest('.admin-field-group');
     if (fastScanGroup) fastScanGroup.hidden = isCalibre;
+    const folderSeriesGroup = folderSeriesInput?.closest('.admin-field-group');
+    if (folderSeriesGroup) folderSeriesGroup.hidden = isCalibre;
     if (calibreDetected) {
       calibreDetected.textContent = isCalibre && probe.calibreBooks != null
         ? uiTp('app.adminCalibreDetected', { count: probe.calibreBooks })

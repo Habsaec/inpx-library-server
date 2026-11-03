@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 
-const BOOK_EXTENSIONS = new Set(['fb2', 'epub', 'mobi', 'azw3', 'zip', '7z', 'pdf', 'djvu', 'cbz', 'cbr', 'txt', 'rtf', 'docx']);
+const BOOK_EXTENSIONS = new Set(['fb2', 'epub', 'mobi', 'azw3', 'zip', '7z', 'pdf', 'djvu', 'cbz', 'cbr', 'txt', 'rtf', 'docx', 'opf']);
 const COALESCE_MS = 1000;
 
 const CALIBRE_DB_NAMES = new Set(['metadata.db', 'metadata.db-journal']);

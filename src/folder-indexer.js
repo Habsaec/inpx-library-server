@@ -40,6 +40,15 @@ import {
 import { getOrExtractBookDetails } from './fb2.js';
 import { prepareBookCatalogWriter } from './index-book-writer.js';
 import { DOCUMENT_FORMATS } from './utils/book-format.js';
+import {
+  folderSeriesMetadata,
+  mergeBookMetadata,
+  pickSidecarOpfName,
+  readComicInfo,
+  readPdfMetadata,
+  readSidecarOpf
+} from './folder-sidecar-meta.js';
+import { invalidateCoverThumbCaches } from './services/cover.js';
 import { logSystemEvent } from './services/system-events.js';
 import { PERF_LOG_ENABLED, perfLog, readMemoryUsageMb } from './services/perf-log.js';
 
@@ -197,6 +206,9 @@ async function scanDirectory(rootPath, onScanTick = null, control = null) {
       console.warn(`[folder-indexer] Cannot read directory ${dir}: ${err.message}`);
       continue;
     }
+    // OPF рядом с книгами берём из того же списка папки — без лишнего stat на каждую книгу.
+    const fileNames = [];
+    const bookFiles = [];
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -210,9 +222,12 @@ async function scanDirectory(rootPath, onScanTick = null, control = null) {
         } catch { /* stat failed, will fail on readdir later */ }
         stack.push({ path: fullPath, depth: depth + 1 });
       } else if (entry.isFile()) {
+        fileNames.push(entry.name);
         const ext = path.extname(entry.name).slice(1).toLowerCase();
         if (SUPPORTED_EXTENSIONS.has(ext) || LOOSE_ONLY_EXTENSIONS.has(ext)) {
-          results.push({ fullPath, relativePath: path.relative(rootPath, fullPath), ext, zipPath: null, zipEntry: null });
+          const file = { fullPath, relativePath: path.relative(rootPath, fullPath), ext, zipPath: null, zipEntry: null, sidecarOpf: null };
+          results.push(file);
+          bookFiles.push(file);
         } else if (ext === 'zip' || ext === '7z') {
           containerArchives.push({
             fullPath,
@@ -220,6 +235,13 @@ async function scanDirectory(rootPath, onScanTick = null, control = null) {
             ext
           });
         }
+      }
+    }
+    if (bookFiles.length && fileNames.some((name) => name.toLowerCase().endsWith('.opf'))) {
+      const bookNames = bookFiles.map((file) => path.basename(file.fullPath));
+      for (const file of bookFiles) {
+        const opf = pickSidecarOpfName(fileNames, path.basename(file.fullPath), bookNames);
+        if (opf) file.sidecarOpf = path.join(dir, opf);
       }
     }
   }
@@ -513,12 +535,31 @@ function parseFb2FromBuffer(raw) {
   return parseFb2Metadata(content);
 }
 
-async function extractMetadata(filePath, relativePath, ext, { zipEntry = null, fastScan = false } = {}) {
-  if (fastScan) {
-    // Быстрое сканирование: ничего не распаковываем, автор/название — из имени файла.
-    const fallback = parseFilenameMetadata(zipEntry || relativePath);
-    return { ...fallback, genres: '', seriesNo: '', lang: '', keywords: '', date: '' };
+/**
+ * Метаданные файла: OPF рядом (`sidecarOpf`) и ComicInfo.xml (CBZ) важнее встроенных в книгу,
+ * затем сама книга (FB2 / EPUB / MOBI / PDF), затем имя файла. В режиме «серия = папка» серия и номер
+ * тома, которых нет ни в одном слое, берутся из папки и имени файла. Быстрое сканирование книгу
+ * не открывает, но OPF рядом читает (маленький файл, найден ещё при обходе папок).
+ */
+async function extractMetadata(filePath, relativePath, ext, { zipEntry = null, fastScan = false, sidecarOpf = null, folderSeries = false } = {}) {
+  const nameForParsing = zipEntry || relativePath;
+  const loose = !zipEntry;
+  const opf = loose && sidecarOpf ? await readSidecarOpf(sidecarOpf) : null;
+  const comic = loose && !fastScan && ext === 'cbz' ? await readComicInfo(filePath) : null;
+  const pdf = loose && !fastScan && ext === 'pdf' ? await readPdfMetadata(filePath) : null;
+  const embedded = fastScan ? null : await extractEmbeddedMetadata(filePath, relativePath, ext, zipEntry);
+  const layers = [comic, opf, embedded, pdf];
+  // Имя файла — когда больше нечего взять (как раньше), а для документов (PDF, CBZ…) всегда: прежде у них
+  // были только имя файла, и автор «Автор - Название.pdf» не должен пропасть из-за названия из PDF.
+  if (!layers.some((layer) => layer?.title) || LOOSE_ONLY_EXTENSIONS.has(ext)) {
+    layers.push(folderSeries ? folderSeriesMetadata(nameForParsing) : parseFilenameMetadata(nameForParsing));
+  } else if (folderSeries) {
+    layers.push({ ...folderSeriesMetadata(nameForParsing), title: '' });
   }
+  return mergeBookMetadata(...layers);
+}
+
+async function extractEmbeddedMetadata(filePath, relativePath, ext, zipEntry) {
   if (ext === 'fb2') {
     try {
       const raw = zipEntry
@@ -557,10 +598,7 @@ async function extractMetadata(filePath, relativePath, ext, { zipEntry = null, f
       console.warn(`[folder-indexer] MOBI metadata extraction failed for ${relativePath}: ${err.message}`);
     }
   }
-
-  const nameForParsing = zipEntry || relativePath;
-  const fallback = parseFilenameMetadata(nameForParsing);
-  return { ...fallback, genres: '', seriesNo: '', lang: '', keywords: '', date: '' };
+  return null;
 }
 
 const MAX_ZIP_ENTRY_SIZE = 100 * 1024 * 1024;
@@ -597,6 +635,7 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
     throw new Error(`Папка не найдена: ${rootPath}`);
   }
   const fastScan = Boolean(source.fastScan);
+  const folderSeries = Boolean(source.folderSeries);
   console.log(`[folder-index] start source_id=${source.id} path=${rootPath} incremental=${incremental} fastScan=${fastScan}`);
   logSystemEvent('info', 'index', 'folder index started', {
     sourceId: source.id,
@@ -706,6 +745,8 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
       for (let j = fi; j < Math.min(fi + STAT_WINDOW, allFiles.length); j++) {
         const p = allFiles[j].fullPath;
         if (!statCache.has(p)) pending.add(p);
+        const opf = allFiles[j].sidecarOpf;
+        if (opf && !statCache.has(opf)) pending.add(opf);
       }
       await asyncMapLimit([...pending], STAT_CONCURRENCY, async (p) => {
         try {
@@ -728,8 +769,17 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
     const size = stat.size;
     file._statSize = size;
     currentFiles[key] = { mtimeMs, size };
+    // Отпечаток OPF рядом — только когда он есть: книги без OPF сохраняют прежний вид отпечатка
+    // (иначе после обновления все книги источника выглядели бы изменёнными). Правка одного OPF
+    // перечитывает книгу; сбой stat OPF оставляет прежнее значение.
+    const prev = previousFiles[key];
+    if (file.sidecarOpf) {
+      const opfStat = statCache.get(file.sidecarOpf);
+      const opf = opfStat ? `${opfStat.mtimeMs}:${opfStat.size}` : prev?.opf;
+      if (opf) currentFiles[key].opf = opf;
+    }
 
-    if (incremental && previousFiles[key] && previousFiles[key].mtimeMs === mtimeMs && previousFiles[key].size === size) {
+    if (incremental && prev && prev.mtimeMs === mtimeMs && prev.size === size && (prev.opf || '') === (currentFiles[key].opf || '')) {
       continue;
     }
     filesToProcess.push(file);
@@ -814,6 +864,7 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
 
   const writer = prepareBookCatalogWriter();
   const suppressedIds = getSuppressedBookIds();
+  const deleteDetailsCache = db.prepare('DELETE FROM book_details_cache WHERE book_id = ?');
 
   let imported = 0;
   const existingBookIds = new Set();
@@ -843,7 +894,12 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
       await waitIfPaused();
       let meta;
       try {
-        meta = await extractMetadata(file.fullPath, file.relativePath, file.ext, { zipEntry: file.zipEntry, fastScan });
+        meta = await extractMetadata(file.fullPath, file.relativePath, file.ext, {
+          zipEntry: file.zipEntry,
+          fastScan,
+          sidecarOpf: file.sidecarOpf,
+          folderSeries
+        });
       } catch {
         return null;
       }
@@ -893,12 +949,18 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
     }
 
     const txStartedAt = Date.now();
+    const rereadIds = [];
     const tx = db.transaction((rows) => {
       const batchSeenIds = new Set();
       for (const rawRow of rows) {
         const row = enrichBookRow(rawRow);
         if (!row || suppressedIds.has(row.id)) continue;
         row.sourceId = source.id;
+        // Перечитанная книга (сменился файл или OPF рядом): аннотация / обложка в кэше устарели.
+        if (incremental && existingBookIds.has(row.id)) {
+          deleteDetailsCache.run(row.id);
+          rereadIds.push(row.id);
+        }
         writer.upsertBook(row);
         if (incremental && !existingBookIds.has(row.id)) {
           bumpIndexNewBooks();
@@ -918,6 +980,7 @@ export async function indexFolder(source, { incremental = true, onProgress = nul
       }
     });
     tx(batchRows);
+    for (const id of rereadIds) invalidateCoverThumbCaches(id);
     throwIfCancelled();
     const txMs = Date.now() - txStartedAt;
     const batchMs = metaMs + txMs;

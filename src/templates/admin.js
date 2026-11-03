@@ -1424,6 +1424,16 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
             <select id="calibre-tags-${s.id}" name="calibre_tags" class="admin-input-sm">${calibreTagOptions(s)}</select>
             <button type="submit" class="admin-compact-btn">${escapeHtml(t('admin.save'))}</button>
           </form>` : ''}
+        ${s.type === 'folder' ? `
+          <form action="/admin/sources/${s.id}/update" method="post" class="admin-inline-form" style="margin-top:6px;gap:6px;align-items:center" title="${escapeHtml(t('admin.sources.folderSeriesHint'))}">
+            ${csrfHiddenField(csrfToken)}
+            <input type="hidden" name="folder_series_form" value="1">
+            <label class="muted admin-compact-btn admin-checkbox-label" style="text-transform:none;letter-spacing:0;">
+              <input type="checkbox" name="folder_series" value="1"${s.folderSeries ? ' checked' : ''} style="accent-color:var(--accent);width:14px;height:14px;">
+              ${escapeHtml(t('admin.sources.folderSeriesLabel'))}
+            </label>
+            <button type="submit" class="admin-compact-btn">${escapeHtml(t('admin.save'))}</button>
+          </form>` : ''}
       </td>
       <td data-label="${escapeHtml(t('admin.sources.thBooks'))}" style="text-align:center" data-source-books>${formatLocaleInt(Number(s.bookCount || 0))}</td>
       <td data-label="${escapeHtml(t('admin.sources.thEnabled'))}" style="text-align:center">${s.enabled ? escapeHtml(t('common.yes')) : escapeHtml(t('common.no'))}</td>
@@ -1515,6 +1525,13 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
             ${escapeHtml(t('admin.sources.fastScanLabel'))}
           </label>
           <span class="admin-field-hint">${escapeHtml(t('admin.sources.fastScanHint'))}</span>
+        </div>
+        <div class="admin-field-group" id="source-folder-series-group">
+          <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;">
+            <input type="checkbox" id="source-folder-series" name="folder_series" value="1" style="accent-color:var(--accent);width:16px;height:16px;">
+            ${escapeHtml(t('admin.sources.folderSeriesLabel'))}
+          </label>
+          <span class="admin-field-hint">${escapeHtml(t('admin.sources.folderSeriesHint'))}</span>
         </div>
         <div class="admin-field-group" id="source-calibre-options" hidden>
           <label for="source-calibre-tags">${escapeHtml(t('admin.sources.calibreTagsLabel'))}</label>

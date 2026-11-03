@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
-import { db } from './db.js';
+import { db, getSourceById } from './db.js';
 import { statSyncCached } from './utils/fs-probe.js';
 import { getLibraryRoot, getSourceRoot, effectiveSourceFlibustaForBook } from './inpx.js';
 import { readArchiveEntryBuffer } from './archives.js';
@@ -21,6 +21,7 @@ import { mergedFb2CacheKey, readMergedFb2, storeMergedFb2, withMergedFb2Lock } f
 import { normalizeCachedAnnotation, unwrapEscapedMarkup } from './html-sanitize.js';
 import { isCalibreBook, readCalibreBookDetails } from './calibre.js';
 import { isDocumentFormat } from './utils/book-format.js';
+import { readFolderBookSidecarDetails } from './folder-sidecar-meta.js';
 
 /** Кэш по корню источника: есть ли на диске covers|images (без обхода при каждой книге). */
 const coverImageMediaRootCache = new Map();
@@ -114,6 +115,16 @@ function extractCover(xml) {
 }
 
 /** Fallback-обложка из файла рядом с книгой (для книг без archiveName). */
+/** Полный путь отдельного файла книги папочного источника (не запись архива, не Calibre, не INPX) или null. */
+function looseFolderBookPath(book) {
+  if (!book?.sourceId || book.archiveName || !book.fileName || isCalibreBook(book)) return null;
+  const source = getSourceById(Number(book.sourceId));
+  if (source?.type !== 'folder' || !source.path) return null;
+  const root = path.resolve(source.path);
+  const full = path.resolve(root, `${book.fileName}.${book.ext}`);
+  return full.startsWith(root + path.sep) ? full : null;
+}
+
 function findNearFileCover(book) {
   if (book.archiveName) return null;
   try {
@@ -503,7 +514,12 @@ export async function getBookPublishInfo(book) {
     const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
     return details?.metaResolved ? { publishYear: details.publishYear || null, isbn: details.isbn || '' } : empty;
   }
-  if (String(book.ext || 'fb2').toLowerCase() !== 'fb2') return empty;
+  if (String(book.ext || 'fb2').toLowerCase() !== 'fb2') {
+    // EPUB / PDF / CBZ папки: год и ISBN только из OPF / ComicInfo рядом (сохраняются один раз в кэше деталей).
+    if (cached || !looseFolderBookPath(book)) return empty;
+    const details = await getOrExtractBookDetails(book, { skipCoverAugment: true });
+    return details?.metaResolved ? { publishYear: details.publishYear || null, isbn: details.isbn || '' } : empty;
+  }
   const pending = publishInfoInFlight.get(book.id);
   if (pending) return pending;
   const work = (async () => {
@@ -593,6 +609,23 @@ export async function getOrExtractBookDetails(book, { skipCoverAugment = false }
     }
   }
 
+  // Отдельный файл папочного источника: OPF рядом важнее встроенного в книгу; у PDF / CBZ это
+  // единственный источник аннотации, у CBZ обложка — первая страница (если рядом нет cover.jpg).
+  const loosePath = looseFolderBookPath(book);
+  if (loosePath) {
+    const sidecar = await readFolderBookSidecarDetails(loosePath, book.ext).catch(() => null);
+    if (sidecar) {
+      if (sidecar.annotation) {
+        details.annotation = sidecar.annotation;
+        details.annotationIsHtml = sidecar.annotationIsHtml;
+      }
+      details.publishYear = sidecar.publishYear || null;
+      details.isbn = sidecar.isbn || '';
+      if (details.publishYear || details.isbn) details.metaResolved = true;
+      if (sidecar.cover && !findNearFileCover(book)) details.cover = sidecar.cover;
+    }
+  }
+
   /*
    * Flibusta: prefer sidecar annotation/cover BEFORE unzipping the book archive.
    * Book page SSR uses skipCoverAugment and only needs annotation — opening fb2.zip
@@ -644,8 +677,8 @@ export async function getOrExtractBookDetails(book, { skipCoverAugment = false }
       if (!details.cover?.data?.length && extracted.cover?.data?.length) {
         details.cover = extracted.cover;
       }
-      details.publishYear = extracted.publishYear || null;
-      details.isbn = extracted.isbn || '';
+      details.publishYear = details.publishYear || extracted.publishYear || null;
+      details.isbn = details.isbn || extracted.isbn || '';
       details.metaResolved = true;
     } catch {
       extractFailed = true;

@@ -2030,6 +2030,22 @@ WHERE rp.progress >= 99
     if (!cols.includes('calibre_tags')) {
       db.exec(`ALTER TABLE sources ADD COLUMN calibre_tags TEXT NOT NULL DEFAULT 'genres'`);
     }
+    // Папка: «серия = папка» (комиксы / манга в раскладке Komga / Kavita).
+    if (!cols.includes('folder_series')) {
+      db.exec(`ALTER TABLE sources ADD COLUMN folder_series INTEGER NOT NULL DEFAULT 0`);
+    }
+  }
+
+  // PDF / CBZ папок прежде кэшировались без аннотации и обложки (файл не открывался); теперь их детали
+  // читаются из ComicInfo.xml / первой страницы CBZ / PDF / OPF рядом — один раз сбрасываем те строки.
+  if (db.prepare(`SELECT value FROM meta WHERE key = 'folder_sidecar_details_v1'`).get()?.value !== '1') {
+    db.exec(`
+      DELETE FROM book_details_cache WHERE book_id IN (
+        SELECT b.id FROM books b JOIN sources s ON s.id = b.source_id
+        WHERE s.type = 'folder' AND b.archive_name = '' AND b.ext IN ('cbz', 'pdf')
+      )
+    `);
+    db.prepare(`INSERT INTO meta(key, value) VALUES('folder_sidecar_details_v1', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`).run();
   }
 
   const SCHEMA_BOOT_KEY = 'schema_bootstrap_v6';
@@ -2545,7 +2561,8 @@ export function getSources() {
   _stmtGetSources ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags,
+           folder_series AS folderSeries
     FROM sources
     ORDER BY created_at ASC
   `);
@@ -2557,7 +2574,8 @@ export function getEnabledSources() {
   _stmtGetEnabledSources ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags,
+           folder_series AS folderSeries
     FROM sources
     WHERE enabled = 1
     ORDER BY created_at ASC
@@ -2570,7 +2588,8 @@ export function getSourceById(id) {
   _stmtGetSourceById ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags,
+           folder_series AS folderSeries
     FROM sources
     WHERE id = ?
   `);
@@ -2582,7 +2601,8 @@ export function getSourceByPath(sourcePath) {
   _stmtGetSourceByPath ??= db.prepare(`
     SELECT id, name, type, path, enabled, last_indexed_at AS lastIndexedAt,
            book_count AS bookCount, created_at AS createdAt,
-           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags
+           flibusta_sidecar AS flibustaSidecar, fast_scan AS fastScan, calibre_tags AS calibreTags,
+           folder_series AS folderSeries
     FROM sources
     WHERE path = ?
   `);
@@ -2598,7 +2618,7 @@ export function normalizeCalibreTagsMode(value) {
   return CALIBRE_TAG_MODES.has(mode) ? mode : 'genres';
 }
 
-export function addSource({ name, type, path: sourcePath, fastScan = false, calibreTags = 'genres' }) {
+export function addSource({ name, type, path: sourcePath, fastScan = false, calibreTags = 'genres', folderSeries = false }) {
   const trimmedName = String(name || '').trim();
   const trimmedPath = String(sourcePath || '').trim();
   const normalizedType = SOURCE_TYPES.has(type) ? type : 'folder';
@@ -2607,11 +2627,12 @@ export function addSource({ name, type, path: sourcePath, fastScan = false, cali
   const existing = getSourceByPath(trimmedPath);
   if (existing) throw new Error('Источник с таким путём уже существует');
   _stmtAddSource ??= db.prepare(`
-    INSERT INTO sources(name, type, path, fast_scan, calibre_tags) VALUES(?, ?, ?, ?, ?)
+    INSERT INTO sources(name, type, path, fast_scan, calibre_tags, folder_series) VALUES(?, ?, ?, ?, ?, ?)
   `);
-  // fast_scan имеет смысл только для папок (INPX и так не читает файлы книг).
+  // fast_scan и folder_series имеют смысл только для папок (INPX и Calibre берут серию из своего индекса).
   const fastScanValue = normalizedType === 'folder' && fastScan ? 1 : 0;
-  const result = _stmtAddSource.run(trimmedName, normalizedType, trimmedPath, fastScanValue, normalizeCalibreTagsMode(calibreTags));
+  const folderSeriesValue = normalizedType === 'folder' && folderSeries ? 1 : 0;
+  const result = _stmtAddSource.run(trimmedName, normalizedType, trimmedPath, fastScanValue, normalizeCalibreTagsMode(calibreTags), folderSeriesValue);
   return getSourceById(result.lastInsertRowid);
 }
 
@@ -2637,9 +2658,20 @@ export function convertFolderSourceToCalibre(id) {
   return getSourceById(sid);
 }
 
-export function updateSource(id, { name, enabled, path: sourcePath, calibreTags }) {
+export function updateSource(id, { name, enabled, path: sourcePath, calibreTags, folderSeries }) {
   const parts = [];
   const params = [];
+  if (folderSeries !== undefined) {
+    const value = folderSeries ? 1 : 0;
+    const current = getSourceById(id);
+    if (current?.type === 'folder' && Number(current.folderSeries || 0) !== value) {
+      parts.push('folder_series = ?');
+      params.push(value);
+      // Серия лежит в строках книг: следующий инкрементальный проход перечитает все файлы источника
+      // (id книги = sha256 пути, так что пользовательские данные остаются на месте).
+      db.prepare('DELETE FROM meta WHERE key = ?').run(`folder_index_${Number(id)}`);
+    }
+  }
   if (calibreTags !== undefined) {
     const mode = normalizeCalibreTagsMode(calibreTags);
     const current = getSourceById(id);

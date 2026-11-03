@@ -1231,11 +1231,12 @@ export function registerAdminRoutes(app, deps) {
         return res.redirect('/admin/sources?flash=' + encodeURIComponent(t('admin.sources.errorNamePath')));
       }
       const fastScan = ['1', 'true'].includes(String(req.body.fast_scan));
-      const source = addSource({ name, type, path: sourcePath, fastScan, calibreTags: req.body.calibre_tags });
+      const folderSeries = ['1', 'true'].includes(String(req.body.folder_series));
+      const source = addSource({ name, type, path: sourcePath, fastScan, calibreTags: req.body.calibre_tags, folderSeries });
       reconcileFolderWatchers();
       clearPageDataCache();
       markLibraryDedupProjectionStale();
-      logSystemEvent('info', 'settings', 'source added', { actor: req.user.username, source: source.name, type, path: sourcePath, fastScan: Boolean(source.fastScan) });
+      logSystemEvent('info', 'settings', 'source added', { actor: req.user.username, source: source.name, type, path: sourcePath, fastScan: Boolean(source.fastScan), folderSeries: Boolean(source.folderSeries) });
       if (isJson) return res.json({ ok: true, source });
       res.redirect('/admin/sources?flash=' + encodeURIComponent(tp('admin.sources.flashAdded', { name: source.name })));
     } catch (error) {
@@ -1250,7 +1251,9 @@ export function registerAdminRoutes(app, deps) {
       const name = req.body.name !== undefined ? String(req.body.name).trim() : undefined;
       const enabled = req.body.enabled !== undefined ? req.body.enabled === '1' : undefined;
       const calibreTags = req.body.calibre_tags !== undefined ? String(req.body.calibre_tags) : undefined;
-      updateSource(id, { name, enabled, calibreTags });
+      // Форма «серия = папка» шлёт folder_series_form=1 и галочку folder_series=1 (снятая галочка не приходит).
+      const folderSeries = req.body.folder_series_form !== undefined ? String(req.body.folder_series) === '1' : undefined;
+      updateSource(id, { name, enabled, calibreTags, folderSeries });
       reconcileFolderWatchers();
       if (enabled !== undefined) {
         await refreshCatalogBookCounts();
@@ -1258,8 +1261,11 @@ export function registerAdminRoutes(app, deps) {
       clearArchiveReadCaches();
       clearPageDataCache();
       markLibraryDedupProjectionStale();
-      logSystemEvent('info', 'settings', 'source updated', { actor: req.user.username, sourceId: id, calibreTags });
-      res.redirect('/admin/sources?flash=' + encodeURIComponent(t(calibreTags !== undefined ? 'admin.sources.calibreTagsSaved' : 'admin.sources.flashUpdated')));
+      logSystemEvent('info', 'settings', 'source updated', { actor: req.user.username, sourceId: id, calibreTags, folderSeries });
+      const flashKey = calibreTags !== undefined
+        ? 'admin.sources.calibreTagsSaved'
+        : folderSeries !== undefined ? 'admin.sources.folderSeriesSaved' : 'admin.sources.flashUpdated';
+      res.redirect('/admin/sources?flash=' + encodeURIComponent(t(flashKey)));
     } catch (error) {
       res.redirect('/admin/sources?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
