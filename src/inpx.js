@@ -8859,6 +8859,47 @@ export function isFavoriteAuthor(username, authorName) {
   return Boolean(_stmtIsFavAuthor.get(username, resolvedName));
 }
 
+/**
+ * «Не рекомендовать» автора. `on` = true/false sets the state, undefined toggles.
+ * Returns the new state, or null for an unknown author.
+ */
+export function setNotRecommendedAuthor(username, authorName, on) {
+  const resolvedName = resolveAuthorName(authorName);
+  if (!resolvedName) {
+    return null;
+  }
+  const exists = Boolean(db.prepare('SELECT 1 FROM not_recommended_authors WHERE username = ? AND author_name = ?').get(username, resolvedName));
+  const next = typeof on === 'boolean' ? on : !exists;
+  if (next && !exists) {
+    db.prepare('INSERT OR IGNORE INTO not_recommended_authors(username, author_name) VALUES(?, ?)').run(username, resolvedName);
+  } else if (!next && exists) {
+    db.prepare('DELETE FROM not_recommended_authors WHERE username = ? AND author_name = ?').run(username, resolvedName);
+  }
+  return next;
+}
+
+export function isNotRecommendedAuthor(username, authorName) {
+  const resolvedName = resolveAuthorName(authorName);
+  if (!resolvedName) {
+    return false;
+  }
+  return Boolean(db.prepare('SELECT 1 FROM not_recommended_authors WHERE username = ? AND author_name = ?').get(username, resolvedName));
+}
+
+export function getNotRecommendedAuthors(username) {
+  return db.prepare(`
+    SELECT author_name AS name FROM not_recommended_authors
+    WHERE username = ?
+    ORDER BY created_at DESC
+    LIMIT 1000
+  `).all(username).map((row) => ({ name: row.name, displayName: authorDisplayName(row.name) }));
+}
+
+/** Comparable key of one author value (book `authors` part or `authors.name`). */
+export function authorMatchKey(value = '') {
+  return createSortKey(authorSortKey(value));
+}
+
 let _stmtIsFavSeries = null;
 export function isFavoriteSeries(username, seriesName) {
   const resolved = resolveSeriesCatalogName(String(seriesName || ''));
@@ -9061,6 +9102,94 @@ export function markSeriesReadUpTo(username, seriesName, upTo, { langs = null } 
   return { added: result.added || 0 };
 }
 
+/** One volume = same series number + title (editions: formats, languages). Shared by progress and series info. */
+function seriesVolumeKey(row) {
+  return `${String(row.seriesNo || '').trim()}|${String(row.titleSort || row.title || '').trim().toLowerCase()}`;
+}
+
+/**
+ * Series page facts (web hero, Android series screen, `GET /api/series-info`): books, volumes (editions
+ * count once, as in the progress), authors, genres, languages, INPX date year range. Every query starts
+ * from the series row (`idx_book_series_series_id`), so cost is the size of the series, not the catalog.
+ * Profile languages narrow everything like the progress block.
+ */
+const seriesInfoCache = new Map();
+const SERIES_INFO_AUTHORS_MAX = 24;
+const SERIES_INFO_GENRES_MAX = 12;
+export function getSeriesInfo(seriesName, { langs = null } = {}) {
+  const canonical = resolveSeriesCatalogName(String(seriesName || ''));
+  if (!canonical) return null;
+  const langKey = Array.isArray(langs) ? langs.join(',') : '';
+  const cacheKey = `${runtimeQueryCacheGeneration}|${canonical}|${langKey}`;
+  const hit = readTimedCache(seriesInfoCache, cacheKey);
+  if (hit) return hit;
+
+  const langClause = languageFilterClause('b.lang', '', langs);
+  const langWhere = langClause ? ` AND ${langClause.where}` : '';
+  const params = [canonical, ...(langClause ? langClause.params : [])];
+  const from = `
+    FROM series_catalog sc
+    JOIN book_series bs ON bs.series_id = sc.id
+    JOIN active_books b ON b.id = bs.book_id`;
+  const rows = db.prepare(`
+    SELECT b.title, b.title_sort AS titleSort, COALESCE(NULLIF(bs.series_no, ''), b.series_no) AS seriesNo,
+           b.lang AS lang, b.date AS date
+    ${from}
+    WHERE sc.name = ?${langWhere}
+  `).all(...params);
+
+  const volumeKeys = new Set();
+  const langCounts = new Map();
+  let yearFrom = null;
+  let yearTo = null;
+  for (const row of rows) {
+    volumeKeys.add(seriesVolumeKey(row));
+    const code = String(row.lang || '').trim().toLowerCase();
+    if (code) langCounts.set(code, (langCounts.get(code) || 0) + 1);
+    const year = Number(String(row.date || '').slice(0, 4));
+    if (Number.isInteger(year) && year >= 1800 && year <= 2100) {
+      if (yearFrom == null || year < yearFrom) yearFrom = year;
+      if (yearTo == null || year > yearTo) yearTo = year;
+    }
+  }
+
+  const authors = rows.length ? db.prepare(`
+    SELECT a.name AS name, COALESCE(a.display_name, a.name) AS displayName, COUNT(DISTINCT b.id) AS bookCount
+    ${from}
+    JOIN book_authors ba ON ba.book_id = b.id
+    JOIN authors a ON a.id = ba.author_id
+    WHERE sc.name = ?${langWhere}
+    GROUP BY a.id
+    ORDER BY bookCount DESC, COALESCE(a.sort_name, a.name) ASC
+  `).all(...params) : [];
+  const genres = rows.length ? db.prepare(`
+    SELECT g.name AS name, COALESCE(g.display_name, g.name) AS displayName, COUNT(DISTINCT b.id) AS bookCount
+    ${from}
+    JOIN book_genres bg ON bg.book_id = b.id
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    WHERE sc.name = ?${langWhere}
+    GROUP BY g.id
+    ORDER BY bookCount DESC, COALESCE(g.sort_name, g.name) ASC
+    LIMIT ${SERIES_INFO_GENRES_MAX}
+  `).all(...params) : [];
+
+  const info = {
+    name: canonical,
+    displayName: getSeriesCatalogDisplayName(canonical),
+    bookCount: rows.length,
+    volumeCount: volumeKeys.size,
+    authorCount: authors.length,
+    authors: authors.slice(0, SERIES_INFO_AUTHORS_MAX),
+    genres: withGenreNameEn(genres),
+    languages: [...langCounts].map(([code, bookCount]) => ({ code, bookCount }))
+      .sort((a, b) => b.bookCount - a.bookCount || a.code.localeCompare(b.code)),
+    yearFrom,
+    yearTo
+  };
+  writeTimedCache(seriesInfoCache, cacheKey, info, FACET_SUMMARY_CACHE_TTL_MS, 300);
+  return info;
+}
+
 /** Volumes of a series for one user: editions with the same number + title count once; unnumbered last. */
 function listSeriesVolumes(u, seriesName, { langs = null } = {}) {
   const canonical = resolveSeriesCatalogName(String(seriesName));
@@ -9083,7 +9212,7 @@ function listSeriesVolumes(u, seriesName, { langs = null } = {}) {
   const volumes = [];
   const byKey = new Map();
   for (const row of rows) {
-    const key = `${String(row.seriesNo || '').trim()}|${String(row.titleSort || row.title || '').trim().toLowerCase()}`;
+    const key = seriesVolumeKey(row);
     let vol = byKey.get(key);
     if (!vol) {
       const no = String(row.seriesNo || '').trim();

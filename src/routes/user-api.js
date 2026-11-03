@@ -18,8 +18,9 @@ import QRCode from 'qrcode';
 import {
   getBookById, getBooksByIds, getReadingHistory, getBookmarks, getFavoriteAuthors, getFavoriteSeries,
   getBookmarksPage,
-  isBookmarked, toggleBookmark, addBookmarksIfMissing, toggleWantToRead, removeWantToRead, getSeriesReadingProgress,
+  isBookmarked, toggleBookmark, addBookmarksIfMissing, toggleWantToRead, removeWantToRead, getSeriesReadingProgress, getSeriesInfo,
   toggleFavoriteAuthor, toggleFavoriteSeries, getAllBookIdsByFacet,
+  setNotRecommendedAuthor, getNotRecommendedAuthors,
   toggleReadBook, addReadBooksIfMissing, isSeriesFullyRead, removeReadBooksForSeries,
   removeReadBookIfPresent, markSeriesReadUpTo, toggleSeriesWantToRead,
 } from '../inpx.js';
@@ -68,6 +69,7 @@ export function registerUserApiRoutes(app, deps) {
     res.json({
       authors: getFavoriteAuthors(req.user.username, 200),
       series: getFavoriteSeries(req.user.username, 200),
+      notRecommendedAuthors: getNotRecommendedAuthors(req.user.username),
     });
   });
 
@@ -181,6 +183,20 @@ export function registerUserApiRoutes(app, deps) {
     }
     const progress = getSeriesReadingProgress(req.user.username, name, { langs: effectiveContentLangs(req.user.username) });
     res.json(progress || { total: 0, read: 0, next: null, numbers: [] });
+  });
+
+  /* Series page facts (web hero renders the same server-side): books, volumes, authors, genres, languages,
+     INPX year range; profile languages apply. Unknown series → zero counts. */
+  app.get('/api/series-info', requireApiAuth, (req, res) => {
+    const name = String(req.query.name || '').trim();
+    if (!name) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, t('api.error.unknown'));
+    }
+    const info = getSeriesInfo(name, { langs: effectiveContentLangs(req.user.username) });
+    res.json(info || {
+      name, displayName: name, bookCount: 0, volumeCount: 0, authorCount: 0,
+      authors: [], genres: [], languages: [], yearFrom: null, yearTo: null
+    });
   });
 
   /* «Отметить прочитанным до тома N»: { name, upTo } → { added, progress } (web series page + Android). */
@@ -373,6 +389,23 @@ export function registerUserApiRoutes(app, deps) {
     invalidateUserPageCaches(req.user.username);
     invalidateRecommendationsCache(req.user.username);
     res.json({ favorite });
+  });
+
+  /* «Не рекомендовать» автора: his books leave the recommendations (web + Android). */
+  app.get('/api/recommendations/excluded-authors', requireApiAuth, (req, res) => {
+    res.json({ items: getNotRecommendedAuthors(req.user.username) });
+  });
+
+  app.post('/api/recommendations/excluded-authors', requireApiAuth, (req, res) => {
+    const name = String(req.body?.name || '');
+    const on = typeof req.body?.on === 'boolean' ? req.body.on : undefined;
+    const excluded = setNotRecommendedAuthor(req.user.username, name, on);
+    if (excluded === null) {
+      return apiFail(res, 404, ApiErrorCode.FACET_AUTHOR_NOT_FOUND, t('api.facet.authorNotFound'));
+    }
+    invalidateRecommendationsCache(req.user.username);
+    invalidateUserPageCaches(req.user.username);
+    res.json({ excluded });
   });
 
   app.post('/api/favorites/series', requireApiAuth, (req, res) => {

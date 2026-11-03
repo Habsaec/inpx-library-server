@@ -66,10 +66,11 @@ import {
   markFollowingSeen,
   getFollowingNewCount,
   getFollowingNewBooks,
-  getSeriesReadingProgress, getSeriesCatalogDisplayName, getInProgressBookMap,
+  getSeriesReadingProgress, getSeriesInfo, getSeriesCatalogDisplayName, getInProgressBookMap,
   getSeriesReadCounts,
   isSeriesFullyRead,
   isFavoriteAuthor,
+  isNotRecommendedAuthor,
   isFavoriteSeries,
   listAuthors,
   listGenresForLocale,
@@ -839,7 +840,8 @@ export function registerLibraryRoutes(app, deps) {
           total: grouped.standaloneBooks.length,
           user: req.user || null, stats,
           indexStatus: getIndexStatus(), sort, order, facetPath, breadcrumbs,
-          favorite, facetValue: value, csrfToken: req.csrfToken || '',
+          favorite, notRecommended: username ? isNotRecommendedAuthor(username, value) : false,
+          facetValue: value, csrfToken: req.csrfToken || '',
           page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
           listView: bookLayout === 'list', layout: bookLayout,
           readBookIds: username ? getReadBookIdSet(username) : null,
@@ -955,6 +957,7 @@ export function registerLibraryRoutes(app, deps) {
             user: req.user || null, stats, facetPath,
             indexStatus: getIndexStatus(), sort: authorSort, order, view: authorView, breadcrumbs, summary,
             facetValue: value, favorite, authorPortraitUrl, authorBioHtml,
+            notRecommended: username ? isNotRecommendedAuthor(username, value) : false,
             csrfToken: req.csrfToken || '',
             page: p, pageSize, hasMore: grouped.standaloneBooks.length >= pageSize,
             readSeriesNames: username ? getFullyReadSeriesNames(username) : null,
@@ -1017,7 +1020,17 @@ export function registerLibraryRoutes(app, deps) {
         facet, value, page, pageSize, sort, order, author: authorFilter,
         lang: langState.filter.lang, langs: langState.filter.langs, hideReadUser: resolveHideReadUser(req)
       });
-      const summary = getFacetSummary(facet, value);
+      // Series: authors / genres / languages / years live in the hero (getSeriesInfo, profile languages
+      // like the progress), so the unfiltered «related» summary under the list is not built.
+      const summary = facet === 'series' ? {} : getFacetSummary(facet, value);
+      let seriesInfo = null;
+      if (facet === 'series') {
+        try {
+          seriesInfo = getSeriesInfo(value, { langs: langState.list });
+        } catch (err) {
+          console.warn('[series] info failed:', err.message);
+        }
+      }
       const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
       let seriesProgress = null;
       // Whole series even under ?author= (the usual link from author / book pages).
@@ -1033,7 +1046,7 @@ export function registerLibraryRoutes(app, deps) {
         ...result, summary, page, pageSize,
         user: req.user || null, stats, facetPath,
         indexStatus: getIndexStatus(), sort, order, facet, facetValue: value,
-        favorite, seriesRead, seriesProgress, breadcrumbs, csrfToken: req.csrfToken || '',
+        favorite, seriesRead, seriesProgress, seriesInfo, breadcrumbs, csrfToken: req.csrfToken || '',
         readBookIds: username ? getReadBookIdSet(username) : null,
         view, authorFilter,
         listView: bookLayout === 'list', layout: bookLayout,

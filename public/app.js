@@ -2037,6 +2037,40 @@ async function attachBookmarkActions() {
   }
 }
 
+/** «Не рекомендовать» автора: toggles; the books of the author leave the recommendations. */
+function attachNotRecommendAuthorActions() {
+  for (const button of document.querySelectorAll('[data-not-recommend-author]')) {
+    button.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const on = button.getAttribute('aria-pressed') !== 'true';
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/recommendations/excluded-authors', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: button.dataset.notRecommendAuthor, on })
+        });
+        if (await handleAuthRequired(response)) return;
+        if (!response.ok) {
+          showToast(uiT('app.authorNotRecommendError'), 'error');
+          return;
+        }
+        const excluded = Boolean((await response.json()).excluded);
+        button.setAttribute('aria-pressed', excluded ? 'true' : 'false');
+        button.classList.toggle('is-active', excluded);
+        button.textContent = excluded ? button.dataset.labelOn : button.dataset.labelOff;
+        showToast(uiT(excluded ? 'app.authorNotRecommended' : 'app.authorRecommendedAgain'), 'success');
+      } catch (error) {
+        console.error(error);
+        showToast(uiT('app.networkError'), 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+}
+
 async function attachFavoriteActions() {
   const authorButtons = [...document.querySelectorAll('[data-favorite-author]')];
   for (const button of authorButtons) {
@@ -8206,6 +8240,7 @@ attachCoverLongPress();
 attachSeriesLongPress();
 attachMarkSeriesReadActions();
 attachFavoriteActions();
+attachNotRecommendAuthorActions();
 attachOperationActions();
 attachSidecarDiagnostics();
 attachCatalogNavLoading();

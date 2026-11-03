@@ -1156,7 +1156,7 @@ export function deleteUser(username) {
     db.prepare(`DELETE FROM smart_shelves WHERE username = ?`).run(normalizedUsername);
     /* Per-user tables without ON DELETE CASCADE that were left behind (read marks, ratings,
        reader notes, sync revisions). Some are created lazily, so skip a table an old DB lacks. */
-    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions', 'want_to_read', 'reading_goals', 'collection_pins']) {
+    for (const table of ['read_books', 'book_ratings', 'reader_annotations', 'reader_book_revisions', 'user_reader_revisions', 'want_to_read', 'reading_goals', 'collection_pins', 'not_recommended_authors']) {
       const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table);
       if (exists) db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(normalizedUsername);
     }
@@ -1888,6 +1888,14 @@ WHERE rp.progress >= 99
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (username, series_id),
       FOREIGN KEY (series_id) REFERENCES series_catalog(id) ON DELETE CASCADE
+    );
+
+    /* «Не рекомендовать» автора: by name (authors.name), so it survives a reindex. */
+    CREATE TABLE IF NOT EXISTS not_recommended_authors (
+      username TEXT NOT NULL,
+      author_name TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (username, author_name)
     );
 
     CREATE TABLE IF NOT EXISTS system_events (
@@ -5860,7 +5868,7 @@ const DB_TABLE_TO_CATEGORY = {
   users: 'activity', oauth_users: 'activity',
   bookmarks: 'activity', read_books: 'activity', book_ratings: 'activity',
   reading_history: 'activity', reading_positions: 'activity', reader_bookmarks: 'activity',
-  favorite_authors: 'activity', favorite_series: 'activity',
+  favorite_authors: 'activity', favorite_series: 'activity', not_recommended_authors: 'activity',
   shelves: 'activity', shelf_books: 'activity',
   system_events: 'activity', scan_schedule_log: 'activity'
 };

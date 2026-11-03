@@ -14,7 +14,9 @@ import {
   parseGenreList,
   parseGenreMode,
   parseHasSeries,
-  listGenresForBookIds
+  listGenresForBookIds,
+  getNotRecommendedAuthors,
+  authorMatchKey
 } from '../inpx.js';
 import { db, getReadBookIdSet, onViewRebuild } from '../db.js';
 import { t } from '../i18n.js';
@@ -172,6 +174,10 @@ async function buildRecommendationsAsync(username, limit = 48) {
     ...history.map((h) => h.id),
     ...bookmarkItems.map((b) => b.id)
   ]);
+  /* «Не рекомендовать»: a book with any such author never enters the pool, nor is the author a signal. */
+  const blockedAuthorKeys = new Set(getNotRecommendedAuthors(username).map((a) => authorMatchKey(a.name)).filter(Boolean));
+  const isBlockedAuthor = (name) => blockedAuthorKeys.size > 0 && blockedAuthorKeys.has(authorMatchKey(name));
+  const hasBlockedAuthor = (authors) => blockedAuthorKeys.size > 0 && splitAuthorValues(authors).some(isBlockedAuthor);
   const favoriteAuthorNames = new Set(favoriteAuthors.map((a) => a.name));
   const favoriteSeriesNames = new Set(favoriteSeries.map((s) => s.name));
 
@@ -190,6 +196,7 @@ async function buildRecommendationsAsync(username, limit = 48) {
     for (const item of items) {
       if (!item?.id || excludeIds.has(item.id)) continue;
       if ((Number(item?.libRate) || 0) < 3) continue;
+      if (hasBlockedAuthor(item.authors)) continue;
       let bonus = ratingBonus(item);
       if (favoriteAuthorNames.has(pickFirstAuthor(item.authors))) bonus += 3;
       if (item.series && favoriteSeriesNames.has(item.series)) bonus += 2;
@@ -234,6 +241,7 @@ async function buildRecommendationsAsync(username, limit = 48) {
 
   /* Книги избранных авторов — сильный персональный сигнал */
   for (const author of favoriteAuthors.slice(0, 8)) {
+    if (isBlockedAuthor(author.name)) continue;
     addItems(getFacetBooks('authors', author.name, 4, 'rating'), 9);
     await yieldTick();
   }
@@ -252,7 +260,7 @@ async function buildRecommendationsAsync(username, limit = 48) {
   for (const item of readBooks.slice(0, 15)) {
     if (item.series) readSeriesSet.add(item.series);
     const firstAuthor = pickFirstAuthor(item.authors);
-    if (firstAuthor && !favoriteAuthorNames.has(firstAuthor)) readAuthorSet.add(firstAuthor);
+    if (firstAuthor && !favoriteAuthorNames.has(firstAuthor) && !isBlockedAuthor(firstAuthor))readAuthorSet.add(firstAuthor);
     for (const g of extractGenres(item.genres, 2)) {
       if (!signalGenreSet.has(g)) readGenreSet.add(g);
     }
@@ -278,7 +286,7 @@ async function buildRecommendationsAsync(username, limit = 48) {
   for (const item of history.slice(0, 12)) {
     if (item.series) histSeriesSet.add(item.series);
     const firstAuthor = pickFirstAuthor(item.authors);
-    if (firstAuthor && !favoriteAuthorNames.has(firstAuthor)) histAuthorSet.add(firstAuthor);
+    if (firstAuthor && !favoriteAuthorNames.has(firstAuthor) && !isBlockedAuthor(firstAuthor))histAuthorSet.add(firstAuthor);
     for (const g of extractGenres(item.genres, 2)) {
       if (!signalGenreSet.has(g)) histGenreSet.add(g);
     }
@@ -304,7 +312,7 @@ async function buildRecommendationsAsync(username, limit = 48) {
   for (const item of bookmarkItems.slice(0, 12)) {
     if (item.series) bmSeriesSet.add(item.series);
     const firstAuthor = pickFirstAuthor(item.authors);
-    if (firstAuthor && !favoriteAuthorNames.has(firstAuthor)) bmAuthorSet.add(firstAuthor);
+    if (firstAuthor && !favoriteAuthorNames.has(firstAuthor) && !isBlockedAuthor(firstAuthor))bmAuthorSet.add(firstAuthor);
     for (const g of extractGenres(item.genres, 2)) {
       if (!signalGenreSet.has(g)) bmGenreSet.add(g);
     }

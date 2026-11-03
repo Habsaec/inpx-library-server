@@ -5,7 +5,7 @@ import {
   parseLine, enrichBookRow, getLibraryView, recordReadingHistory,
   toggleWantToRead, isWantToRead, toggleReadBook,
   getFollowingNewBooks, getFollowingNewCount, markFollowingSeen, invalidateFollowingBadge,
-  getSeriesReadingProgress, getSeriesReadCounts
+  getSeriesReadingProgress, getSeriesReadCounts, getSeriesInfo
 } from '../src/inpx.js';
 
 const SEP = String.fromCharCode(4);
@@ -140,4 +140,30 @@ test('series progress groups editions, skips read volumes and puts unnumbered on
   assert.equal(progress.read, 4);
   assert.equal(progress.next, null);
   assert.equal(getSeriesReadCounts(USER).get('lists saga'), 4);
+});
+
+test('series info: volumes, authors, genres, languages, years, profile languages', () => {
+  db.prepare("INSERT INTO authors (name, display_name, sort_name, search_name, book_count) VALUES ('saga,writer', 'Saga Writer', 'saga writer', 'saga writer', 2)").run();
+  const authorId = db.prepare("SELECT id FROM authors WHERE name = 'saga,writer'").get().id;
+  for (const id of [ids.s1fb2, ids.s1epub, ids.s2]) {
+    db.prepare('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)').run(id, authorId);
+  }
+  db.prepare("UPDATE books SET date = '2001-05-01' WHERE id = ?").run(ids.s1fb2);
+  db.prepare("UPDATE books SET date = '2012-01-01', lang = 'en' WHERE id = ?").run(ids.s3);
+
+  const info = getSeriesInfo('Lists Saga');
+  assert.equal(info.name, 'lists saga');
+  assert.equal(info.displayName, 'Lists Saga');
+  assert.equal(info.bookCount, 5);
+  assert.equal(info.volumeCount, 4, 'FB2 + EPUB of volume 1 count once, as in the progress');
+  assert.deepEqual(info.authors.map((a) => [a.name, a.bookCount]), [['saga,writer', 3]]);
+  assert.equal(info.authorCount, 1);
+  assert.deepEqual(info.languages, [{ code: 'ru', bookCount: 4 }, { code: 'en', bookCount: 1 }]);
+  assert.equal(info.yearFrom, 2001);
+  assert.equal(info.yearTo, 2012);
+
+  const ruOnly = getSeriesInfo('lists saga', { langs: ['ru'] });
+  assert.equal(ruOnly.bookCount, 4);
+  assert.equal(ruOnly.yearTo, 2001, 'the English volume is outside the profile languages');
+  assert.equal(getSeriesInfo('lists saga', { langs: ['de'] }).bookCount, 0);
 });

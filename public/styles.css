@@ -7719,12 +7719,40 @@ html[data-theme="light"] .page-jump::after {
   margin-bottom: 0;
 }
 
+/* Series facts in the hero: authors, genres, languages, years (getSeriesInfo). */
+.series-facet-info {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 14px;
+  font-size: 0.875rem;
+}
+
+.series-facet-info-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.series-facet-info-label {
+  color: var(--muted);
+}
+
+.series-facet-info-label::after {
+  content: ':';
+}
+
+.series-facet-info .author-facet-genres {
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .series-facet-hero .card-detail-panel {
     grid-template-columns: 1fr;
   }
 
   .book-detail-shell.series-facet-hero .book-detail-content > .author-facet-count-line { order: 2; }
+  .book-detail-shell.series-facet-hero .book-detail-content > .series-facet-info { order: 3; text-align: start; }
   .book-detail-shell.series-facet-hero .book-detail-content > .series-progress { order: 5; text-align: start; }
 }
 

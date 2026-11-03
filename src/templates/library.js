@@ -1228,6 +1228,11 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });
 }
 
+/** «Не рекомендовать» автора (author pages, signed-in): `POST /api/recommendations/excluded-authors`, app.js. */
+function renderNotRecommendAuthorButton(name, active) {
+  return `<button class="button ${active ? 'is-active' : ''}" type="button" data-not-recommend-author="${escapeHtml(name)}" aria-pressed="${active ? 'true' : 'false'}" title="${escapeHtml(t('facet.notRecommendHint'))}" data-label-on="${escapeHtml(t('facet.notRecommended'))}" data-label-off="${escapeHtml(t('facet.notRecommend'))}">${escapeHtml(active ? t('facet.notRecommended') : t('facet.notRecommend'))}</button>`;
+}
+
 /** Series page icon buttons, same look and order as the book page corner (want → read → favorite → shelf). */
 function renderSeriesIconActions({ name, hasBooks, favorite, seriesRead, want }) {
   const attr = escapeHtml(name);
@@ -1269,7 +1274,34 @@ function renderSeriesProgress(progress) {
     </div>`;
 }
 
-export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, seriesProgress = null, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '', lang = '', langs = [] }) {
+/** Series hero facts (`getSeriesInfo`): authors (links), genres (chips), languages, INPX year range. */
+function renderSeriesInfo(info) {
+  if (!info || !info.bookCount) return '';
+  const rows = [];
+  if (info.authors?.length) {
+    const links = info.authors.map((a) => `<a href="/facet/authors/${encodeURIComponent(a.name)}">${escapeHtml(formatAuthorLabel(a.displayName || a.name) || a.name)}</a>`);
+    const more = info.authorCount > info.authors.length
+      ? ` <span class="muted">${escapeHtml(tp('facet.seriesInfoMoreAuthors', { n: formatLocaleInt(info.authorCount - info.authors.length) }))}</span>`
+      : '';
+    rows.push(`<div class="series-facet-info-row"><span class="series-facet-info-label">${escapeHtml(t('facet.seriesInfoAuthors'))}</span> <span class="series-facet-info-authors">${links.join(', ')}${more}</span></div>`);
+  }
+  if (info.genres?.length) {
+    rows.push(`<div class="series-facet-info-row"><span class="series-facet-info-label">${escapeHtml(t('facet.seriesInfoGenres'))}</span> <span class="author-facet-genres">${
+      info.genres.map((g) => `<a class="author-facet-genre-chip" href="/facet/genres/${encodeURIComponent(g.name)}">${escapeHtml(localizeGenreLabel(g.name, g.displayName) || g.name)}</a>`).join('')
+    }</span></div>`);
+  }
+  if (info.languages?.length) {
+    const langs = info.languages.map((l) => `<a href="/facet/languages/${encodeURIComponent(l.code)}">${escapeHtml(formatLanguageLabel(l.code))}</a>`);
+    rows.push(`<div class="series-facet-info-row"><span class="series-facet-info-label">${escapeHtml(t('facet.seriesInfoLanguages'))}</span> <span>${langs.join(', ')}</span></div>`);
+  }
+  if (info.yearFrom != null) {
+    const years = info.yearTo != null && info.yearTo !== info.yearFrom ? `${info.yearFrom}–${info.yearTo}` : String(info.yearFrom);
+    rows.push(`<div class="series-facet-info-row"><span class="series-facet-info-label">${escapeHtml(t('facet.seriesInfoYears'))}</span> <span>${escapeHtml(years)}</span></div>`);
+  }
+  return rows.length ? `<div class="series-facet-info">${rows.join('')}</div>` : '';
+}
+
+export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, seriesProgress = null, seriesInfo = null, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '', lang = '', langs = [] }) {
   const isGenre = facet === 'genres';
   const isLang = facet === 'languages';
   const isEntityView = (isGenre || isLang) && (view === 'authors' || view === 'series');
@@ -1381,7 +1413,12 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
         <div class="book-detail-content">
           ${seriesActions}
           <h1 class="book-detail-title">${escapeHtml(title)}</h1>
-          <div class="muted author-facet-count-line">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural('book', total)}</div>
+          <div class="muted author-facet-count-line">${escapeHtml(t('facet.inSectionCount'))} <strong>${formatLocaleInt(Math.max(0, Math.floor(Number(total) || 0)))}</strong> ${plural('book', total)}${
+            seriesInfo && seriesInfo.volumeCount > 0 && seriesInfo.volumeCount !== seriesInfo.bookCount
+              ? ` · ${escapeHtml(t('facet.seriesInfoVolumes'))}: <strong>${formatLocaleInt(seriesInfo.volumeCount)}</strong>`
+              : ''
+          }</div>
+          ${renderSeriesInfo(seriesInfo)}
           ${user ? renderSeriesProgress(seriesProgress) : ''}
         </div>
       </div>
@@ -1444,6 +1481,7 @@ export function renderAuthorFacetPage({
   summary = {},
   facetValue = '',
   favorite = false,
+  notRecommended = false,
   csrfToken = '',
   authorPortraitUrl = '',
   authorBioHtml = '',
@@ -1453,7 +1491,7 @@ export function renderAuthorFacetPage({
   langs = []
 }) {
   const facetAction = user
-    ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
+    ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>${renderNotRecommendAuthorButton(facetValue, notRecommended)}`
     : '';
   const isListView = view === 'list';
 
@@ -1601,6 +1639,7 @@ export function renderAuthorOutsideSeriesPage({
   facetPath,
   breadcrumbs = [],
   favorite = false,
+  notRecommended = false,
   facetValue = '',
   csrfToken = '',
   readBookIds = null,
@@ -1610,7 +1649,7 @@ export function renderAuthorOutsideSeriesPage({
   langs = []
 }) {
   const facetAction = user
-    ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>`
+    ? `<button class="button ${favorite ? 'is-active' : ''}" type="button" data-favorite-author="${escapeHtml(facetValue)}" ${favorite ? 'data-active-favorite="true"' : ''}>${favorite ? escapeHtml(t('facet.inFavorite')) : escapeHtml(t('facet.addFavorite'))}</button>${renderNotRecommendAuthorButton(facetValue, notRecommended)}`
     : '';
   const outsideBatch = Boolean(books.length && canDownloadInUi(user));
   const bookLayout = layout === 'list' || layout === 'grid' ? layout : (listView ? 'list' : 'grid');
