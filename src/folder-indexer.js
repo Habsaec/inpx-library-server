@@ -39,6 +39,7 @@ import {
 } from './inpx.js';
 import { getOrExtractBookDetails } from './fb2.js';
 import { prepareBookCatalogWriter } from './index-book-writer.js';
+import { DOCUMENT_FORMATS } from './utils/book-format.js';
 import { logSystemEvent } from './services/system-events.js';
 import { PERF_LOG_ENABLED, perfLog, readMemoryUsageMb } from './services/perf-log.js';
 
@@ -138,6 +139,11 @@ async function asyncMapLimit(items, limit, mapper) {
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['fb2', 'epub', 'mobi', 'azw3']);
+/**
+ * PDF, DJVU, CBZ, CBR, TXT, RTF, DOCX — only as loose files (inside zip/7z containers readme.txt и т. п.
+ * засорили бы каталог); метаданные — только из имени файла, файл не открывается.
+ */
+const LOOSE_ONLY_EXTENSIONS = new Set(DOCUMENT_FORMATS);
 
 function makeBookId(sourceId, relativePath) {
   return crypto.createHash('sha256').update(`${sourceId}:${relativePath}`).digest('hex').slice(0, 32);
@@ -205,7 +211,7 @@ async function scanDirectory(rootPath, onScanTick = null, control = null) {
         stack.push({ path: fullPath, depth: depth + 1 });
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).slice(1).toLowerCase();
-        if (SUPPORTED_EXTENSIONS.has(ext)) {
+        if (SUPPORTED_EXTENSIONS.has(ext) || LOOSE_ONLY_EXTENSIONS.has(ext)) {
           results.push({ fullPath, relativePath: path.relative(rootPath, fullPath), ext, zipPath: null, zipEntry: null });
         } else if (ext === 'zip' || ext === '7z') {
           containerArchives.push({

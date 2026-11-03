@@ -46,7 +46,7 @@ import {
 } from '../services/ui-customization.js';
 import {
   setSetting, getSetting, encryptValue, decryptValue, getSources, getSourceById,
-  addSource, updateSource, deleteSourceProgressive, forceDetachSourceRowUnsafe,
+  addSource, updateSource, deleteSourceProgressive, forceDetachSourceRowUnsafe, convertFolderSourceToCalibre,
   getSmtpSettings, setSmtpSettings, getTelegramSettings, setTelegramSettings, resolveTelegramTokenForAdmin, resolveTelegramApiBase, syncTelegramChatsFromLinkedUsers, hasAdminUser, listUsers, countAdminUsers,
   isPasswordResetEnabled, getPublicBaseUrlSetting, setPasswordResetSettings,
   getOidcSettings, setOidcSettings,
@@ -73,7 +73,7 @@ import {
   listFlibustaIllustrationsForBook, refreshFlibustaSidecarForSource
 } from '../flibusta-sidecar.js';
 import { clearArchiveReadCaches } from '../archives.js';
-import { probeCalibreLibrary, forgetCalibreSource } from '../calibre.js';
+import { probeCalibreLibrary, forgetCalibreSource, isCalibreLibraryDir } from '../calibre.js';
 import { clearOidcDiscoveryCache } from '../services/oidc.js';
 import {
   SYSTEM_EVENTS_MAX_COUNT, SYSTEM_EVENTS_RETAIN_COUNT, SAFE_ADMIN_REDIRECTS
@@ -1204,7 +1204,8 @@ export function registerAdminRoutes(app, deps) {
 
   app.get('/admin/sources', requireAdminWeb, (req, res) => {
     const stats = getCachedStats();
-    const sources = getSources();
+    // Папка с metadata.db — можно перевести в библиотеку Calibre (stat на источник, только в админке).
+    const sources = getSources().map((s) => (s.type === 'folder' && isCalibreLibraryDir(s.path) ? { ...s, calibreConvertible: true } : s));
     res.send(renderAdminSources({
       user: req.user, stats, indexStatus: getIndexStatus(), sources,
       flash: String(req.query.flash || ''), csrfToken: req.csrfToken || '',
@@ -1396,6 +1397,33 @@ export function registerAdminRoutes(app, deps) {
       ftsDone: p.ftsDone || 0,
       ftsTotal: p.ftsTotal || 0
     });
+  });
+
+  /*
+   * Папочный источник с metadata.db → библиотека Calibre: тип меняется, сразу запускается полный проход,
+   * который переносит пользовательские данные со старых книг (id = путь) на книги Calibre (calibre-indexer.js).
+   */
+  app.post('/admin/sources/:id/convert-calibre', requireAdminWeb, (req, res) => {
+    const back = (msg) => res.redirect('/admin/sources?flash=' + encodeURIComponent(msg));
+    try {
+      const id = Number(req.params.id);
+      const source = getSourceById(id);
+      if (!source) return back(t('admin.sources.notFound'));
+      if (source.type !== 'folder' || !isCalibreLibraryDir(source.path)) return back(t('admin.sources.convertCalibreNotLibrary'));
+      if (getIndexStatus().active || operationsState.sourceDeleteRunning || operationsState.sidecarRunning) {
+        return back(t('admin.reindexAlreadyRunning'));
+      }
+      convertFolderSourceToCalibre(id);
+      reconcileFolderWatchers();
+      const started = startSourceIndexing(id, true);
+      clearPageDataCache();
+      markLibraryDedupProjectionStale();
+      logSystemEvent('info', 'settings', 'folder source converted to Calibre', { actor: req.user.username, sourceId: id, source: source.name, started });
+      // Не запустилась (другой воркер индексирует) — метка перевода остаётся, следующий проход будет полным.
+      back(tp(started ? 'admin.sources.convertCalibreStarted' : 'admin.sources.convertCalibreQueued', { name: source.name }));
+    } catch (error) {
+      back(translateKnownErrorMessage(error.message));
+    }
   });
 
   app.post('/admin/sources/:id/reindex', requireAdminWeb, (req, res) => {

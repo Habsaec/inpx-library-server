@@ -23,10 +23,10 @@ async function waitFor(predicate, timeoutMs) {
 }
 
 test('isRelevantWatchName keeps books, archives and directories, drops temp/cover files', () => {
-  for (const name of ['a.fb2', 'sub/B.EPUB', 'x.mobi', 'y.azw3', 'dump.zip', 'dump.7z', 'New folder', '', null]) {
+  for (const name of ['a.fb2', 'sub/B.EPUB', 'x.mobi', 'y.azw3', 'dump.zip', 'dump.7z', 'scan.PDF', 'comic.cbz', 'notes.txt', 'New folder', '', null]) {
     assert.equal(isRelevantWatchName(name), true, String(name));
   }
-  for (const name of ['a.fb2.part', 'cover.jpg', 'notes.txt', '.hidden', 'Thumbs.db', 'sub/x.tmp']) {
+  for (const name of ['a.fb2.part', 'cover.jpg', 'notes.bak', '.hidden', 'Thumbs.db', 'sub/x.tmp']) {
     assert.equal(isRelevantWatchName(name), false, name);
   }
 });

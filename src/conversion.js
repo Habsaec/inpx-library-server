@@ -11,7 +11,8 @@ import {
   DOWNLOAD_FORMATS,
   FB2_ZIP_FORMAT,
   FORMAT_LABELS,
-  getAvailableDownloadFormats
+  getAvailableDownloadFormats,
+  getBookExtraFile
 } from './download-formats.js';
 import { buildDownloadBaseName } from './download-filename.js';
 import { getFb2WebpMode, convertFb2WebpBinariesToPng } from './fb2-webp-images.js';
@@ -26,7 +27,19 @@ const MIME_TYPES = {
   kfx: 'application/octet-stream',
   azw8: 'application/octet-stream',
   azw3: 'application/x-mobipocket-ebook',
-  mobi: 'application/x-mobipocket-ebook'
+  mobi: 'application/x-mobipocket-ebook',
+  // Stored extra files of Calibre books (book_files), served as is.
+  pdf: 'application/pdf',
+  djvu: 'image/vnd.djvu',
+  cbz: 'application/vnd.comicbook+zip',
+  cbr: 'application/vnd.comicbook-rar',
+  txt: 'text/plain; charset=utf-8',
+  rtf: 'application/rtf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  azw: 'application/vnd.amazon.ebook',
+  lit: 'application/x-ms-reader',
+  htmlz: 'application/zip',
+  zip: 'application/zip'
 };
 const FILE_EXTENSIONS = {
   fb2: 'fb2',
@@ -365,7 +378,7 @@ function normalizeDownloadFormat(book, requestedFormat) {
   const sourceFormat = String(book?.ext || 'fb2').toLowerCase();
   const format = String(requestedFormat || sourceFormat).toLowerCase();
   const available = new Set(getAvailableDownloadFormats(book));
-  if (!DOWNLOAD_FORMATS.has(format) || !available.has(format)) {
+  if (!available.has(format) || (!DOWNLOAD_FORMATS.has(format) && !getBookExtraFile(book, format))) {
     return sourceFormat;
   }
   return format;
@@ -392,6 +405,20 @@ async function resolveDownloadNow(book, requestedFormat, options = {}) {
   const style = options?.filenameStyle || null;
   const sourceFormat = String(book?.ext || 'fb2').toLowerCase();
   const format = normalizeDownloadFormat(book, requestedFormat);
+  // Another stored file of the same book (Calibre: EPUB + AZW3 + PDF…) — served as is, never converted.
+  const extraFile = format !== sourceFormat ? getBookExtraFile(book, format) : null;
+  if (extraFile) {
+    const extraBook = { ...book, ext: extraFile.ext, fileName: extraFile.fileName, size: extraFile.size };
+    const content = extraFile.ext === 'fb2'
+      ? await applyFb2WebpMode(await readBookBufferForDelivery(extraBook))
+      : await readBookBufferForDelivery(extraBook);
+    return {
+      format,
+      fileName: getBookFormatFileName(book, extraFile.ext, style),
+      mimeType: getFormatMimeType(extraFile.ext),
+      content
+    };
+  }
   if (format === sourceFormat && sourceFormat !== 'fb2') {
     const content = await readBookBufferForDelivery(book);
     return {

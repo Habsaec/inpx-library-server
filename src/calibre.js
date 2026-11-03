@@ -22,10 +22,11 @@ import { detectImageMimeFromBuffer } from './services/cover.js';
 export const CALIBRE_DB_FILE = 'metadata.db';
 
 /**
- * Основной формат книги — первый из списка, который есть у книги. Фаза 1: только форматы, которые
- * читают веб и Android (как у папочного источника); книги лишь с PDF/DJVU/CBZ… пока не индексируются.
+ * Основной формат книги — первый из списка, который есть у книги: сначала то, что открывают читалки,
+ * потом форматы «только скачать / OPDS / отправить» (фаза 3). Книги лишь в других форматах (LIT, HTMLZ…)
+ * не индексируются.
  */
-export const CALIBRE_PRIMARY_FORMATS = ['epub', 'azw3', 'mobi', 'fb2'];
+export const CALIBRE_PRIMARY_FORMATS = ['epub', 'azw3', 'mobi', 'fb2', 'pdf', 'djvu', 'cbz', 'cbr', 'txt', 'rtf', 'docx'];
 
 const REQUIRED_TABLES = ['books', 'data', 'authors', 'books_authors_link'];
 const REQUIRED_BOOK_COLUMNS = ['id', 'uuid', 'title', 'path', 'last_modified'];

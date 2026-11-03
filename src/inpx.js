@@ -1130,7 +1130,9 @@ const indexState = {
   paused: false,
   cancelRequested: false,
   mode: '',
-  sourceId: null
+  sourceId: null,
+  /** The last run changed nothing (Calibre metadata.db as last time): no catalog recount / post-index ANALYZE. */
+  lastRunUnchanged: false
 };
 
 function assignIndexStage(key, params = {}) {
@@ -1170,7 +1172,7 @@ function emitIndexCompleted() {
   const newBooksCount = Math.max(0, indexState.newBooksCount || 0);
   for (const listener of _indexCompleteListeners) {
     try {
-      listener({ newBooksCount });
+      listener({ newBooksCount, unchanged: indexState.lastRunUnchanged });
     } catch { /* ignore */ }
   }
 }
@@ -2131,6 +2133,7 @@ export function startBackgroundIndexing(force = false, incremental = true) {
   indexState.startedAt = new Date().toISOString();
   indexState.finishedAt = null;
   indexState.newBooksCount = 0;
+  indexState.lastRunUnchanged = false;
   beginIndexControlState('all', null);
 
   if (force) {
@@ -2210,6 +2213,7 @@ export function startSourceIndexing(sourceId, force = false) {
   indexState.startedAt = new Date().toISOString();
   indexState.finishedAt = null;
   indexState.newBooksCount = 0;
+  indexState.lastRunUnchanged = false;
   beginIndexControlState('source', Number(sourceId) || null);
 
   if (force) {
@@ -2225,15 +2229,19 @@ export function startSourceIndexing(sourceId, force = false) {
     type: srcRow?.type || ''
   });
   indexSingleSource(sourceId, force)
-    .then(async () => {
+    .then(async (result) => {
       try {
-        assignIndexStage('index.stage.catalogFull');
-        writeClusterIndexProgress();
-        const tCat = Date.now();
-        await refreshCatalogBookCounts();
-        const catSec = ((Date.now() - tCat) / 1000).toFixed(1);
-        if (Number(catSec) > 3) {
-          console.log(`[index] catalog book_count refresh done in ${catSec} s`);
+        // Nothing changed (Calibre metadata.db as last time): counts, recommendations and planner stats are still right.
+        indexState.lastRunUnchanged = Boolean(result?.unchanged);
+        if (!indexState.lastRunUnchanged) {
+          assignIndexStage('index.stage.catalogFull');
+          writeClusterIndexProgress();
+          const tCat = Date.now();
+          await refreshCatalogBookCounts();
+          const catSec = ((Date.now() - tCat) / 1000).toFixed(1);
+          if (Number(catSec) > 3) {
+            console.log(`[index] catalog book_count refresh done in ${catSec} s`);
+          }
         }
         indexState.ready = true;
         indexState.active = false;
@@ -2242,7 +2250,7 @@ export function startSourceIndexing(sourceId, force = false) {
         persistIndexNewBooksCount();
         emitIndexCompleted();
         clearClusterIndexState();
-        invalidateAllRecommendations();
+        if (!indexState.lastRunUnchanged) invalidateAllRecommendations();
         resetIndexControlState();
       } catch (err) {
         indexState.active = false;
@@ -2289,11 +2297,12 @@ async function indexSingleSource(sourceId, force = false) {
   if (!source) throw new Error(`Источник #${sourceId} не найден`);
   if (!source.enabled) throw new Error(`Источник «${source.name}» отключён`);
 
+  let unchanged = false;
   if (source.type === 'inpx') {
     await ensureInpxSourceIndex(source, force);
   } else if (source.type === 'calibre') {
     const { indexCalibre } = await import('./calibre-indexer.js');
-    await indexCalibre(source, {
+    const result = await indexCalibre(source, {
       incremental: !force,
       control: {
         waitIfPaused: waitIfIndexPaused,
@@ -2306,6 +2315,7 @@ async function indexSingleSource(sourceId, force = false) {
         indexState.currentArchive = currentArchive ?? `${source.name}: ${processed}/${total}`;
       }
     });
+    unchanged = Boolean(result?.unchanged);
   } else if (source.type === 'folder') {
     const { indexFolder } = await import('./folder-indexer.js');
     await indexFolder(source, {
@@ -2325,8 +2335,10 @@ async function indexSingleSource(sourceId, force = false) {
   logSystemEvent('info', 'index', 'single source index phase completed', {
     sourceId,
     name: source.name,
-    type: source.type
+    type: source.type,
+    ...(unchanged ? { unchanged: true } : {})
   });
+  return { unchanged };
 }
 
 async function indexAllSources(force = false, incremental = true) {

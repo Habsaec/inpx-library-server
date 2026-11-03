@@ -14,7 +14,7 @@ import {
   renderListRemoveBtn, bookIdDataAttr, bookCardDataAttrs, batchBookIdDataAttr,
   firstAuthorValue, uniqueBooksById, batchSelectInputAttrs, safeDomIdPart,
   browseTotalLine, canDownloadInUi, canSendToEmailInUi, renderAuthorLinks, renderSeriesLinks, renderWelcomeQuoteAuthor, isWelcomeQuoteAuthorLinkable,
-  STATIC_ASSET_VERSION, siteTitleForDisplay, READ_CHECK_SVG, renderFaviconLinks,
+  STATIC_ASSET_VERSION, siteTitleForDisplay, READ_CHECK_SVG, renderFaviconLinks, canOpenInWebReader,
   bookPagePath, readPagePath, apiBookPath, liteBookPagePath, liteReadPagePath,
   renderCoverFallbackImage,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
@@ -964,7 +964,7 @@ export function renderBook({
               : ''
           }
           <div class="actions actions-primary">
-            <a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${escapeHtml(readProgress > 0 && !isRead ? t('home.shelfContinue') : t('home.heroReadBook'))}</a>
+            ${canOpenInWebReader(book.ext) ? `<a href="${readPagePath(book.id)}" class="button button-primary" target="_blank" rel="noopener noreferrer"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${escapeHtml(readProgress > 0 && !isRead ? t('home.shelfContinue') : t('home.heroReadBook'))}</a>` : ''}
             ${renderDownloadMenu(book, { accent: true, user })}
             ${(() => {
               const sendItems = [

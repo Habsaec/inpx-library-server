@@ -2607,6 +2607,28 @@ export function addSource({ name, type, path: sourcePath, fastScan = false, cali
   return getSourceById(result.lastInsertRowid);
 }
 
+/**
+ * Папочный источник → библиотека Calibre (в папке есть metadata.db). Только меняет тип и ставит метку
+ * `calibre_convert_<id>`: следующий проход индексатора Calibre будет полным и перенесёт пользовательские
+ * данные со старых id (sha256 пути) на книги Calibre по file_name + ext (см. calibre-indexer.js).
+ */
+export function convertFolderSourceToCalibre(id) {
+  const sid = Number(id);
+  const source = getSourceById(sid);
+  if (!source) throw new Error('Источник не найден');
+  if (source.type !== 'folder') throw new Error('Перевести в Calibre можно только папочный источник');
+  db.transaction(() => {
+    db.prepare(`UPDATE sources SET type = 'calibre', fast_scan = 0 WHERE id = ?`).run(sid);
+    db.prepare('DELETE FROM calibre_book_state WHERE source_id = ?').run(sid);
+    db.prepare('DELETE FROM meta WHERE key IN (?, ?)').run(`folder_index_${sid}`, `calibre_db_fp_${sid}`);
+    db.prepare(`
+      INSERT INTO meta(key, value) VALUES(?, '1')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(`calibre_convert_${sid}`);
+  })();
+  return getSourceById(sid);
+}
+
 export function updateSource(id, { name, enabled, path: sourcePath, calibreTags }) {
   const parts = [];
   const params = [];
@@ -2707,6 +2729,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_calibre_book_state_book ON calibre_book_state(book_id);
 `);
+// Дополнительные файлы книги (Calibre: все форматы, кроме основного из books.ext/file_name) — отдаются
+// как есть при скачивании / OPDS / отправке на ридер. Чистится вместе с книгой и источником.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS book_files (
+    book_id TEXT NOT NULL,
+    ext TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (book_id, ext)
+  ) WITHOUT ROWID;
+`);
 
 const isAllSources = (sourceId) => sourceId == null || sourceId === '';
 
@@ -2794,6 +2827,23 @@ export function reattachDetachedUserData(sourceId) {
   })();
   console.log(`[db] reattached user data for ${matches.length} book(s) of source ${all ? 'ALL' : sid}`);
   return matches.length;
+}
+
+/**
+ * Переносит пользовательские данные по явным парам [oldId, newId] и снимает их отпечатки
+ * (перевод папочного источника в Calibre: старый id = sha256 пути, новый — из uuid Calibre).
+ * Пары с одним newId обрабатываются по порядку: при конфликте (одна позиция на книгу) остаётся первая.
+ */
+export function moveUserDataToBooks(pairs) {
+  if (!pairs?.length) return 0;
+  const dropRef = db.prepare('DELETE FROM detached_book_refs WHERE old_book_id = ?');
+  db.transaction(() => {
+    for (const [oldId, newId] of pairs) {
+      if (oldId !== newId) moveUserBookRows(oldId, newId);
+      dropRef.run(oldId);
+    }
+  })();
+  return pairs.length;
 }
 
 function moveUserBookRows(oldId, newId) {
@@ -2955,6 +3005,7 @@ export async function deleteSourceProgressive(
     db.prepare('DELETE FROM flibusta_author_shard WHERE source_id = ?').run(sid);
     db.prepare('DELETE FROM book_reviews WHERE source_id = ?').run(sid);
     db.prepare('DELETE FROM calibre_book_state WHERE source_id = ?').run(sid);
+    db.prepare('DELETE FROM book_files WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
     db.prepare('DELETE FROM book_details_cache WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid);
     // Пользовательские данные (позиции, закладки, «прочитано» и т.д.) не удаляем:
     // запоминаем отпечаток книг и перепривязываем после повторной индексации.
@@ -3109,6 +3160,7 @@ export function forceDetachSourceRowUnsafe(id) {
   try {
     try { stashUserDataRefsForSource(sid); } catch { /* best-effort */ }
     try { db.prepare('DELETE FROM calibre_book_state WHERE source_id = ?').run(sid); } catch { /* best-effort */ }
+    try { db.prepare('DELETE FROM book_files WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(sid); } catch { /* best-effort */ }
 
     dropBooksFtsTriggers();
     try {

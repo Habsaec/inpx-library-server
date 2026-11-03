@@ -6,12 +6,20 @@ import { siteTitleForDisplay, t, FORMAT_LABELS, downloadBookPath, apiBookPath } 
 // OPDS keeps the stored (Russian) genre names, like the genre navigation in routes/opds-v2.js.
 import { formatGenreLabel } from '../genre-map.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
+import { getBookExtraAcquisitions } from '../download-formats.js';
 
 const OPDS_MIME_FOR_SOURCE = {
   fb2: 'application/fb2+zip',
   epub: 'application/epub+zip',
   mobi: 'application/x-mobipocket-ebook',
-  azw3: 'application/x-mobipocket-ebook'
+  azw3: 'application/x-mobipocket-ebook',
+  pdf: 'application/pdf',
+  djvu: 'image/vnd.djvu',
+  cbz: 'application/vnd.comicbook+zip',
+  cbr: 'application/vnd.comicbook-rar',
+  txt: 'text/plain',
+  rtf: 'application/rtf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 };
 
 function baseLinks(baseUrl, selfPath) {
@@ -70,6 +78,10 @@ function formatPublication(book) {
   } else {
     const sourceMime = OPDS_MIME_FOR_SOURCE[extLower] || 'application/octet-stream';
     links.push({ rel: 'http://opds-spec.org/acquisition', href: dl, type: sourceMime, title: FORMAT_LABELS[extLower] || extLower.toUpperCase() });
+  }
+  // Other stored files of the book (Calibre: AZW3, PDF… next to the EPUB) — as is, one link per format.
+  for (const extra of getBookExtraAcquisitions(book)) {
+    links.push({ rel: 'http://opds-spec.org/acquisition', href: `${dl}&format=${extra.format}`, type: extra.mime, title: extra.label });
   }
   if (book.id) {
     links.push({ rel: 'http://opds-spec.org/image', href: `${apiBookPath(book.id, 'cover')}?opds=1`, type: 'image/webp' });

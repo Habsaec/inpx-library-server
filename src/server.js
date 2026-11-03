@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { brotliCompress, constants as zlibConstants } from 'node:zlib';
 import { precompressedStatic, warmPrecompressedStatic } from './services/static-precompress.js';
 import { isServerBusyError } from './services/heavy-task-limiter.js';
+import { isBookFileMissingError } from './fb2.js';
 import { STATIC_ASSET_VERSION } from './templates/shared.js';
 import { getClientI18nScript } from './i18n.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
@@ -1168,6 +1169,17 @@ app.use((error, req, res, next) => {
   return res.status(503).type('text/plain').send(t('errors.serverBusy'));
 });
 
+/* The book's file or archive is gone from disk (deleted / moved outside the catalog, volume not mounted): 404. */
+app.use((error, req, res, next) => {
+  if (!isBookFileMissingError(error)) return next(error);
+  logSystemEvent('warn', 'server', 'book file missing on disk', { message: error.message, path: req.path });
+  if (res.headersSent) return res.end();
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ ok: false, code: ApiErrorCode.BOOK_FILE_MISSING, error: t('errors.bookFileMissing') });
+  }
+  return res.status(404).type('text/plain').send(t('errors.bookFileMissing'));
+});
+
 app.use((error, req, res, next) => {
   console.error(error);
   logSystemEvent('error', 'server', 'unhandled request error', { message: error.message, path: req.path });
@@ -1303,7 +1315,9 @@ async function bootstrap() {
   }
   initCollections();
   // Book ids change on folder reindex / source re-add: re-match the collection lists in the background.
-  onIndexComplete(() => scheduleCollectionsMatch());
+  onIndexComplete(({ unchanged }) => {
+    if (!unchanged) scheduleCollectionsMatch();
+  });
   onIndexComplete(({ newBooksCount }) => {
     if (newBooksCount <= 0) return;
     if (!shouldRunTelegramBotInThisProcess()) return;
@@ -1505,8 +1519,13 @@ async function bootstrap() {
       if (status.error) {
         logSystemEvent('error', 'index', 'background indexing failed', { error: status.error, finishedAt: status.finishedAt });
       } else {
-        logSystemEvent('info', 'index', 'background indexing completed', { finishedAt: status.finishedAt, indexedAt: status.indexedAt });
-        schedulePostIndexMaintenance();
+        logSystemEvent('info', 'index', 'background indexing completed', {
+          finishedAt: status.finishedAt,
+          indexedAt: status.indexedAt,
+          ...(status.lastRunUnchanged ? { unchanged: true } : {})
+        });
+        // A pass that changed nothing needs no WAL checkpoint / ANALYZE.
+        if (!status.lastRunUnchanged) schedulePostIndexMaintenance();
       }
     }
     lastKnownIndexActive = status.active;

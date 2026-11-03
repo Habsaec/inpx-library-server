@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { db } from './db.js';
 
 /** Formats fb2cng can produce from FB2 (when configured). */
 export const FB2_CONVERTIBLE_FORMATS = ['epub2', 'epub3', 'kepub', 'kfx', 'azw8'];
@@ -49,12 +50,91 @@ export function isDownloadFormatEnabled(format) {
   return !disabledDownloadFormats.has(code);
 }
 
+/*
+ * Stored extra files of a book (Calibre: every format besides the primary one, table book_files).
+ * List pages call this per row, so the lookup is skipped while the table is empty (re-checked
+ * every 30 s — a library without Calibre sources never queries it per book).
+ */
+let _stmtBookFiles = null;
+let _stmtAnyBookFile = null;
+let anyBookFilesCheckedAt = 0;
+let anyBookFiles = false;
+
+function hasAnyBookFiles() {
+  const now = Date.now();
+  if (now - anyBookFilesCheckedAt > 30_000) {
+    anyBookFilesCheckedAt = now;
+    try {
+      _stmtAnyBookFile ??= db.prepare('SELECT 1 FROM book_files LIMIT 1');
+      anyBookFiles = Boolean(_stmtAnyBookFile.get());
+    } catch {
+      anyBookFiles = false;
+    }
+  }
+  return anyBookFiles;
+}
+
+/** Drop the 30 s memo (after an index pass wrote book_files, in tests). */
+export function resetBookFilesProbe() {
+  anyBookFilesCheckedAt = 0;
+}
+
+/**
+ * @param {{ id?: string, ext?: string, archiveName?: string }} book
+ * @returns {{ ext: string, fileName: string, size: number }[]}
+ */
+export function getBookExtraFiles(book) {
+  if (!book?.id || book.archiveName || !hasAnyBookFiles()) return [];
+  try {
+    _stmtBookFiles ??= db.prepare('SELECT ext, file_name AS fileName, size FROM book_files WHERE book_id = ? ORDER BY ext');
+    const primary = String(book.ext || '').toLowerCase();
+    return _stmtBookFiles.all(String(book.id)).filter((f) => f.ext !== primary);
+  } catch {
+    return [];
+  }
+}
+
+/** MIME types of stored extra files in OPDS acquisition links. */
+const STORED_FILE_MIME = {
+  epub: 'application/epub+zip',
+  fb2: 'application/x-fictionbook+xml',
+  mobi: 'application/x-mobipocket-ebook',
+  azw3: 'application/x-mobipocket-ebook',
+  azw: 'application/vnd.amazon.ebook',
+  pdf: 'application/pdf',
+  djvu: 'image/vnd.djvu',
+  cbz: 'application/vnd.comicbook+zip',
+  cbr: 'application/vnd.comicbook-rar',
+  txt: 'text/plain',
+  rtf: 'application/rtf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+};
+
+/**
+ * OPDS acquisition entries for a book's stored extra files: { format, mime, label } (one link per
+ * format, `/download/:id?format=<ext>`); disabled formats are left out like everywhere else.
+ */
+export function getBookExtraAcquisitions(book) {
+  return getBookExtraFiles(book)
+    .filter((f) => isDownloadFormatEnabled(f.ext))
+    .map((f) => ({
+      format: f.ext,
+      mime: STORED_FILE_MIME[f.ext] || 'application/octet-stream',
+      label: FORMAT_LABELS[f.ext] || f.ext.toUpperCase()
+    }));
+}
+
+/** A stored extra file of the book for this format code, or null (then the format is a conversion). */
+export function getBookExtraFile(book, format) {
+  const code = String(format || '').toLowerCase();
+  return getBookExtraFiles(book).find((f) => f.ext === code) || null;
+}
+
 function getBookNativeDownloadFormats(book) {
   const sourceFormat = String(book?.ext || 'fb2').toLowerCase();
-  if (sourceFormat === 'fb2') {
-    return getConfiguredDownloadFormats();
-  }
-  return [sourceFormat];
+  const base = sourceFormat === 'fb2' ? getConfiguredDownloadFormats() : [sourceFormat];
+  const extras = getBookExtraFiles(book).map((f) => f.ext).filter((ext) => !base.includes(ext));
+  return extras.length ? [...base, ...extras] : base;
 }
 
 /**

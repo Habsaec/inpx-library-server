@@ -201,3 +201,35 @@ export function classifyReaderExt(ext) {
   }
   return 'unsupported';
 }
+
+/**
+ * Formats indexed without reading the file (Calibre phase 3, folder sources: loose files only):
+ * no metadata inside is parsed, the file is only downloaded / served over OPDS / sent.
+ */
+export const DOCUMENT_FORMATS = Object.freeze(['pdf', 'djvu', 'cbz', 'cbr', 'txt', 'rtf', 'docx']);
+
+const DOCUMENT_FORMAT_SET = new Set(DOCUMENT_FORMATS);
+
+export function isDocumentFormat(ext) {
+  return DOCUMENT_FORMAT_SET.has(String(ext || '').toLowerCase().replace(/^\./, '').replace(/\.zip$/, ''));
+}
+
+/**
+ * «Читать» on web pages: Foliate formats (FB2, EPUB, MOBI/AZW3, CBZ) and PDF (the browser's own
+ * viewer in an iframe, see public/reader.js). DJVU, CBR, TXT, RTF, DOCX: download / send only.
+ */
+export function canOpenInWebReader(ext) {
+  const kind = classifyReaderExt(ext || 'fb2');
+  return kind === 'foliate' || kind === 'pdf';
+}
+
+/** Send to Kindle by e-mail accepts EPUB, PDF, DOC/DOCX, TXT, RTF, HTML (not MOBI/AZW3/FB2/DJVU/CBZ). */
+const KINDLE_EMAIL_FORMATS = new Set(['epub', 'epub2', 'epub3', 'kepub', 'pdf', 'doc', 'docx', 'txt', 'rtf', 'htm', 'html']);
+
+export function isKindleEmailAddress(email) {
+  return /@(free\.)?kindle\.(com|cn)$/i.test(String(email || '').trim());
+}
+
+export function isKindleEmailFormat(format) {
+  return KINDLE_EMAIL_FORMATS.has(String(format || '').toLowerCase());
+}

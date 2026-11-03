@@ -578,6 +578,15 @@ import {
   function applyRendererLayout() {
     if (!view?.renderer) return;
     invalidateBookPageCache();
+    // Fixed layout (CBZ comics): foliate-fxl fits the page itself — paginator margins / columns /
+    // side padding pushed the page off-centre and out of the screen (same branch as the Android reader).
+    if (view.isFixedLayout) {
+      view.style.paddingInline = '0';
+      view.style.paddingBlock = '0';
+      document.documentElement.classList.add('is-fixed-layout');
+      return;
+    }
+    document.documentElement.classList.remove('is-fixed-layout');
     const side = readerSideMarginPx();
     const gapPct = Math.max(0, Math.min(20, Number(S.columnGap) || 0));
     const vert = Math.max(0, Math.min(96, Number(S.verticalMargin) || 0));
@@ -3589,6 +3598,8 @@ import {
       if (fb.includes('epub')) return 'epub';
       if (fb === 'fb2' || fb === 'fbz' || fb === 'zip' || raw === 'fb2.zip') return 'fb2.zip';
       if (fb.includes('mobi') || fb.includes('azw')) return fb;
+      // Comic book: Foliate picks its comic path by the `.cbz` file name (it was opened as EPUB and failed).
+      if (fb === 'cbz') return 'cbz';
       return 'epub';
     }
     const sample = new TextDecoder('utf-8', { fatal: false }).decode(buffer.slice(0, Math.min(buffer.byteLength, 512)));

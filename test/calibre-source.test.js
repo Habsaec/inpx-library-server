@@ -76,7 +76,8 @@ test('Calibre field helpers', () => {
   assert.equal(calibreYear('1951-06-01 00:00:00+00:00'), 1951);
   assert.equal(calibreYear('0101-01-01 00:00:00+00:00'), null);
   assert.deepEqual(pickCalibrePrimaryFormat([{ format: 'PDF', name: 'a', size: 1 }, { format: 'MOBI', name: 'a', size: 2 }, { format: 'EPUB', name: 'a', size: 3 }]), { ext: 'epub', name: 'a', size: 3 });
-  assert.equal(pickCalibrePrimaryFormat([{ format: 'PDF', name: 'a', size: 1 }]), null);
+  assert.deepEqual(pickCalibrePrimaryFormat([{ format: 'PDF', name: 'a', size: 1 }]), { ext: 'pdf', name: 'a', size: 1 });
+  assert.equal(pickCalibrePrimaryFormat([{ format: 'LIT', name: 'a', size: 1 }]), null);
   assert.equal(isRelevantCalibreWatchName('metadata.db'), true);
   assert.equal(isRelevantCalibreWatchName('metadata.db-journal'), true);
   assert.equal(isRelevantCalibreWatchName('Asimov/Foundation (1)/cover.jpg'), false);
@@ -89,7 +90,7 @@ test('full index reads metadata.db: fields, primary format, details, cover, file
     comments: '<p>The <b>first</b> book.</p>', isbn: '978-0-553-29335-7', pubdate: '1951-06-01 00:00:00+00:00',
     formats: [{ format: 'PDF' }, { format: 'MOBI' }, { format: 'EPUB' }], cover: TINY_JPEG
   });
-  const pdfOnly = lib.addBook({ title: 'Scanned', authors: [['Anon', 'Anon']], formats: [{ format: 'PDF' }] });
+  const litOnly = lib.addBook({ title: 'Scanned', authors: [['Anon', 'Anon']], formats: [{ format: 'LIT' }] });
   const half = lib.addBook({ title: 'Robots', authors: [['Isaac Asimov', 'Asimov, Isaac']], series: 'Robot', seriesIndex: 2.5, formats: [{ format: 'AZW3' }] });
 
   assert.deepEqual(probeCalibreLibrary(lib.dir), { books: 3 });
@@ -111,7 +112,7 @@ test('full index reads metadata.db: fields, primary format, details, cover, file
   assert.equal(row.file_name, `${foundation.path}/${foundation.name}`);
   assert.equal(row.archive_name, '');
   assert.match(row.keywords, /Gnome Press/);
-  assert.equal(bookRow(source.id, pdfOnly.uuid), undefined, 'PDF-only books wait for the formats phase');
+  assert.equal(bookRow(source.id, litOnly.uuid), undefined, 'formats outside CALIBRE_PRIMARY_FORMATS are skipped');
   assert.equal(bookRow(source.id, half.uuid).series_no, '2.5');
   assert.equal(bookRow(source.id, half.uuid).ext, 'azw3');
 

@@ -20,6 +20,7 @@ import { ensureEpubZipFromBookBuffer } from './epub-seven-zip.js';
 import { mergedFb2CacheKey, readMergedFb2, storeMergedFb2, withMergedFb2Lock } from './fb2-sidecar-cache.js';
 import { normalizeCachedAnnotation, unwrapEscapedMarkup } from './html-sanitize.js';
 import { isCalibreBook, readCalibreBookDetails } from './calibre.js';
+import { isDocumentFormat } from './utils/book-format.js';
 
 /** Кэш по корню источника: есть ли на диске covers|images (без обхода при каждой книге). */
 const coverImageMediaRootCache = new Map();
@@ -205,6 +206,20 @@ export function bookUsesSevenZipArchive(book) {
   }
 }
 
+/** The book's file (or its INPX archive) is gone from disk: an expected 404, not a server fault. */
+export const BOOK_FILE_MISSING = 'BOOK_FILE_MISSING';
+
+export function isBookFileMissingError(err) {
+  return err?.code === BOOK_FILE_MISSING;
+}
+
+function bookFileMissingError(filePath, cause) {
+  const error = new Error(`Book file not found on disk: ${filePath}`);
+  error.code = BOOK_FILE_MISSING;
+  if (cause) error.cause = cause;
+  return error;
+}
+
 export async function readBookBuffer(book) {
   if (!book.archiveName) {
     return readDirectFile(book);
@@ -225,6 +240,7 @@ export async function readBookBuffer(book) {
   if (!archivePath.startsWith(resolvedRoot + path.sep) && archivePath !== resolvedRoot) {
     throw new Error('Invalid archive path');
   }
+  if (!fs.existsSync(archivePath)) throw bookFileMissingError(archivePath);
   const normalizedFileName = `${book.fileName}.${book.ext}`;
   return readArchiveEntryBuffer(archivePath, normalizedFileName);
 }
@@ -237,7 +253,14 @@ async function readDirectFile(book) {
     throw new Error('Invalid file path');
   }
   const MAX_BOOK_SIZE = 100 * 1024 * 1024;
-  const stat = await fs.promises.stat(filePath);
+  let stat;
+  try {
+    stat = await fs.promises.stat(filePath);
+  } catch (err) {
+    // Deleted / moved outside the catalog (e.g. a format removed by hand from a Calibre book folder).
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') throw bookFileMissingError(filePath, err);
+    throw err;
+  }
   if (stat.size > MAX_BOOK_SIZE) {
     throw new Error(`Book file too large: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
   }
@@ -602,8 +625,11 @@ export async function getOrExtractBookDetails(book, { skipCoverAugment = false }
    * Opening fb2.zip on NAS was the main delay when clicking a search result.
    */
   const flibustaSsrSkipArchive = skipCoverAugment && bookHasFlibustaSidecar(book);
+  // PDF, DJVU, CBZ, TXT…: no FB2-style annotation or cover inside — never read the whole file for them
+  // (a 100 MB PDF decoded as text on every book page). A cover next to a loose file still counts.
   const needArchiveExtract =
     !flibustaSsrSkipArchive &&
+    !isDocumentFormat(book.ext) &&
     (!String(details.annotation || '').trim() ||
       (!skipCoverAugment && !details.cover?.data?.length));
 

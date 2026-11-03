@@ -377,7 +377,8 @@ export class View extends HTMLElement {
             e.detail.attach(this.#createOverlayer(e.detail)))
         this.renderer.open(book)
         const style = document.createElement('style')
-        style.textContent = ':host { display: block; width: 100%; height: 100%; } foliate-paginator, foliate-fxl { display: block; width: 100%; height: 100%; }'
+        // foliate-fxl keeps its own `display: flex` (:host) — `block` stacked a two-page spread vertically (landscape CBZ / PDF).
+        style.textContent = ':host { display: block; width: 100%; height: 100%; } foliate-paginator { display: block; width: 100%; height: 100%; } foliate-fxl { width: 100%; height: 100%; }'
         this.#root.prepend(style)
         this.#root.append(this.renderer)
 

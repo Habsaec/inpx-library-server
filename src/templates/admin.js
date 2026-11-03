@@ -1438,6 +1438,11 @@ export function renderAdminSources({ user, stats, indexStatus, sources = [], fla
             <button type="submit" class="admin-compact-btn">${escapeHtml(s.enabled ? t('admin.sources.off') : t('admin.sources.on'))}</button>
           </form>
           <button type="button" class="admin-compact-btn" data-edit-source="${s.id}">${escapeHtml(t('admin.sources.edit'))}</button>
+          ${s.calibreConvertible ? `
+          <form action="/admin/sources/${s.id}/convert-calibre" method="post" class="admin-inline-form" data-confirm="${escapeHtml(t('admin.sources.convertCalibreConfirm'))}" title="${escapeHtml(t('admin.sources.convertCalibreHint'))}">
+            ${csrfHiddenField(csrfToken)}
+            <button type="submit" class="admin-compact-btn">${escapeHtml(t('admin.sources.convertCalibre'))}</button>
+          </form>` : ''}
         </div>
       </td>
       <td data-label="">

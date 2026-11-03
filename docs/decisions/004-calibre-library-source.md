@@ -1,8 +1,10 @@
 # 004 — Calibre library as a book source (plan)
 
-Status: phase 1 implemented (`src/calibre.js`, `src/calibre-indexer.js`, `test/calibre-source.test.js`); phases 2–3 proposed.
-Phase 1 indexes only the formats the readers open (`CALIBRE_PRIMARY_FORMATS` = epub > azw3 > mobi > fb2); the
-longer preference list below applies once phase 3 adds PDF / DJVU / CBZ…
+Status: phases 1–3 implemented (`src/calibre.js`, `src/calibre-indexer.js`, `test/calibre-source.test.js`,
+`test/calibre-formats.test.js`, `test/document-formats.test.js`). Deviation from phase 3 as written: PDF keeps
+«Читать» on the web — the reader page already showed it in the browser's own PDF viewer (INPX libraries have PDF
+books), so hiding it would have removed a working feature; DJVU, CBR, TXT, RTF, DOCX are download only. The Android
+reader already opens PDF, CBZ and TXT (Foliate), so only DJVU, CBR, RTF, DOCX go to «Открыть в другом приложении».
 
 ## Why
 

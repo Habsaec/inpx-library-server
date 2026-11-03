@@ -28,6 +28,7 @@ import {
   clientI18nScriptUrl
 } from '../i18n.js';
 import { resolveIndexStageLine } from '../index-stage-i18n.js';
+import { canOpenInWebReader } from '../utils/book-format.js';
 import { getUiCustomization, getThemeCssVars, coverFallbackToCssVars, manuscriptToCssVars, hasUiThemeColorsConfigured, usesPanelGlass, hasUiThemeShapeConfigured, hasUiThemeTypographyConfigured, FONT_FAMILY_WEBFONT, DISPLAY_FONT_WEBFONT, COVER_TITLE_FONTS, bundledCoverUrl } from '../services/ui-customization.js';
 import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarkup } from '../html-sanitize.js';
 import { APP_DOWNLOAD_URL, appDownloadQrSvg } from '../app-download-qr.js';
@@ -39,7 +40,7 @@ export { formatAuthorLabel, formatLanguageLabel, parseGenreCodes, localizeGenreL
 export function formatGenreLabel(value = '') {
   return localizeGenreLabel(value);
 }
-export { getAvailableDownloadFormats, FORMAT_LABELS };
+export { getAvailableDownloadFormats, FORMAT_LABELS, canOpenInWebReader };
 export { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath };
 
 /** data-* атрибут с ID книги (base64url), безопасен для NUL и спецсимволов в HTML. */
@@ -1320,7 +1321,8 @@ function renderAuthorFlibustaBookRow(book, {
   const batchCb = batchSelect
     ? `<label class="author-flibusta-batch" title="${escapeHtml(t('batch.selectTitle'))}"><input type="checkbox" class="batch-select-cb" ${batchSelectInputAttrs(book.id)} ${batchBookIdDataAttr(book.id)} aria-label="${escapeHtml(t('batch.selectAria'))}"></label>`
     : '';
-  const readBtn = `<a class="button author-flibusta-read" href="${readPagePath(book.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('book.read'))}</a>`;
+  // DJVU, CBR, TXT, RTF, DOCX: no reader — the row keeps download / send.
+  const readBtn = !canOpenInWebReader(book.ext) ? '' : `<a class="button author-flibusta-read" href="${readPagePath(book.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('book.read'))}</a>`;
   const dl = canDownloadInUi(user)
     ? `<span class="author-flibusta-dl">${renderDownloadMenu(book, { compact: true, user })}</span>`
     : '';

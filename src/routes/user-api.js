@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { t, tp, translateKnownErrorMessage, countLabel } from '../i18n.js';
 import { requireApiAuth } from '../middleware/auth.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
+import { isKindleEmailAddress, isKindleEmailFormat } from '../utils/book-format.js';
 import {
   db, getUserShelves, getShelfById, createShelf, updateShelf, deleteShelf, setShelfOnHome,
   addBookToShelf, removeBookFromShelf, getShelfBooks, getBookShelves,
@@ -31,6 +32,7 @@ import { invalidateRecommendationsCache } from '../services/recommendations.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
 import { isServerBusyError } from '../services/heavy-task-limiter.js';
+import { isBookFileMissingError } from '../fb2.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { getUserHomeLayout, orderShelves } from '../home-layout.js';
@@ -569,6 +571,8 @@ export function registerUserApiRoutes(app, deps) {
         const attachments = [];
         const usedNames = new Map();
         let busySkipped = false;
+        const kindle = isKindleEmailAddress(ereaderEmail);
+        let kindleSkipped = 0;
         const requested = bookIds.length;
         const booksMap = getBooksByIds(bookIds);
         for (const bookId of bookIds) {
@@ -576,6 +580,11 @@ export function registerUserApiRoutes(app, deps) {
             const book = booksMap.get(bookId);
             if (!book) continue;
             const download = await resolveDownload(book, format || undefined, { filenameStyle: EMAIL_FILENAME_STYLE });
+            // Kindle e-mail rejects MOBI / AZW3 / FB2 / DJVU / CBZ…: skip such books instead of a silent bounce.
+            if (kindle && !isKindleEmailFormat(download.format)) {
+              kindleSkipped += 1;
+              continue;
+            }
 
             let fileName = download.fileName;
             const count = usedNames.get(fileName) || 0;
@@ -597,6 +606,9 @@ export function registerUserApiRoutes(app, deps) {
           }
         }
 
+        if (!attachments.length && kindleSkipped) {
+          return apiFail(res, 400, ApiErrorCode.EREADER_FORMAT_UNSUPPORTED, t('api.send.kindleFormatBatch'));
+        }
         if (!attachments.length && busySkipped) {
           res.setHeader('Retry-After', '15');
           return apiFail(res, 503, ApiErrorCode.SERVICE_UNAVAILABLE, t('errors.serverBusy'));
@@ -673,6 +685,11 @@ export function registerUserApiRoutes(app, deps) {
       const format = String(req.body.format || 'epub2');
       try {
         const download = await resolveDownload(book, format, { filenameStyle: EMAIL_FILENAME_STYLE });
+        // Send to Kindle accepts EPUB, PDF, DOCX, TXT, RTF only (Amazon bounces the rest by e-mail).
+        if (isKindleEmailAddress(ereaderEmail) && !isKindleEmailFormat(download.format)) {
+          return apiFail(res, 400, ApiErrorCode.EREADER_FORMAT_UNSUPPORTED,
+            tp('api.send.kindleFormat', { format: String(download.format || '').toUpperCase() }));
+        }
         const { transporter, senderEmail } = createSmtpTransport();
         const attachment = download.filePath
           ? { filename: download.fileName, path: download.filePath, contentType: download.mimeType }
@@ -695,6 +712,9 @@ export function registerUserApiRoutes(app, deps) {
       if (isServerBusyError(error)) {
         res.setHeader('Retry-After', '15');
         return apiFail(res, 503, ApiErrorCode.SERVICE_UNAVAILABLE, t('errors.serverBusy'));
+      }
+      if (isBookFileMissingError(error)) {
+        return apiFail(res, 404, ApiErrorCode.BOOK_FILE_MISSING, t('errors.bookFileMissing'));
       }
       console.error('Send to ereader error:', error);
       let msg = translateKnownErrorMessage(error.message) || t('api.error.unknown');

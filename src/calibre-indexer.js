@@ -10,7 +10,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   db,
+  getMeta,
   setMeta,
+  moveUserDataToBooks,
   updateSourceBookCount,
   updateSourceIndexedAt,
   reattachDetachedUserData,
@@ -52,6 +54,7 @@ import {
   calibreFormatsSignature
 } from './calibre.js';
 import { invalidateCoverThumbCaches } from './services/cover.js';
+import { resetBookFilesProbe } from './download-formats.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { logSystemEvent } from './services/system-events.js';
 
@@ -152,6 +155,56 @@ export function calibreBookToRow(book, { sourceId, tagsMode = 'genres' }) {
   };
 }
 
+/** Остальные форматы книги (кроме основного) → строки book_files: отдаются при скачивании как есть. */
+export function calibreExtraFiles(book, primaryExt) {
+  const bookPath = String(book.path || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const seen =new Set([primaryExt]);
+  const out = [];
+  for (const f of book.formats) {
+    const ext = String(f.format || '').trim().toLowerCase();
+    if (!ext || !f.name || seen.has(ext) || !/^[a-z0-9]{1,10}$/.test(ext)) continue;
+    seen.add(ext);
+    out.push({ ext, fileName: `${bookPath}/${f.name}`, size: Number(f.size) || 0 });
+  }
+  return out;
+}
+
+/**
+ * Перевод папочного источника в Calibre: старые книги (id = sha256 пути) с пользовательскими данными
+ * сопоставляются с книгами Calibre по file_name + ext — сначала основной файл, потом book_files.
+ * Один проход по книгам источника порциями по rowid; в памяти — только отпечатки книг с данными.
+ */
+async function moveConvertedFolderUserData(sourceId, refs) {
+  if (!refs.length) return { moved: 0, unmatched: 0 };
+  const key = (fileName, ext) => `${String(fileName || '').toLowerCase()}|${String(ext || '').toLowerCase()}`;
+  const wanted = new Map(refs.map((r) => [key(r.fileName, r.ext), r.oldId]));
+  const primaryPairs = [];
+  const extraPairs = [];
+  const books = db.prepare(`
+    SELECT rowid AS rid, id, file_name AS fileName, ext FROM books WHERE source_id = ? AND rowid > ? ORDER BY rowid LIMIT 5000
+  `);
+  const extras = db.prepare('SELECT book_id AS bookId, file_name AS fileName, ext FROM book_files WHERE book_id = ?');
+  let after = -1;
+  for (;;) {
+    const chunk = books.all(sourceId, after);
+    if (!chunk.length) break;
+    after = chunk[chunk.length - 1].rid;
+    for (const b of chunk) {
+      const oldId = wanted.get(key(b.fileName, b.ext));
+      if (oldId) primaryPairs.push([oldId, b.id]);
+      for (const f of extras.all(b.id)) {
+        const extraOld = wanted.get(key(f.fileName, f.ext));
+        if (extraOld) extraPairs.push([extraOld, b.id]);
+      }
+    }
+    await yieldEventLoop();
+  }
+  // Основной формат первым: при конфликте (одна позиция чтения на книгу) остаётся его позиция.
+  const pairs = [...primaryPairs, ...extraPairs];
+  moveUserDataToBooks(pairs);
+  return { moved: pairs.length, unmatched: refs.length - pairs.length };
+}
+
 /** До 50 основных файлов источника: ни одного на месте — том, вероятно, не смонтирован. */
 function checkCalibreFilesOnDisk(source) {
   const rows = db.prepare(`
@@ -174,7 +227,12 @@ function checkCalibreFilesOnDisk(source) {
   });
 }
 
-export async function indexCalibre(source, { incremental = true, onProgress = null, control = null } = {}) {
+export async function indexCalibre(source, { incremental: requestedIncremental = true, onProgress = null, control = null } = {}) {
+  // Перевод из папочного источника (convertFolderSourceToCalibre): только полный проход — старые строки папки
+  // удаляются, их пользовательские данные переносятся на книги Calibre.
+  const convertKey = `calibre_convert_${source.id}`;
+  const converting = getMeta(convertKey) === '1';
+  const incremental = requestedIncremental && !converting;
   const waitIfPaused = async () => {
     if (typeof control?.waitIfPaused === 'function') await control.waitIfPaused();
   };
@@ -192,7 +250,7 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
   const hasSnapshot = Boolean(getCalibreSnapshotDb(source.id));
   if (incremental && source.lastIndexedAt && hasSnapshot && getStoredCalibreFingerprint(source.id) === calibreDbFingerprint(liveStat)) {
     logSystemEvent('info', 'index', 'Calibre source skipped (unchanged metadata.db)', { sourceId: source.id, name: sourceLabel });
-    return { imported: 0, total: 0, processed: 0, skipped: 0, deduplicated: 0 };
+    return { imported: 0, total: 0, processed: 0, skipped: 0, deduplicated: 0, unchanged: true };
   }
 
   console.log(`[calibre-index] start source_id=${source.id} path=${source.path} incremental=${incremental}`);
@@ -266,6 +324,7 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
 
     let imported = 0;
     let skippedNoFormat = 0;
+    let convertRefs = [];
     let completedSuccessfully = false;
     beginExclusiveOperation('indexing');
     if (useFastSqlite) beginFastSqliteImport();
@@ -276,6 +335,7 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
     }
     try {
       const deleteBookRow = (bookId) => {
+        db.prepare('DELETE FROM book_files WHERE book_id = ?').run(bookId);
         db.prepare('DELETE FROM book_details_cache WHERE book_id = ?').run(bookId);
         db.prepare('DELETE FROM book_reviews WHERE book_id = ?').run(bookId);
         db.prepare('DELETE FROM book_authors WHERE book_id = ?').run(bookId);
@@ -287,7 +347,15 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
       if (!incremental) {
         // Пользовательские данные: отпечаток → удаление без FK-каскада → перепривязка в конце (id те же).
         stashUserDataRefsForSource(source.id);
+        if (converting) {
+          convertRefs = db.prepare(`
+            SELECT d.old_book_id AS oldId, d.file_name AS fileName, d.ext
+            FROM detached_book_refs d JOIN books b ON b.id = d.old_book_id
+            WHERE b.source_id = ? AND d.archive_name = ''
+          `).all(source.id);
+        }
         runWithForeignKeysOff(() => db.transaction(() => {
+          db.prepare('DELETE FROM book_files WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
           db.prepare('DELETE FROM book_details_cache WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
           db.prepare('DELETE FROM book_reviews WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
           db.prepare('DELETE FROM book_authors WHERE book_id IN (SELECT id FROM books WHERE source_id = ?)').run(source.id);
@@ -326,6 +394,8 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
           last_modified = excluded.last_modified, formats = excluded.formats
       `);
       const dropDetails = db.prepare('DELETE FROM book_details_cache WHERE book_id = ?');
+      const dropFiles = db.prepare('DELETE FROM book_files WHERE book_id = ?');
+      const insertFile = db.prepare('INSERT OR REPLACE INTO book_files(book_id, ext, file_name, size) VALUES(?, ?, ?, ?)');
       const newBookIds = [];
       const changedBookIds = [];
 
@@ -340,7 +410,7 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
             const raw = calibreBookToRow(book, { sourceId: source.id, tagsMode });
             upsertState.run(source.id, book.id, bookId, String(book.uuid || ''), String(book.lastModified || ''), calibreFormatsSignature(book.formats));
             if (!raw) {
-              // Остались только неподдерживаемые форматы (PDF…): книгу убираем, как удалённую.
+              // Остались только форматы вне CALIBRE_PRIMARY_FORMATS (LIT, HTMLZ…): книгу убираем, как удалённую.
               skippedNoFormat += 1;
               if (existed) {
                 stashMovedFolderBookRef(bookId, source.id);
@@ -363,6 +433,8 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
               newBookIds.push(row.id);
             }
             writer.linkFacets(row);
+            dropFiles.run(row.id);
+            for (const f of calibreExtraFiles(book, row.ext)) insertFile.run(row.id, f.ext, f.fileName, f.size);
             imported += 1;
           }
         })());
@@ -378,8 +450,14 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
       for (const id of changedBookIds) invalidateCoverThumbCaches(id);
       commitCalibreSnapshot(source.id, snapshotFile, fingerprint);
       committed = true;
+      resetBookFilesProbe();
       updateSourceBookCount(source.id);
       updateSourceIndexedAt(source.id);
+      if (converting) {
+        const result = await moveConvertedFolderUserData(source.id, convertRefs);
+        db.prepare('DELETE FROM meta WHERE key = ?').run(convertKey);
+        logSystemEvent('info', 'index', 'folder source converted to Calibre library', { sourceId: source.id, name: sourceLabel, ...result });
+      }
       reattachDetachedUserData(source.id);
       if (incremental) reattachMovedFolderUserData(source.id, newBookIds);
       repairBookJunctionLinks();
@@ -424,7 +502,9 @@ export async function indexCalibre(source, { incremental = true, onProgress = nu
       total: calibreTotal,
       processed: changedIds.length,
       skipped: calibreTotal - changedIds.length,
-      deduplicated: 0
+      deduplicated: 0,
+      // metadata.db was re-read but no book changed (e.g. Calibre only touched its own prefs): no catalog recount.
+      unchanged: incremental && workUnits === 0 && completedSuccessfully
     };
   } finally {
     try { snap?.close(); } catch { /* ignore */ }

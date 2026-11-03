@@ -6,6 +6,7 @@ import { escapeHtml, sanitizeHtml, siteTitleForDisplay, t, FORMAT_LABELS, downlo
 import { formatGenreLabel } from '../genre-map.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
 import { withOpdsProgress } from '../opds-progress.js';
+import { getBookExtraAcquisitions } from '../download-formats.js';
 
 function renderOpdsBaseLinks(baseUrl, selfPath, { acquisition = false } = {}) {
   const selfType = acquisition
@@ -41,7 +42,14 @@ const OPDS_MIME_FOR_SOURCE = {
   fb2: 'application/fb2+zip',
   epub: 'application/epub+zip',
   mobi: 'application/x-mobipocket-ebook',
-  azw3: 'application/x-mobipocket-ebook'
+  azw3: 'application/x-mobipocket-ebook',
+  pdf: 'application/pdf',
+  djvu: 'image/vnd.djvu',
+  cbz: 'application/vnd.comicbook+zip',
+  cbr: 'application/vnd.comicbook-rar',
+  txt: 'text/plain',
+  rtf: 'application/rtf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 };
 
 function renderOpdsBookEntries(baseUrl, items, { includeContent = false } = {}) {
@@ -65,6 +73,10 @@ function renderOpdsBookEntries(baseUrl, items, { includeContent = false } = {}) 
       links.push(`<link href="${escapeHtml(dl)}" rel="http://opds-spec.org/acquisition" type="application/x-mobipocket-ebook" title="MOBI"/>`);
     } else {
       links.push(`<link href="${escapeHtml(dl)}" rel="http://opds-spec.org/acquisition" type="${sourceMime}" title="${escapeHtml(FORMAT_LABELS[extLower] || extLower.toUpperCase())}"/>`);
+    }
+    // Other stored files of the book (Calibre: AZW3, PDF… next to the EPUB) — as is, one link per format.
+    for (const extra of getBookExtraAcquisitions(book)) {
+      links.push(`<link href="${escapeHtml(`${dl}&format=${extra.format}`)}" rel="http://opds-spec.org/acquisition" type="${extra.mime}" title="${escapeHtml(extra.label)}"/>`);
     }
     if (book.id) {
       links.push(`<link href="${escapeHtml(cover)}" rel="http://opds-spec.org/image" type="image/jpeg"/>`);

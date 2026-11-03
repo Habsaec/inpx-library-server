@@ -129,6 +129,14 @@ function resolveAuthorNameLoose(name) {
 
 const detailsCache = new Map();
 
+/** /api/books/:id/content for files that are not FB2 / EPUB. */
+const CONTENT_MIME_BY_EXT = {
+  pdf: 'application/pdf',
+  djvu: 'image/vnd.djvu',
+  cbz: 'application/vnd.comicbook+zip',
+  txt: 'text/plain; charset=utf-8'
+};
+
 async function getDetails(book) {
   const cached = detailsCache.get(book.id);
   if (cached) {
@@ -1572,7 +1580,8 @@ export function registerLibraryRoutes(app, deps) {
         res.type('application/epub+zip');
         res.send(buffer);
       } else {
-        res.type('application/octet-stream');
+        // PDF: the web reader shows it in the browser's own viewer (iframe) — octet-stream would download it.
+        res.type(CONTENT_MIME_BY_EXT[ext] || 'application/octet-stream');
         res.send(buffer);
       }
     } catch (error) {

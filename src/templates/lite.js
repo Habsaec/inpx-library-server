@@ -29,6 +29,7 @@ import {
   plural
 } from './shared.js';
 import { getLocale } from '../i18n.js';
+import { canOpenInWebReader } from '../utils/book-format.js';
 
 export const LITE_BASE = '/lite';
 
@@ -38,11 +39,9 @@ export function litePath(subpath = '') {
   return `${LITE_BASE}${p}`;
 }
 
+/** Same rule as the full site (src/utils/book-format.js): DJVU, CBR, TXT, RTF, DOCX are download only. */
 function canOpenInReader(ext) {
-  const raw = String(ext || 'fb2').toLowerCase().replace(/^\./, '');
-  const e = raw.replace(/\.zip$/, '');
-  if (e === 'pdf' || e === 'djvu' || e === 'djv') return true;
-  return ['fb2', 'fbz', 'epub', 'mobi', 'azw3', 'kf8', 'cbz'].includes(e);
+  return canOpenInWebReader(ext);
 }
 
 function liteCssHref() {
