@@ -14,7 +14,7 @@ import { getBookById, getBooksByIds, getAllBookIdsByFacet } from '../inpx.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { resolveDownload } from '../conversion.js';
 import { contentDispositionAttachment } from '../download-filename.js';
-import { rememberKosyncDocument } from '../kosync.js';
+import { rememberKosyncDocument, kosyncFormatFromFileName } from '../kosync.js';
 
 const batchDownloadLocks = new Set();
 
@@ -420,11 +420,11 @@ export function registerDownloadRoutes(app) {
       res.type(download.mimeType);
       if (download.filePath) {
         const buf = await fs.promises.readFile(download.filePath);
-        if (req.user) rememberKosyncDocument(book.id, buf);
+        if (req.user) rememberKosyncDocument(book.id, buf, kosyncFormatFromFileName(download.fileName));
         res.send(buf);
         return;
       }
-      if (req.user) rememberKosyncDocument(book.id, download.content);
+      if (req.user) rememberKosyncDocument(book.id, download.content, kosyncFormatFromFileName(download.fileName));
       res.send(download.content);
     } catch (error) {
       if (error?.code === 'FB2CNG_NOT_CONFIGURED') {

@@ -4126,6 +4126,11 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_kosync_documents_book ON kosync_documents(book_id);
 `);
+/* Delivered format of the downloaded file ('fb2', 'fb2zip', 'epub', …; '' = remembered before this
+   column existed): KOReader xpointers are mapped to reader anchors only for FB2 (src/kosync-position.js). */
+if (!db.prepare('PRAGMA table_info(kosync_documents)').all().some((c) => c.name === 'format')) {
+  db.exec(`ALTER TABLE kosync_documents ADD COLUMN format TEXT NOT NULL DEFAULT ''`);
+}
 
 /* Умные полки (src/smart-shelves.js): сохранённый фильтр каталога, книги подбираются при открытии.
    Не хранит book_id, поэтому переживает переиндексацию и удаление источников. */

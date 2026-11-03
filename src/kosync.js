@@ -67,14 +67,19 @@ export function verifyKosyncCredentials(username, md5Key) {
 export function saveKosyncProgress(username, { document, progress, percentage, device, device_id: deviceId }) {
   const timestamp = Math.floor(Date.now() / 1000);
   const pct = Number.isFinite(Number(percentage)) ? Math.min(1, Math.max(0, Number(percentage))) : 0;
-  db.prepare(`
+  // An unchanged position keeps its time: KOReader re-sends it on every sleep / close, and a fresh
+  // timestamp would hide a newer web / Android position from the next KOReader pull.
+  const row = db.prepare(`
     INSERT INTO kosync_progress(username, document, progress, percentage, device, device_id, updated_at)
     VALUES(?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(username, document) DO UPDATE SET
       progress = excluded.progress, percentage = excluded.percentage,
-      device = excluded.device, device_id = excluded.device_id, updated_at = excluded.updated_at
-  `).run(username, document, String(progress ?? '').slice(0, 2000), pct, String(device ?? '').slice(0, 120), String(deviceId ?? '').slice(0, 120), timestamp);
-  return timestamp;
+      device = excluded.device, device_id = excluded.device_id,
+      updated_at = CASE WHEN kosync_progress.progress = excluded.progress
+        THEN kosync_progress.updated_at ELSE excluded.updated_at END
+    RETURNING updated_at AS timestamp
+  `).get(username, document, String(progress ?? '').slice(0, 2000), pct, String(device ?? '').slice(0, 120), String(deviceId ?? '').slice(0, 120), timestamp);
+  return row?.timestamp ?? timestamp;
 }
 
 export function getKosyncProgress(username, document) {
@@ -86,8 +91,21 @@ export function getKosyncProgress(username, document) {
 
 /** Книга, которой соответствует документ KOReader (файл скачан через сервер), или ''. */
 export function getKosyncDocumentBookId(document) {
-  const row = db.prepare('SELECT book_id AS bookId FROM kosync_documents WHERE document = ?').get(String(document || ''));
-  return row?.bookId ? String(row.bookId) : '';
+  return getKosyncDocument(document)?.bookId || '';
+}
+
+/** `{ bookId, format }` документа KOReader (format '' — запомнен до появления колонки) или null. */
+export function getKosyncDocument(document) {
+  const row = db.prepare('SELECT book_id AS bookId, format FROM kosync_documents WHERE document = ?').get(String(document || ''));
+  return row?.bookId ? { bookId: String(row.bookId), format: String(row.format || '') } : null;
+}
+
+/** Формат выданного файла по его имени: `x.fb2.zip` → 'fb2zip', `x.epub` → 'epub'. */
+export function kosyncFormatFromFileName(fileName) {
+  const name = String(fileName || '').toLowerCase();
+  if (name.endsWith('.fb2.zip')) return 'fb2zip';
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).replace(/[^a-z0-9]/g, '').slice(0, 10) : '';
 }
 
 /**
@@ -123,10 +141,13 @@ export function getKosyncPercentMap(username, bookIds = null) {
 }
 
 /** Запомнить, что файл с таким содержимым — это книга bookId (вызывать при выдаче файла пользователю). */
-export function rememberKosyncDocument(bookId, buffer) {
+export function rememberKosyncDocument(bookId, buffer, format = '') {
   try {
     if (!bookId || !Buffer.isBuffer(buffer) || !buffer.length) return;
-    db.prepare('INSERT OR IGNORE INTO kosync_documents(document, book_id) VALUES(?, ?)')
-      .run(partialMd5(buffer), String(bookId));
+    db.prepare(`
+      INSERT INTO kosync_documents(document, book_id, format) VALUES(?, ?, ?)
+      ON CONFLICT(document) DO UPDATE SET format = excluded.format
+      WHERE kosync_documents.format = '' AND excluded.format != ''
+    `).run(partialMd5(buffer), String(bookId), String(format || ''));
   } catch { /* кэш соответствия не должен ломать скачивание */ }
 }

@@ -8,6 +8,10 @@ import { verifyKosyncCredentials, saveKosyncProgress, getKosyncProgress, getKosy
 import { getBookById, isBookRead, addReadBooksIfMissing, recordKosyncReading } from '../inpx.js';
 import { invalidateUserPageCaches } from '../services/cache.js';
 import { logSystemEvent } from '../services/system-events.js';
+import { scheduleKosyncPositionBridge, readerProgressForKosync } from '../services/kosync-position-bridge.js';
+
+/** GET waits this long for the reader-position xpointer, then answers with the stored record. */
+const READER_PROGRESS_WAIT_MS = 5000;
 
 const DOCUMENT_RE = /^[\w.-]{1,128}$/;
 
@@ -25,7 +29,7 @@ function kosyncAuth(req, res, next) {
 
 /**
  * Progress of a book downloaded through the server → «Читаю» / «Прочитано» (web + Android).
- * Coordinates stay in kosync_progress: KOReader xpointers do not map to reader v4 anchors.
+ * The position itself is bridged by services/kosync-position-bridge.js.
  * A low percentage never unmarks «Прочитано» (an old copy on another device could do that).
  */
 function bridgeKosyncProgress(username, document, percentage) {
@@ -63,17 +67,36 @@ export function registerKosyncRoutes(app) {
     if (!DOCUMENT_RE.test(document)) {
       return res.status(403).json({ code: 2004, message: "Field 'document' not provided." });
     }
+    const previous = getKosyncProgress(req.kosyncUser, document);
     const timestamp = saveKosyncProgress(req.kosyncUser, { ...body, document });
     bridgeKosyncProgress(req.kosyncUser, document, body.percentage);
+    // KOReader re-sends an unchanged position on every sync: nothing to move then.
+    if (!previous || previous.progress !== String(body.progress ?? '')) {
+      scheduleKosyncPositionBridge(req.kosyncUser, document, body);
+    }
     res.json({ document, timestamp });
   });
 
-  app.get('/kosync/syncs/progress/:document', kosyncAuth, (req, res) => {
+  app.get('/kosync/syncs/progress/:document', kosyncAuth, async (req, res) => {
     const document = String(req.params.document || '');
     if (!DOCUMENT_RE.test(document)) {
       return res.status(403).json({ code: 2004, message: "Field 'document' not provided." });
     }
+    const stored = getKosyncProgress(req.kosyncUser, document);
+    // Read further on the web / in the app since the last KOReader push → that position.
+    let fromReader = null;
+    let timer = null;
+    try {
+      fromReader = await Promise.race([
+        readerProgressForKosync(req.kosyncUser, document, stored),
+        new Promise((resolve) => { timer = setTimeout(resolve, READER_PROGRESS_WAIT_MS, null); }),
+      ]);
+    } catch (error) {
+      logSystemEvent('warn', 'kosync', 'reader position lookup failed', { username: req.kosyncUser, error: String(error?.message || error) });
+    } finally {
+      clearTimeout(timer);
+    }
     // Как у эталонного сервера: нет прогресса — 200 и пустой объект (плагин KOReader ждёт 200/401).
-    res.json(getKosyncProgress(req.kosyncUser, document) || {});
+    res.json(fromReader || stored || {});
   });
 }
