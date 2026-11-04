@@ -60,6 +60,7 @@ import { logSystemEvent } from './services/system-events.js';
 import { mirrorIndexingLogsToDataFile, appendIndexDiaryLine } from './services/file-log.js';
 import { installRuntimeLogCapture } from './services/runtime-logs.js';
 import { startScanScheduler } from './services/scheduler.js';
+import { startPortableBackupSchedule } from './services/portable-backup-store.js';
 import { startFolderWatcher } from './services/folder-watcher.js';
 import { startTelegramBot, stopTelegramBot, restartTelegramBot, isTelegramBotRunning, shouldRunTelegramBotInThisProcess, registerTelegramBotRoutes, announceNewBooksInTelegram, testAnnounceNewBooksInTelegram, syncTelegramBotProfilePhoto } from './services/telegram-bot.js';
 import {
@@ -1496,6 +1497,7 @@ async function bootstrap() {
     // Start scan scheduler (if SCAN_INTERVAL_HOURS > 0)
     startScanScheduler(({ full = false } = {}) => startBackgroundIndexing(full, !full));
     startFolderWatcher();
+    startPortableBackupSchedule({ appVersion: readPackageVersion() });
   }, 100);
 
   setInterval(() => {

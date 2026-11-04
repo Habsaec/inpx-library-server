@@ -5672,6 +5672,63 @@ function attachUsersImport() {
         applyBtn.disabled = false;
       }
     };
+    const post = async (url, opts) => {
+      const response = await fetch(url, { credentials: 'same-origin', ...opts });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || uiT('app.networkError'));
+      return data;
+    };
+    const store = document.querySelector('[data-portable-store]');
+    document.getElementById('portable-make-now')?.addEventListener('click', async (event) => {
+      event.target.disabled = true;
+      try {
+        await post('/api/operations/portable-backups', { method: 'POST' });
+        window.location.reload();
+      } catch (error) {
+        showToast(error.message, 'error');
+        event.target.disabled = false;
+      }
+    });
+    document.getElementById('portable-schedule-save')?.addEventListener('click', async () => {
+      try {
+        await post('/api/operations/portable-backup-schedule', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: Boolean(document.getElementById('portable-schedule-enabled')?.checked),
+            keep: Number(document.getElementById('portable-schedule-keep')?.value) || 7
+          })
+        });
+        showToast(uiT('admin.portable.scheduleSaved'), 'success');
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    });
+    store?.addEventListener('click', async (event) => {
+      const del = event.target.closest('[data-portable-delete]');
+      const rest = event.target.closest('[data-portable-restore-file]');
+      if (del) {
+        if (!window.confirm(uiT('admin.portable.deleteConfirm'))) return;
+        try {
+          await post(`/api/operations/portable-backups/${encodeURIComponent(del.dataset.portableDelete)}`, { method: 'DELETE' });
+          del.closest('tr')?.remove();
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      } else if (rest) {
+        if (!window.confirm(uiT('admin.portable.confirm'))) return;
+        const qs = new URLSearchParams({
+          file: rest.dataset.portableRestoreFile, dryRun: '0', replaceUsers: flag('replaceUsers'),
+          includeSettings: flag('includeSettings'), includeSources: flag('includeSources')
+        });
+        result.textContent = uiT('app.running');
+        try {
+          const data = await post(`/api/operations/portable-restore?${qs}`, { method: 'POST' });
+          result.textContent = `${uiT('admin.portable.done')}\n${describe(data)}`;
+        } catch (error) {
+          result.textContent = error.message;
+        }
+      }
+    });
     checkBtn?.addEventListener('click', () => run(true));
     applyBtn?.addEventListener('click', () => run(false));
   }

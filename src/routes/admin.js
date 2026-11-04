@@ -81,6 +81,10 @@ import {
 import { exportUsersBackup, importUsersBackup } from '../services/user-backup.js';
 import { writePortableBackup, importPortableBackup } from '../services/portable-backup.js';
 import { pipeline } from 'node:stream/promises';
+import {
+  listPortableBackups, createPortableBackupNow, deletePortableBackup, resolvePortableBackupPath,
+  getPortableBackupSchedule, savePortableBackupSchedule
+} from '../services/portable-backup-store.js';
 import { listCollections, isCollectionsMatchRunning } from '../collections.js';
 import { renderAdminCollectionsCard } from '../templates/admin.js';
 
@@ -751,10 +755,11 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.get('/admin/update', requireAdminWeb, (req, res) => {
+  app.get('/admin/update', requireAdminWeb, async (req, res) => {
     res.send(renderAdminUpdate({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
-      operations: getOperationsSnapshot(), csrfToken: req.csrfToken || ''
+      operations: getOperationsSnapshot(), csrfToken: req.csrfToken || '',
+      portable: { backups: await listPortableBackups(), schedule: getPortableBackupSchedule() }
     }));
   });
 
@@ -1639,6 +1644,41 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
+  app.get('/api/operations/portable-backups', requireAdminApi, async (req, res) => {
+    res.json({ ok: true, backups: await listPortableBackups(), schedule: getPortableBackupSchedule() });
+  });
+
+  app.post('/api/operations/portable-backups', requireAdminApi, async (req, res) => {
+    try {
+      const made = await createPortableBackupNow({ reason: 'manual', appVersion: readPortableAppVersion() });
+      res.json({ ok: true, ...made });
+    } catch (error) {
+      if (error?.code === 'BACKUP_BUSY') return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.portable.busy'));
+      return apiFail(res, 500, ApiErrorCode.INTERNAL, error.message);
+    }
+  });
+
+  app.get('/api/operations/portable-backups/:name', requireAdminApi, (req, res) => {
+    const full = resolvePortableBackupPath(req.params.name);
+    if (!full || !fs.existsSync(full)) return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.portable.invalid'));
+    res.download(full, req.params.name);
+  });
+
+  app.delete('/api/operations/portable-backups/:name', requireAdminApi, async (req, res) => {
+    try {
+      const ok = await deletePortableBackup(req.params.name);
+      if (!ok) return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.portable.invalid'));
+      res.json({ ok: true });
+    } catch {
+      return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.portable.invalid'));
+    }
+  });
+
+  app.post('/api/operations/portable-backup-schedule', requireAdminApi, (req, res) => {
+    savePortableBackupSchedule({ enabled: Boolean(req.body?.enabled), keep: req.body?.keep });
+    res.json({ ok: true, schedule: getPortableBackupSchedule() });
+  });
+
   let portableRestoreRunning = false;
   app.post('/api/operations/portable-restore', requireAdminApi, async (req, res) => {
     if (portableRestoreRunning) return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.portable.busy'));
@@ -1647,16 +1687,22 @@ export function registerAdminRoutes(app, deps) {
     const tmpFile = path.join(tmpDir, `portable-restore-${Date.now()}.gz`);
     try {
       const flag = (name) => ['1', 'true', 'yes'].includes(String(req.query[name] || '').toLowerCase());
-      fs.mkdirSync(tmpDir, { recursive: true });
-      const MAX_BYTES = 1024 * 1024 * 1024;
-      let received = 0;
-      req.on('data', (chunk) => {
-        received += chunk.length;
-        if (received > MAX_BYTES) req.destroy(new Error('too large'));
-      });
-      await pipeline(req, fs.createWriteStream(tmpFile));
+      const stored = req.query.file ? resolvePortableBackupPath(req.query.file) : null;
+      if (req.query.file && (!stored || !fs.existsSync(stored))) {
+        return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.portable.invalid'));
+      }
+      if (!stored) {
+        fs.mkdirSync(tmpDir, { recursive: true });
+        const MAX_BYTES = 1024 * 1024 * 1024;
+        let received = 0;
+        req.on('data', (chunk) => {
+          received += chunk.length;
+          if (received > MAX_BYTES) req.destroy(new Error('too large'));
+        });
+        await pipeline(req, fs.createWriteStream(tmpFile));
+      }
       const dryRun = flag('dryRun');
-      const summary = await importPortableBackup(tmpFile, {
+      const summary = await importPortableBackup(stored || tmpFile, {
         dryRun,
         replaceUsers: flag('replaceUsers'),
         includeSettings: !('includeSettings' in req.query) || flag('includeSettings'),

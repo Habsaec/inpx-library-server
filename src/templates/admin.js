@@ -418,7 +418,18 @@ function renderDbMemoryForm({ dbMemory, csrfToken }) {
         <hr class="admin-divider">`;
 }
 
-export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '' }) {
+export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '', portable = { backups: [], schedule: { enabled: true, keep: 7 } } }) {
+  const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} ${t('common.unitMB')}` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const portableRows = (portable.backups || []).map((b) => `
+        <tr data-portable-row="${escapeHtml(b.name)}">
+          <td>${escapeHtml(b.name.replace(/^inpx-portable-/, '').replace(/\.jsonl\.gz$/, ''))}</td>
+          <td class="muted">${escapeHtml(fmtSize(b.size))}</td>
+          <td style="text-align:right;white-space:nowrap;">
+            <a class="button" href="/api/operations/portable-backups/${encodeURIComponent(b.name)}">${escapeHtml(t('admin.portable.downloadShort'))}</a>
+            <button type="button" data-portable-restore-file="${escapeHtml(b.name)}">${escapeHtml(t('admin.portable.restore'))}</button>
+            <button type="button" data-portable-delete="${escapeHtml(b.name)}">${escapeHtml(t('admin.portable.delete'))}</button>
+          </td>
+        </tr>`).join('');
   const content = `
     <div class="admin-card">
       <div class="admin-card-title">${escapeHtml(t('admin.portable.title'))}</div>
@@ -430,11 +441,11 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
         ${csrfHiddenField(csrfToken)}
         <strong>${escapeHtml(t('admin.portable.restoreTitle'))}</strong>
         <span class="admin-field-hint">${escapeHtml(t('admin.portable.restoreHint'))}</span>
-        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;"><input type="checkbox" name="replaceUsers" value="1"> <span>${escapeHtml(t('admin.portable.replaceUsers'))}<br><span class="muted">${escapeHtml(t('admin.portable.replaceUsersHint'))}</span></span></label>
-        <label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" name="includeSettings" value="1" checked> <span>${escapeHtml(t('admin.portable.includeSettings'))}</span></label>
-        <label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" name="includeSources" value="1" checked> <span>${escapeHtml(t('admin.portable.includeSources'))}</span></label>
+        <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;align-items:flex-start;margin-top:8px;"><input type="checkbox" name="replaceUsers" value="1" style="accent-color:var(--accent);width:16px;height:16px;flex:none;"> <span>${escapeHtml(t('admin.portable.replaceUsers'))}<br><span class="muted">${escapeHtml(t('admin.portable.replaceUsersHint'))}</span></span></label>
+        <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;margin-top:6px;"><input type="checkbox" name="includeSettings" value="1" checked style="accent-color:var(--accent);width:16px;height:16px;flex:none;"> <span>${escapeHtml(t('admin.portable.includeSettings'))}</span></label>
+        <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;margin-top:6px;"><input type="checkbox" name="includeSources" value="1" checked style="accent-color:var(--accent);width:16px;height:16px;flex:none;"> <span>${escapeHtml(t('admin.portable.includeSources'))}</span></label>
         <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
-          <label for="portable-restore-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.update.importUsersPick'))}</label>
+          <label for="portable-restore-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.portable.pick'))}</label>
           <input type="file" id="portable-restore-input" accept=".gz,application/gzip" style="display:none;">
           <span id="portable-restore-name" class="muted"></span>
           <button type="button" id="portable-restore-check" disabled>${escapeHtml(t('admin.portable.check'))}</button>
@@ -442,6 +453,17 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
         </div>
         <div id="portable-restore-result" class="muted" style="margin-top:10px;white-space:pre-line;"></div>
       </form>
+      <div class="admin-field-group" style="margin-top:20px;" data-portable-store>
+        <strong>${escapeHtml(t('admin.portable.storedTitle'))}</strong>
+        <span class="admin-field-hint">${escapeHtml(t('admin.portable.storedHint'))}</span>
+        <div class="admin-actions-row" style="margin-top:8px;flex-wrap:wrap;align-items:center;">
+          <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;"><input type="checkbox" id="portable-schedule-enabled" style="accent-color:var(--accent);width:16px;height:16px;flex:none;" ${portable.schedule?.enabled ? 'checked' : ''}> <span>${escapeHtml(t('admin.portable.scheduleDaily'))}</span></label>
+          <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;">${escapeHtml(t('admin.portable.keep'))} <input type="number" id="portable-schedule-keep" min="1" max="60" value="${Number(portable.schedule?.keep) || 7}" style="width:70px"></label>
+          <button type="button" id="portable-schedule-save">${escapeHtml(t('admin.save'))}</button>
+          <button type="button" id="portable-make-now" class="button-primary">${escapeHtml(t('admin.portable.makeNow'))}</button>
+        </div>
+        ${portableRows ? `<table class="admin-table" style="margin-top:10px;width:100%;"><tbody>${portableRows}</tbody></table>` : `<p class="muted" style="margin-top:10px;">${escapeHtml(t('admin.portable.none'))}</p>`}
+      </div>
     </div>
     <div class="admin-card" style="margin-top:20px;">
       <div class="admin-card-title">${escapeHtml(t('admin.update.backupTitle'))}</div>
