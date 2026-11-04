@@ -70,6 +70,7 @@ import { runDbMaintenance, stopDbMaintenance, shouldRunDbMaintenanceInThisProces
 import {
   backfillCatalogSearchFields,
   refreshGenreSearchNames,
+  mergeSeriesCatalogByKey,
   getConfiguredInpxFile,
   getLibraryRoot,
   getIndexStatus,
@@ -1452,6 +1453,10 @@ async function bootstrap() {
     } catch (error) {
       console.error('[startup] genre search names:', error.message);
     }
+
+    mergeSeriesCatalogByKey().catch((error) => {
+      console.error('[startup] series merge:', error.message);
+    });
 
     if (isBackfillEnabled()) {
       try {

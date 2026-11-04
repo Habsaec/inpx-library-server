@@ -15,6 +15,7 @@ import {
   setUserTelegramId,
   setUserEreaderEmail
 } from '../db.js';
+import { seriesCatalogKey } from '../inpx.js';
 import { hashPassword } from '../auth.js';
 import { normalizeLookupEmail } from '../utils/email-address.js';
 
@@ -101,7 +102,10 @@ function findAuthorId(name) {
 function findSeriesId(name) {
   const raw = String(name || '').trim();
   if (!raw) return null;
-  return _stmtSeriesByName.get(raw)?.id || _stmtSeriesByDisplay.get(raw)?.id || null;
+  return _stmtSeriesByName.get(raw)?.id
+    || _stmtSeriesByName.get(seriesCatalogKey(raw))?.id
+    || _stmtSeriesByDisplay.get(raw)?.id
+    || null;
 }
 
 function restoreFavorites(username, authors, series) {

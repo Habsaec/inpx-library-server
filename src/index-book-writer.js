@@ -6,7 +6,7 @@ import { db } from './db.js';
 import {
   splitAuthorValues, splitFacetValues,
   authorDisplayName, authorSortKey, authorSearchName,
-  seriesDisplayName, seriesSortName, seriesSearchName,
+  seriesDisplayName, seriesSortName, seriesSearchName, seriesCatalogKey,
   genreDisplayName, genreSortName, genreSearchName,
   createSortKey
 } from './inpx.js';
@@ -20,7 +20,7 @@ export function prepareBookCatalogWriter() {
   const insertSeries = db.prepare(`
     INSERT INTO series_catalog(name, display_name, sort_name, search_name)
     VALUES(?, ?, ?, ?)
-    ON CONFLICT(name) DO UPDATE SET display_name = excluded.display_name, sort_name = excluded.sort_name, search_name = excluded.search_name
+    ON CONFLICT(name) DO NOTHING
   `);
   const insertGenre = db.prepare(`
     INSERT INTO genres_catalog(name, display_name, sort_name, search_name)
@@ -77,7 +77,7 @@ export function prepareBookCatalogWriter() {
 
   function resolveSeriesId(name) {
     if (seriesIdCache.has(name)) return seriesIdCache.get(name);
-    const key = name.toLowerCase();
+    const key = seriesCatalogKey(name);
     insertSeries.run(key, seriesDisplayName(name), seriesSortName(name), seriesSearchName(name));
     const id = selectSeries.get(key)?.id || null;
     seriesIdCache.set(name, id);

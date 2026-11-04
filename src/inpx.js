@@ -685,6 +685,17 @@ export function seriesSearchName(value = '') {
 }
 
 /**
+ * Канонический ключ серии (`series_catalog.name`): регистр, ё/е и любые не-буквы/цифры
+ * схлопываются, поэтому «Линия грёз», «линия грез.» и «Линия-грез» — одна серия.
+ * Намеренно без нечёткого сравнения: «Дюна» и «Дюна 2» остаются разными.
+ */
+export function seriesCatalogKey(value = '') {
+  const text = normalizeText(value).toLowerCase();
+  const key = text.replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  return key || text;
+}
+
+/**
  * Приводит строку из URL к каноническому `series_catalog.name`.
  * Учитывает ё/е, пробелы и поля search_name/sort_name (как при импорте), чтобы
  * `/facet/series/Линия%20Грез` открывала ту же серию, что «Линия грёз» в каталоге.
@@ -716,6 +727,9 @@ export function resolveSeriesCatalogName(requested) {
   ensureSeriesStmts();
   const direct = _seriesByName.get(raw.toLowerCase());
   if (direct?.name) return direct.name;
+  /* Старые URL / бэкапы / Android несут прежнее имя (lower-case без свёртки) — ищем по новому ключу. */
+  const byKey = _seriesByName.get(seriesCatalogKey(raw));
+  if (byKey?.name) return byKey.name;
 
   const sn = seriesSearchName(raw);
   const bySearch = _seriesBySearch.all(sn);
@@ -786,6 +800,79 @@ export function refreshGenreSearchNames() {
   })();
   setMeta('genre_search_en_v1', 'done');
   return changed;
+}
+
+const SERIES_KEY_MERGE_META = 'series_key_merge_v1';
+
+/**
+ * One-time: series written before `seriesCatalogKey` (plain lower-case) that fold to the same key
+ * («Линия грёз» / «линия грез.») become one `series_catalog` row. Order matters: book_series and
+ * favorite_series are repointed to the winner BEFORE the loser row is deleted (both are
+ * ON DELETE CASCADE — deleting first would silently drop users' favorites). Chunked by groups with
+ * setImmediate yields; `books.series` text and user data are untouched.
+ */
+export function mergeSeriesCatalogByKey() {
+  if (getMeta(SERIES_KEY_MERGE_META) === 'done') return Promise.resolve(0);
+  if (indexState.active) {
+    setTimeout(() => { mergeSeriesCatalogByKey().catch(() => {}); }, 5000);
+    return Promise.resolve(0);
+  }
+  const groups = new Map();
+  for (const row of db.prepare('SELECT id, name, search_name AS searchName, book_count AS bookCount FROM series_catalog').iterate()) {
+    const key = seriesCatalogKey(row.name);
+    const list = groups.get(key);
+    if (list) list.push(row); else groups.set(key, [row]);
+  }
+  const todo = [...groups].filter(([key, rows]) => rows.length > 1 || rows[0].name !== key);
+  if (!todo.length) {
+    setMeta(SERIES_KEY_MERGE_META, 'done');
+    return Promise.resolve(0);
+  }
+  const repointLinks = db.prepare('UPDATE OR IGNORE book_series SET series_id = ? WHERE series_id = ?');
+  const dropLinks = db.prepare('DELETE FROM book_series WHERE series_id = ?');
+  const repointFavs = db.prepare('UPDATE OR IGNORE favorite_series SET series_id = ? WHERE series_id = ?');
+  const dropFavs = db.prepare('DELETE FROM favorite_series WHERE series_id = ?');
+  const dropSeries = db.prepare('DELETE FROM series_catalog WHERE id = ?');
+  const renameSeries = db.prepare('UPDATE series_catalog SET name = ?, search_name = ? WHERE id = ?');
+  const mergeGroup = db.transaction(([key, rows]) => {
+    rows.sort((a, b) => (Number(b.bookCount) || 0) - (Number(a.bookCount) || 0) || a.id - b.id);
+    const [winner, ...losers] = rows;
+    const names = new Set(String(winner.searchName || '').split(' | ').filter(Boolean));
+    for (const loser of losers) {
+      repointLinks.run(winner.id, loser.id);
+      dropLinks.run(loser.id);
+      repointFavs.run(winner.id, loser.id);
+      dropFavs.run(loser.id);
+      dropSeries.run(loser.id);
+      for (const part of String(loser.searchName || '').split(' | ')) if (part) names.add(part);
+    }
+    renameSeries.run(key, [...names].join(' | '), winner.id);
+  });
+  console.log(`[series] merging ${todo.length} series name groups by normalized key…`);
+  let index = 0;
+  let merged = 0;
+  return new Promise((resolve) => {
+    const step = async () => {
+      try {
+        if (indexState.active) { setTimeout(step, 5000); return; }
+        const end = Math.min(index + 200, todo.length);
+        for (; index < end; index += 1) {
+          mergeGroup(todo[index]);
+          merged += todo[index][1].length - 1;
+        }
+        if (index < todo.length) { setImmediate(step); return; }
+        setMeta(SERIES_KEY_MERGE_META, 'done');
+        clearRuntimeQueryCaches();
+        if (merged) await refreshCatalogBookCounts();
+        console.log(`[series] merged ${merged} duplicate series rows`);
+        resolve(merged);
+      } catch (error) {
+        console.error('[series] merge failed:', error.message);
+        resolve(0);
+      }
+    };
+    setImmediate(step);
+  });
 }
 
 export function backfillCatalogSearchFields() {
@@ -2841,13 +2928,11 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
       sort_name = excluded.sort_name,
       search_name = excluded.search_name
   `);
+  /* DO NOTHING: вариант написания, увиденный первым, остаётся именем серии (не мигает от прохода к проходу). */
   const insertSeries = db.prepare(`
     INSERT INTO series_catalog(name, display_name, sort_name, search_name)
     VALUES(?, ?, ?, ?)
-    ON CONFLICT(name) DO UPDATE SET
-      display_name = excluded.display_name,
-      sort_name = excluded.sort_name,
-      search_name = excluded.search_name
+    ON CONFLICT(name) DO NOTHING
   `);
   const insertGenre = db.prepare(`
     INSERT INTO genres_catalog(name, display_name, sort_name, search_name)
@@ -3031,7 +3116,7 @@ export async function rebuildIndex(inpxPath, incremental = false, sourceId = nul
   function resolveSeriesId(name) {
     let id = seriesIdCache.get(name);
     if (id !== undefined) return id;
-    const key = name.toLowerCase();
+    const key = seriesCatalogKey(name);
     insertSeries.run(key, seriesDisplayName(name), seriesSortName(name), seriesSearchName(name));
     id = selectSeries.get(key)?.id || null;
     seriesIdCache.set(name, id);
@@ -5639,17 +5724,14 @@ export function updateBookMetadata(bookId, { title, authors, series, seriesNo, g
     // 3. Rebuild book_series junction
     db.prepare('DELETE FROM book_series WHERE book_id = ?').run(String(bookId));
     if (seriesNorm) {
-      const seriesKey = seriesNorm.toLowerCase();
+      const seriesKey = seriesCatalogKey(seriesNorm);
       const displayName = seriesDisplayName(seriesNorm);
       const sortName = seriesSortName(seriesNorm);
       const searchName = seriesSearchName(seriesNorm);
       db.prepare(`
         INSERT INTO series_catalog(name, display_name, sort_name, search_name)
         VALUES(?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-          display_name = excluded.display_name,
-          sort_name = excluded.sort_name,
-          search_name = excluded.search_name
+        ON CONFLICT(name) DO NOTHING
       `).run(seriesKey, displayName, sortName, searchName);
       const seriesRow = db.prepare('SELECT id FROM series_catalog WHERE name = ?').get(seriesKey);
       if (seriesRow) {
@@ -8534,6 +8616,7 @@ export function getAuthorBooksOpds(authorName, genre = '') {
 
 export function getAuthorSeriesBooksOpds(authorName, seriesName, genre = '') {
   const rankOrder = 'CAST(b.series_no AS INTEGER), b.title';
+  const seriesKey = resolveSeriesCatalogName(String(seriesName || ''));
   let sql;
   let params;
   if (genre) {
@@ -8550,11 +8633,11 @@ export function getAuthorSeriesBooksOpds(authorName, seriesName, genre = '') {
       JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genreParams.map(() => '?').join(',')})
       LEFT JOIN sources s ON s.id = b.source_id
       LEFT JOIN book_details_cache dc ON dc.book_id = b.id
-      WHERE b.series = ?
+      WHERE EXISTS (SELECT 1 FROM book_series bs JOIN series_catalog sc ON sc.id = bs.series_id WHERE bs.book_id = b.id AND sc.name = ?)
       GROUP BY b.id
       ORDER BY ${rankOrder}
       LIMIT 500`;
-    params = [authorName, ...genreParams, seriesName];
+    params = [authorName, ...genreParams, seriesKey];
   } else {
     sql = `
       SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
@@ -8566,10 +8649,10 @@ export function getAuthorSeriesBooksOpds(authorName, seriesName, genre = '') {
       JOIN authors a ON a.id = ba.author_id AND ${authorAliasMatchSql('a')}
       LEFT JOIN sources s ON s.id = b.source_id
       LEFT JOIN book_details_cache dc ON dc.book_id = b.id
-      WHERE b.series = ?
+      WHERE EXISTS (SELECT 1 FROM book_series bs JOIN series_catalog sc ON sc.id = bs.series_id WHERE bs.book_id = b.id AND sc.name = ?)
       ORDER BY ${rankOrder}
       LIMIT 500`;
-    params = [authorName, seriesName];
+    params = [authorName, seriesKey];
   }
   return db.prepare(sql).all(...params);
 }
