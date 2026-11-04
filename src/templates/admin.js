@@ -421,6 +421,29 @@ function renderDbMemoryForm({ dbMemory, csrfToken }) {
 export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '' }) {
   const content = `
     <div class="admin-card">
+      <div class="admin-card-title">${escapeHtml(t('admin.portable.title'))}</div>
+      <div class="admin-card-subtitle">${escapeHtml(t('admin.portable.subtitle'))}</div>
+      <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
+        <a class="button button-primary" href="/api/operations/portable-backup">${escapeHtml(t('admin.portable.download'))}</a>
+      </div>
+      <form class="admin-field-group" style="margin-top:16px;" data-portable-restore>
+        ${csrfHiddenField(csrfToken)}
+        <strong>${escapeHtml(t('admin.portable.restoreTitle'))}</strong>
+        <span class="admin-field-hint">${escapeHtml(t('admin.portable.restoreHint'))}</span>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;"><input type="checkbox" name="replaceUsers" value="1"> <span>${escapeHtml(t('admin.portable.replaceUsers'))}<br><span class="muted">${escapeHtml(t('admin.portable.replaceUsersHint'))}</span></span></label>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" name="includeSettings" value="1" checked> <span>${escapeHtml(t('admin.portable.includeSettings'))}</span></label>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" name="includeSources" value="1" checked> <span>${escapeHtml(t('admin.portable.includeSources'))}</span></label>
+        <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
+          <label for="portable-restore-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.update.importUsersPick'))}</label>
+          <input type="file" id="portable-restore-input" accept=".gz,application/gzip" style="display:none;">
+          <span id="portable-restore-name" class="muted"></span>
+          <button type="button" id="portable-restore-check" disabled>${escapeHtml(t('admin.portable.check'))}</button>
+          <button type="button" id="portable-restore-apply" class="button-primary" disabled>${escapeHtml(t('admin.portable.restore'))}</button>
+        </div>
+        <div id="portable-restore-result" class="muted" style="margin-top:10px;white-space:pre-line;"></div>
+      </form>
+    </div>
+    <div class="admin-card" style="margin-top:20px;">
       <div class="admin-card-title">${escapeHtml(t('admin.update.backupTitle'))}</div>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.update.backupSubtitle'))}</div>
       <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">

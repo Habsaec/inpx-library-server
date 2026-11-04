@@ -79,6 +79,8 @@ import {
   SYSTEM_EVENTS_MAX_COUNT, SYSTEM_EVENTS_RETAIN_COUNT, SAFE_ADMIN_REDIRECTS
 } from '../constants.js';
 import { exportUsersBackup, importUsersBackup } from '../services/user-backup.js';
+import { writePortableBackup, importPortableBackup } from '../services/portable-backup.js';
+import { pipeline } from 'node:stream/promises';
 import { listCollections, isCollectionsMatchRunning } from '../collections.js';
 import { renderAdminCollectionsCard } from '../templates/admin.js';
 
@@ -182,6 +184,14 @@ function readAdminAccountUsername(body) {
 /** Exported for tests: scoped TG/email fields were hydrated in the browser before submit. */
 export function isAdminUserScopedFieldsReady(body, username) {
   return isFormFlagEnabled(readAdminUserField(body, username, 'accountFieldsReady'));
+}
+
+function readPortableAppVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(config.rootDir, 'package.json'), 'utf8')).version || '';
+  } catch {
+    return '';
+  }
 }
 
 export function registerAdminRoutes(app, deps) {
@@ -1611,6 +1621,61 @@ export function registerAdminRoutes(app, deps) {
       stream.pipe(res);
     } catch (error) {
       next(error);
+    }
+  });
+
+  /* Portable backup: users, settings, sources, shelves, per-book user data (no catalog). See services/portable-backup.js */
+  app.get('/api/operations/portable-backup', requireAdminApi, async (req, res, next) => {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      res.setHeader('Content-Disposition', `attachment; filename="inpx-portable-backup-${stamp}.jsonl.gz"`);
+      res.type('application/gzip');
+      res.setHeader('Content-Encoding', 'identity');
+      const counts = await writePortableBackup(res, { appVersion: readPortableAppVersion() });
+      logSystemEvent('info', 'operations', 'portable backup exported', { user: req.user.username, counts });
+    } catch (error) {
+      if (res.headersSent) { res.destroy(error); return; }
+      next(error);
+    }
+  });
+
+  let portableRestoreRunning = false;
+  app.post('/api/operations/portable-restore', requireAdminApi, async (req, res) => {
+    if (portableRestoreRunning) return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.portable.busy'));
+    portableRestoreRunning = true;
+    const tmpDir = path.join(config.dataDir, 'tmp');
+    const tmpFile = path.join(tmpDir, `portable-restore-${Date.now()}.gz`);
+    try {
+      const flag = (name) => ['1', 'true', 'yes'].includes(String(req.query[name] || '').toLowerCase());
+      fs.mkdirSync(tmpDir, { recursive: true });
+      const MAX_BYTES = 1024 * 1024 * 1024;
+      let received = 0;
+      req.on('data', (chunk) => {
+        received += chunk.length;
+        if (received > MAX_BYTES) req.destroy(new Error('too large'));
+      });
+      await pipeline(req, fs.createWriteStream(tmpFile));
+      const dryRun = flag('dryRun');
+      const summary = await importPortableBackup(tmpFile, {
+        dryRun,
+        replaceUsers: flag('replaceUsers'),
+        includeSettings: !('includeSettings' in req.query) || flag('includeSettings'),
+        includeSources: !('includeSources' in req.query) || flag('includeSources')
+      });
+      if (!dryRun) {
+        clearPageDataCache();
+        logSystemEvent('info', 'operations', 'portable backup restored', { user: req.user.username, ...summary, header: undefined });
+      }
+      res.json({ ok: true, ...summary });
+    } catch (error) {
+      if (error?.code === 'INVALID_BACKUP') {
+        return apiFail(res, 400, ApiErrorCode.VALIDATION, t('admin.portable.invalid'));
+      }
+      logSystemEvent('error', 'operations', 'portable restore failed', { user: req.user?.username, error: error.message });
+      return apiFail(res, 500, ApiErrorCode.INTERNAL, error.message);
+    } finally {
+      portableRestoreRunning = false;
+      fs.promises.unlink(tmpFile).catch(() => {});
     }
   });
 

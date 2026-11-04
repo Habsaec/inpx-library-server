@@ -5621,6 +5621,61 @@ function attachSendBatchToTelegram() {
 }
 
 function attachUsersImport() {
+  const portableForm = document.querySelector('[data-portable-restore]');
+  if (portableForm) {
+    const input = document.getElementById('portable-restore-input');
+    const nameSpan = document.getElementById('portable-restore-name');
+    const checkBtn = document.getElementById('portable-restore-check');
+    const applyBtn = document.getElementById('portable-restore-apply');
+    const result = document.getElementById('portable-restore-result');
+    const flag = (name) => (portableForm.querySelector(`[name="${name}"]`)?.checked ? '1' : '0');
+    const describe = (d) => uiTp('admin.portable.result', {
+      created: d.users?.created || 0, replaced: d.users?.replaced || 0, kept: d.users?.kept || 0,
+      shelves: (d.shelves || 0) + (d.smartShelves || 0), books: d.bookRows || 0,
+      waiting: Math.max(0, (d.bookRefs || 0) - (d.matchedNow || 0)),
+      settings: d.settings || 0, sources: d.sources || 0
+    });
+    input?.addEventListener('change', () => {
+      const file = input.files[0];
+      if (nameSpan) nameSpan.textContent = file ? file.name : '';
+      if (checkBtn) checkBtn.disabled = !file;
+      if (applyBtn) applyBtn.disabled = !file;
+      if (result) result.textContent = '';
+    });
+    const run = async (dryRun) => {
+      const file = input?.files[0];
+      if (!file) return;
+      if (!dryRun && !window.confirm(uiT('admin.portable.confirm'))) return;
+      checkBtn.disabled = true;
+      applyBtn.disabled = true;
+      result.textContent = uiT('app.running');
+      try {
+        const qs = new URLSearchParams({
+          dryRun: dryRun ? '1' : '0', replaceUsers: flag('replaceUsers'),
+          includeSettings: flag('includeSettings'), includeSources: flag('includeSources')
+        });
+        const response = await fetch(`/api/operations/portable-restore?${qs}`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/gzip' }, body: file
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          result.textContent = data.error || data.flash || uiT('app.networkError');
+          showToast(data.error || uiT('admin.portable.invalid'), 'error');
+        } else {
+          result.textContent = `${uiT(dryRun ? 'admin.portable.checked' : 'admin.portable.done')}\n${describe(data)}`;
+          if (!dryRun) showToast(uiT('admin.portable.done'), 'success');
+        }
+      } catch {
+        result.textContent = uiT('app.networkError');
+      } finally {
+        checkBtn.disabled = false;
+        applyBtn.disabled = false;
+      }
+    };
+    checkBtn?.addEventListener('click', () => run(true));
+    applyBtn?.addEventListener('click', () => run(false));
+  }
+
   const form = document.querySelector('[data-users-import]');
   const fileInput = document.getElementById('users-import-input');
   const nameSpan = document.getElementById('users-import-name');
