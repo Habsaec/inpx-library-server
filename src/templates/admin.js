@@ -418,7 +418,7 @@ function renderDbMemoryForm({ dbMemory, csrfToken }) {
         <hr class="admin-divider">`;
 }
 
-export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '', portable = { backups: [], schedule: { enabled: true, keep: 7 } } }) {
+export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '', portable = { backups: [], schedule: { enabled: true, keep: 7 } }, dbRestore = { sources: [], result: null } }) {
   const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} ${t('common.unitMB')}` : `${Math.max(1, Math.round(n / 1024))} KB`);
   const portableRows = (portable.backups || []).map((b) => `
         <tr data-portable-row="${escapeHtml(b.name)}">
@@ -430,7 +430,20 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
             <button type="button" data-portable-delete="${escapeHtml(b.name)}">${escapeHtml(t('admin.portable.delete'))}</button>
           </td>
         </tr>`).join('');
+  const restoreRows = (dbRestore.sources || []).map((src) => `
+        <tr data-dbr-row="${escapeHtml(src.id)}">
+          <td>${escapeHtml(src.name)}<br><span class="muted">${escapeHtml(src.mtime.slice(0, 16).replace('T', ' '))} · ${escapeHtml(fmtSize(src.size))}${src.dir === '.' ? ` · ${escapeHtml(t('admin.dbRestore.preRestore'))}` : ''}</span></td>
+          <td style="text-align:right;white-space:nowrap;">
+            <button type="button" data-dbr-validate="${escapeHtml(src.id)}">${escapeHtml(t('admin.portable.check'))}</button>
+            <button type="button" data-dbr-apply="${escapeHtml(src.id)}" class="button-primary" disabled>${escapeHtml(t('admin.dbRestore.apply'))}</button>
+            ${src.dir === '.' ? '' : `<button type="button" data-dbr-delete="${escapeHtml(src.id)}">${escapeHtml(t('admin.portable.delete'))}</button>`}
+          </td>
+        </tr>`).join('');
+  const restoreBanner = dbRestore.result
+    ? `<div class="alert ${dbRestore.result.ok ? 'alert-success' : 'alert-error'}" style="margin-bottom:16px;">${escapeHtml(dbRestore.result.ok ? t('admin.dbRestore.resultOk') : `${t('admin.dbRestore.resultFail')} ${dbRestore.result.message || ''}`)}</div>`
+    : '';
   const content = `
+    ${restoreBanner}
     <div class="admin-card">
       <div class="admin-card-title">${escapeHtml(t('admin.portable.title'))}</div>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.portable.subtitle'))}</div>
@@ -483,6 +496,18 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
           <button type="submit" id="users-import-btn" disabled>${escapeHtml(t('admin.update.importUsers'))}</button>
         </div>
       </form>
+    </div>
+    <div class="admin-card" style="margin-top:20px;" data-db-restore>
+      <div class="admin-card-title">${escapeHtml(t('admin.dbRestore.title'))}</div>
+      <div class="admin-card-subtitle">${escapeHtml(t('admin.dbRestore.subtitle'))}</div>
+      <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
+        <button type="button" id="dbr-make-copy">${escapeHtml(t('admin.dbRestore.makeCopy'))}</button>
+        <label for="dbr-upload-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.dbRestore.upload'))}</label>
+        <input type="file" id="dbr-upload-input" accept=".db,application/octet-stream" style="display:none;">
+        <span id="dbr-upload-state" class="muted"></span>
+      </div>
+      ${restoreRows ? `<table class="admin-table" style="margin-top:10px;width:100%;"><tbody>${restoreRows}</tbody></table>` : `<p class="muted" style="margin-top:10px;">${escapeHtml(t('admin.dbRestore.none'))}</p>`}
+      <div id="dbr-status" class="muted" style="margin-top:10px;white-space:pre-line;"></div>
     </div>
     <div class="admin-card" style="margin-top:20px;">
       <div class="admin-card-title">${escapeHtml(t('admin.update.checkTitle'))}</div>
