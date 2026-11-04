@@ -519,7 +519,7 @@
   "admin.restartBtn": "Restart",
   "admin.errorPrefix": "Error:",
   "admin.update.backupTitle": "Backup and migration",
-  "admin.update.backupSubtitle": "Before updating or moving servers, download the database and a JSON cheat sheet of paths and flags (no passwords or secrets).",
+  "admin.update.backupSubtitle": "Before updating or moving servers, download the database and user accounts. The settings JSON is a reference only (paths and flags, no passwords or secrets); settings cannot be restored from it.",
   "admin.update.downloadDb": "Download DB backup",
   "admin.update.exportJson": "Export settings (JSON)",
   "admin.update.openJson": "Open settings (JSON)",

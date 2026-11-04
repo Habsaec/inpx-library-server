@@ -406,7 +406,7 @@ function renderDbMemoryForm({ dbMemory, csrfToken }) {
                 <tbody>${row({ id: 'db-cache-mb', name: 'cacheMb', label: t('admin.dbMemory.cacheLabel'), hint: t('admin.dbMemory.cacheHint'), now: cacheMb, rec: recommended.cacheMb, min: limits.cacheMinMb, max: limits.cacheMaxMb, step: 8 })}${row({ id: 'db-mmap-mb', name: 'mmapMb', label: t('admin.dbMemory.mmapLabel'), hint: tp('admin.dbMemory.mmapHint', { max: mb(limits.mmapMaxMb) }), now: mmapMb, rec: recommended.mmapMb, min: limits.mmapMinMb, max: limits.mmapMaxMb, step: 64 })}
                 </tbody>
               </table>
-              <div class="muted">${escapeHtml(isRecommended ? t('admin.dbMemory.isRecommended') : t('admin.dbMemory.notRecommended'))} ${escapeHtml(t('admin.dbMemory.applyNote'))}</div>
+              <div class="muted">${escapeHtml(isRecommended ? t('admin.dbMemory.isRecommended') : (custom ? t('admin.dbMemory.notRecommended') : ''))} ${escapeHtml(t('admin.dbMemory.applyNote'))}</div>
             </div>
             <div class="admin-actions-row">
               ${isRecommended ? '' : `<button type="submit" name="action" value="recommended" class="button-primary">${escapeHtml(t('admin.dbMemory.applyRecommended'))}</button>`}
@@ -427,7 +427,6 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
         <a class="button" href="/api/operations/backup">${escapeHtml(t('admin.update.downloadDb'))}</a>
         <a class="button" href="/api/operations/users-export">${escapeHtml(t('admin.update.exportUsers'))}</a>
         <a class="button" href="/api/operations/settings-export?download=1">${escapeHtml(t('admin.update.exportJson'))}</a>
-        <a class="button" href="/api/operations/settings-export" target="_blank" rel="noopener noreferrer">${escapeHtml(t('admin.update.openJson'))}</a>
       </div>
       <form class="admin-field-group" style="margin-top:16px;" method="post" action="/api/operations/users-import" enctype="multipart/form-data" data-users-import>
         ${csrfHiddenField(csrfToken)}
