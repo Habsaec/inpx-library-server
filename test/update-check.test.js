@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compareVersions, buildUpdateCheckResult } from '../src/services/update-check.js';
+import { compareVersions, buildUpdateCheckResult, releaseFromTagUrl } from '../src/services/update-check.js';
 
 test('compareVersions: базовые случаи', () => {
   assert.equal(compareVersions('2.6.3', '2.6.2'), 1);
@@ -57,4 +57,20 @@ test('buildUpdateCheckResult: посторонний ассет не подхв�
   release.assets = [{ name: 'other-tool.zip', size: 10, browser_download_url: 'https://example.com/x.zip' }];
   const r = buildUpdateCheckResult(release, '2.6.2');
   assert.equal(r.updateAvailable, false);
+});
+
+test('releaseFromTagUrl: запись релиза из редиректа /releases/latest (лимит GitHub API)', () => {
+  const release = releaseFromTagUrl('https://github.com/Habsaec/inpx-library-server/releases/tag/v2.14.0');
+  const r = buildUpdateCheckResult(release, '2.13.0');
+  assert.equal(r.latestVersion, '2.14.0');
+  assert.equal(r.updateAvailable, true);
+  assert.equal(r.assetName, 'inpx-library-server-2.14.0.zip');
+  assert.equal(r.assetUrl, 'https://github.com/Habsaec/inpx-library-server/releases/download/v2.14.0/inpx-library-server-2.14.0.zip');
+  assert.equal(r.releaseUrl, 'https://github.com/Habsaec/inpx-library-server/releases/tag/v2.14.0');
+  assert.equal(buildUpdateCheckResult(release, '2.14.0').updateAvailable, false);
+  // Не страница релиза / не версия — запасной путь не срабатывает.
+  assert.equal(releaseFromTagUrl(''), null);
+  assert.equal(releaseFromTagUrl(null), null);
+  assert.equal(releaseFromTagUrl('https://github.com/Habsaec/inpx-library-server/releases'), null);
+  assert.equal(releaseFromTagUrl('https://github.com/Habsaec/inpx-library-server/releases/tag/nightly'), null);
 });

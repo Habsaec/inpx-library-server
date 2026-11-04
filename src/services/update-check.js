@@ -66,6 +66,57 @@ export function buildUpdateCheckResult(release, currentVersion) {
 }
 
 /**
+ * Запись релиза из адреса `https://github.com/<repo>/releases/tag/v1.2.3` (редирект /releases/latest).
+ * Формат как у ответа API, но без описания и даты; ZIP — по имени `inpx-library-server-<версия>.zip`.
+ * null — адрес не похож на страницу релиза.
+ */
+export function releaseFromTagUrl(url) {
+  const m = String(url || '').match(/\/releases\/tag\/([^/?#]+)/);
+  if (!m) return null;
+  const tag = decodeURIComponent(m[1]);
+  const version = tag.replace(/^v/i, '');
+  if (!parseVersion(version)) return null;
+  const name = `inpx-library-server-${version}.zip`;
+  return {
+    tag_name: tag,
+    html_url: `https://github.com/${GITHUB_REPO}/releases/tag/${encodeURIComponent(tag)}`,
+    body: '',
+    published_at: '',
+    assets: [{
+      name,
+      size: 0,
+      browser_download_url: `https://github.com/${GITHUB_REPO}/releases/download/${encodeURIComponent(tag)}/${name}`
+    }]
+  };
+}
+
+/** Последний релиз без GitHub API: редирект страницы /releases/latest + проверка, что ZIP на месте. */
+async function fetchLatestReleaseViaWeb(currentVersion) {
+  const headers = { 'User-Agent': `inpx-library-server/${currentVersion}` };
+  const page = await fetch(`https://github.com/${GITHUB_REPO}/releases/latest`, {
+    headers,
+    redirect: 'manual',
+    signal: AbortSignal.timeout(CHECK_TIMEOUT_MS)
+  });
+  const release = releaseFromTagUrl(page.headers.get('location'));
+  if (!release) throw new Error(`release page HTTP ${page.status}`);
+  const asset = release.assets[0];
+  // Релиз без ZIP (или ещё не загруженным) не должен выглядеть как доступное обновление.
+  const head = await fetch(asset.browser_download_url, {
+    method: 'HEAD',
+    headers,
+    redirect: 'follow',
+    signal: AbortSignal.timeout(CHECK_TIMEOUT_MS)
+  }).catch(() => null);
+  if (!head?.ok) {
+    release.assets = [];
+  } else {
+    asset.size = Number(head.headers.get('content-length') || 0) || 0;
+  }
+  return release;
+}
+
+/**
  * Проверить наличие новой версии на GitHub.
  * Результат кешируется в памяти на CHECK_CACHE_TTL_MS; force=true обходит кеш.
  * @returns {Promise<object>} результат buildUpdateCheckResult
@@ -83,8 +134,20 @@ export async function checkForUpdate({ force = false } = {}) {
     },
     signal: AbortSignal.timeout(CHECK_TIMEOUT_MS)
   });
-  if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
-  const release = await res.json();
+  let release;
+  if (res.ok) {
+    release = await res.json();
+  } else if (res.status === 403 || res.status === 429) {
+    // Лимит GitHub API без токена — 60 запросов в час на IP (общий адрес, VPN, NAT его легко выбирают).
+    // Страница релиза на github.com лимита не имеет: версию берём из её редиректа.
+    try {
+      release = await fetchLatestReleaseViaWeb(currentVersion);
+    } catch (fallbackError) {
+      throw new Error(`GitHub API HTTP ${res.status} (${fallbackError.message})`);
+    }
+  } else {
+    throw new Error(`GitHub API HTTP ${res.status}`);
+  }
   const result = buildUpdateCheckResult(release, currentVersion);
   checkCache = { at: Date.now(), result };
   return result;
