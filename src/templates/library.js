@@ -1417,7 +1417,7 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
             seriesInfo && seriesInfo.volumeCount > 0 && seriesInfo.volumeCount !== seriesInfo.bookCount
               ? ` · ${escapeHtml(t('facet.seriesInfoVolumes'))}: <strong>${formatLocaleInt(seriesInfo.volumeCount)}</strong>`
               : ''
-          }</div>
+          }${authorFilter ? ` · <a class="series-facet-full-link" href="${escapeHtml(lang ? `${facetPath}?lang=${encodeURIComponent(lang)}` : facetPath)}">${escapeHtml(t('facet.seriesFullLink'))}</a>` : ''}</div>
           ${renderSeriesInfo(seriesInfo)}
           ${user ? renderSeriesProgress(seriesProgress) : ''}
         </div>

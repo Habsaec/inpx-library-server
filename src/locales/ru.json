@@ -489,6 +489,7 @@
   "facet.seriesInfoLanguages": "Языки",
   "facet.seriesInfoYears": "Годы",
   "facet.seriesInfoVolumes": "Томов",
+  "facet.seriesFullLink": "Вся серия",
   "facet.seriesInfoMoreAuthors": "и ещё {{n}}",
   "facet.notRecommend": "Не рекомендовать",
   "facet.notRecommended": "Не рекомендуется",

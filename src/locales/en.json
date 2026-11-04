@@ -476,6 +476,7 @@
   "facet.seriesInfoLanguages": "Languages",
   "facet.seriesInfoYears": "Years",
   "facet.seriesInfoVolumes": "Volumes",
+  "facet.seriesFullLink": "Whole series",
   "facet.seriesInfoMoreAuthors": "and {{n}} more",
   "facet.notRecommend": "Don't recommend",
   "facet.notRecommended": "Not recommended",
