@@ -19,8 +19,13 @@ import {
   getBookmarks,
   getFavoriteAuthorsLight,
   getFavoriteSeriesLight,
+  getLibraryView,
+  getFollowingNewBooks,
 } from '../inpx.js';
 import { getUserShelves, getShelfById, getShelfBooks } from '../db.js';
+import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
+import { getRecommendedLibraryView } from '../services/recommendations.js';
+import { effectiveContentLangs } from '../user-content-langs.js';
 import {
   renderOpds2Root,
   renderOpds2NavigationFeed,
@@ -69,6 +74,10 @@ export function registerOpdsV2Routes(app, deps) {
       { href: '/opds/v2/user/shelves', title: t('opds.user.shelves'), type: 'application/opds+json', description: t('opds.user.shelvesDesc') },
       { href: '/opds/v2/user/favorite-authors', title: t('opds.user.favoriteAuthors'), type: 'application/opds+json', description: t('opds.user.favoriteAuthorsDesc') },
       { href: '/opds/v2/user/favorite-series', title: t('opds.user.favoriteSeries'), type: 'application/opds+json', description: t('opds.user.favoriteSeriesDesc') },
+      { href: '/opds/v2/user/smart-shelves', title: t('opds.user.smartShelves'), type: 'application/opds+json', description: t('opds.user.smartShelvesDesc') },
+      { href: '/opds/v2/user/want', title: t('opds.user.want'), type: 'application/opds+json', description: t('opds.user.wantDesc') },
+      { href: '/opds/v2/user/following', title: t('opds.user.following'), type: 'application/opds+json', description: t('opds.user.followingDesc') },
+      { href: '/opds/v2/user/recommended', title: t('opds.user.recommended'), type: 'application/opds+json', description: t('opds.user.recommendedDesc') },
     ];
     res.type(OPDS_JSON);
     res.send(renderOpds2NavigationFeed(baseUrl(req), { title: t('opds.user.myLibrary'), selfPath: '/opds/v2/user', entries }));
@@ -122,6 +131,56 @@ export function registerOpdsV2Routes(app, deps) {
       total: items.length
     }));
   });
+
+  // Smart shelves (saved catalog filters)
+  app.get('/opds/v2/user/smart-shelves', requireOpdsAuth, (req, res) => {
+    const username = req.user?.username;
+    if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
+    const entries = listSmartShelves(username).map((shelf) => ({
+      href: `/opds/v2/user/smart-shelves/${shelf.id}`,
+      title: shelf.name,
+      type: 'application/opds+json'
+    }));
+    res.type(OPDS_JSON);
+    res.send(renderOpds2NavigationFeed(baseUrl(req), { title: t('opds.user.smartShelves'), selfPath: '/opds/v2/user/smart-shelves', entries }));
+  });
+
+  app.get('/opds/v2/user/smart-shelves/:id', requireOpdsAuth, async (req, res) => {
+    const username = req.user?.username;
+    if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
+    const shelf = getSmartShelf(req.params.id, username);
+    if (!shelf) return res.status(404).type(OPDS_JSON).send(JSON.stringify({ error: t('shelf.notFound') }));
+    const page = safePage(req.query.page);
+    const result = getSmartShelfBooks(shelf, { page, pageSize: PAGE_SIZE });
+    await attachFlibustaAnnotationsFromShards(result.items);
+    const nextHref = result.total > page * PAGE_SIZE ? `/opds/v2/user/smart-shelves/${shelf.id}?page=${page + 1}` : null;
+    res.type(OPDS_JSON);
+    res.send(renderOpds2PublicationsFeed(baseUrl(req), {
+      title: shelf.name, selfPath: req.originalUrl, items: result.items, total: result.total, nextHref
+    }));
+  });
+
+  // «Хочу прочитать», «Новое у любимых», «Рекомендации»: the same lists as the site
+  const userListFeed = (path, titleKey, load) => {
+    app.get(path, requireOpdsAuth, async (req, res) => {
+      const username = req.user?.username;
+      if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
+      const page = safePage(req.query.page);
+      const result = load(username, page, PAGE_SIZE);
+      await attachFlibustaAnnotationsFromShards(result.items);
+      const nextHref = result.total > page * PAGE_SIZE ? `${path}?page=${page + 1}` : null;
+      res.type(OPDS_JSON);
+      res.send(renderOpds2PublicationsFeed(baseUrl(req), {
+        title: t(titleKey), selfPath: req.originalUrl, items: result.items, total: result.total, nextHref
+      }));
+    });
+  };
+  userListFeed('/opds/v2/user/want', 'opds.user.want',
+    (username, page, limit) => getLibraryView('want', { username, page, pageSize: limit, sort: 'recent' }));
+  userListFeed('/opds/v2/user/following', 'opds.user.following',
+    (username, page, limit) => getFollowingNewBooks(username, { page, pageSize: limit, langs: effectiveContentLangs(username) }));
+  userListFeed('/opds/v2/user/recommended', 'opds.user.recommended',
+    (username, page, limit) => getRecommendedLibraryView({ username, page, pageSize: limit, langs: effectiveContentLangs(username) }));
 
   // Favourite authors
   app.get('/opds/v2/user/favorite-authors', requireOpdsAuth, (req, res) => {

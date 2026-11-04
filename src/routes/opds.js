@@ -19,7 +19,11 @@ import {
   getBookmarks,
   getFavoriteAuthorsLight,
   getFavoriteSeriesLight,
+  getLibraryView,
+  getFollowingNewBooks,
 } from '../inpx.js';
+import { getRecommendedLibraryView } from '../services/recommendations.js';
+import { effectiveContentLangs } from '../user-content-langs.js';
 import { getUserShelves, getShelfById, getShelfBooks } from '../db.js';
 import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
 import {
@@ -101,6 +105,24 @@ export function registerOpdsRoutes(app, deps) {
         title: t('opds.user.favoriteSeries'),
         href: '/opds/user/favorite-series',
         content: t('opds.user.favoriteSeriesDesc')
+      },
+      {
+        id: 'user-want',
+        title: t('opds.user.want'),
+        href: '/opds/user/want',
+        content: t('opds.user.wantDesc')
+      },
+      {
+        id: 'user-following',
+        title: t('opds.user.following'),
+        href: '/opds/user/following',
+        content: t('opds.user.followingDesc')
+      },
+      {
+        id: 'user-recommended',
+        title: t('opds.user.recommended'),
+        href: '/opds/user/recommended',
+        content: t('opds.user.recommendedDesc')
       },
     ];
     res.type('application/atom+xml; charset=utf-8');
@@ -186,6 +208,34 @@ export function registerOpdsRoutes(app, deps) {
       nextHref
     }));
   });
+
+  /* «Хочу прочитать», «Новое у любимых», «Рекомендации»: the same lists as the site (/library/want|following|recommended). */
+  const userListFeed = (path, id, titleKey, load) => {
+    app.get(path, requireOpdsAuth, async (req, res) => {
+      const username = req.user?.username;
+      if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
+      const page = safePage(req.query.page);
+      const limit = 100;
+      const result = load(username, page, limit);
+      await attachFlibustaAnnotationsFromShards(result.items);
+      const nextHref = result.total > page * limit ? `${path}?page=${page + 1}` : '';
+      res.type('application/atom+xml; charset=utf-8');
+      res.send(renderOpdsBooksFeed(baseUrl(req), {
+        username,
+        id,
+        title: t(titleKey),
+        selfPath: req.originalUrl,
+        items: result.items,
+        nextHref
+      }));
+    });
+  };
+  userListFeed('/opds/user/want', 'user-want', 'opds.user.want',
+    (username, page, limit) => getLibraryView('want', { username, page, pageSize: limit, sort: 'recent' }));
+  userListFeed('/opds/user/following', 'user-following', 'opds.user.following',
+    (username, page, limit) => getFollowingNewBooks(username, { page, pageSize: limit, langs: effectiveContentLangs(username) }));
+  userListFeed('/opds/user/recommended', 'user-recommended', 'opds.user.recommended',
+    (username, page, limit) => getRecommendedLibraryView({ username, page, pageSize: limit, langs: effectiveContentLangs(username) }));
 
   app.get('/opds/user/favorite-authors', requireOpdsAuth, (req, res) => {
     const username = req.user?.username;
