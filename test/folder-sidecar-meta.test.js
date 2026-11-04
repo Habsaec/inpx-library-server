@@ -13,6 +13,7 @@ import {
   cleanPdfTitle,
   decodePdfStringBytes,
   folderSeriesMetadata,
+  isZipComicFile,
   parseComicInfo,
   parseSidecarOpf,
   pickSidecarOpfName,
@@ -297,6 +298,36 @@ test('indexFolder: CBZ ComicInfo, «series = folder» and the first page as cove
     await indexFolder(getSourceById(source.id), { incremental: true });
     const plain = db.prepare('SELECT series FROM books WHERE id = ?').get(xmen.id);
     assert.equal(plain.series, '', 'plain layout: one folder level gives no series');
+  } finally {
+    cleanup(folder);
+  }
+});
+
+test('CBR: a ZIP renamed to .cbr is read like a CBZ, a real RAR is left alone', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'sidecar-cbr-'));
+  try {
+    await writeZip(path.join(folder, 'Zipped.cbr'), [['ComicInfo.xml', COMIC_INFO], ['001.jpg', TINY_JPEG]]);
+    // RAR 4 signature: «Rar! » — the built-in 7za cannot unpack it, so nothing is read.
+    fs.writeFileSync(path.join(folder, 'Real RAR.cbr'), Buffer.concat([Buffer.from('Rar! ', 'latin1'), Buffer.alloc(64)]));
+    assert.equal(await isZipComicFile(path.join(folder, 'Zipped.cbr'), 'cbr'), true);
+    assert.equal(await isZipComicFile(path.join(folder, 'Real RAR.cbr'), 'cbr'), false);
+    assert.equal(await isZipComicFile(path.join(folder, 'missing.cbr'), 'cbr'), false);
+    assert.equal(await isZipComicFile(path.join(folder, 'whatever.cbz'), 'cbz'), true, 'cbz is not sniffed');
+    assert.equal(await isZipComicFile(path.join(folder, 'Zipped.cbr'), 'pdf'), false);
+
+    const source = addSource({ name: 'CBR', type: 'folder', path: folder });
+    await indexFolder(source, { incremental: false });
+    const zipped = db.prepare("SELECT * FROM books WHERE source_id = ? AND file_name = 'Zipped'").get(source.id);
+    assert.equal(zipped.ext, 'cbr');
+    assert.equal(zipped.title, 'Watchmen #3', 'ComicInfo of a zipped CBR');
+    assert.equal(zipped.authors, 'Alan Moore:Dave Gibbons');
+    const rar = db.prepare("SELECT * FROM books WHERE source_id = ? AND file_name = 'Real RAR'").get(source.id);
+    assert.equal(rar.title, 'Real RAR', 'a real RAR keeps the file-name metadata');
+
+    const details = await getOrExtractBookDetails(getBookById(zipped.id));
+    assert.equal(details.annotation, 'Who watches the watchmen?');
+    assert.deepEqual(details.cover?.data, TINY_JPEG);
+    assert.equal((await getOrExtractBookDetails(getBookById(rar.id))).cover, null);
   } finally {
     cleanup(folder);
   }

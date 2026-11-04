@@ -42,6 +42,7 @@ import { prepareBookCatalogWriter } from './index-book-writer.js';
 import { DOCUMENT_FORMATS } from './utils/book-format.js';
 import {
   folderSeriesMetadata,
+  isZipComicFile,
   mergeBookMetadata,
   pickSidecarOpfName,
   readComicInfo,
@@ -545,7 +546,7 @@ async function extractMetadata(filePath, relativePath, ext, { zipEntry = null, f
   const nameForParsing = zipEntry || relativePath;
   const loose = !zipEntry;
   const opf = loose && sidecarOpf ? await readSidecarOpf(sidecarOpf) : null;
-  const comic = loose && !fastScan && ext === 'cbz' ? await readComicInfo(filePath) : null;
+  const comic = loose && !fastScan && await isZipComicFile(filePath, ext) ? await readComicInfo(filePath) : null;
   const pdf = loose && !fastScan && ext === 'pdf' ? await readPdfMetadata(filePath) : null;
   const embedded = fastScan ? null : await extractEmbeddedMetadata(filePath, relativePath, ext, zipEntry);
   const layers = [comic, opf, embedded, pdf];

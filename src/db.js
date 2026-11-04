@@ -2047,6 +2047,16 @@ WHERE rp.progress >= 99
     `);
     db.prepare(`INSERT INTO meta(key, value) VALUES('folder_sidecar_details_v1', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`).run();
   }
+  // То же для CBR, внутри которых на деле ZIP: теперь у них читаются ComicInfo.xml и первая страница.
+  if (db.prepare(`SELECT value FROM meta WHERE key = 'folder_sidecar_details_v2'`).get()?.value !== '1') {
+    db.exec(`
+      DELETE FROM book_details_cache WHERE book_id IN (
+        SELECT b.id FROM books b JOIN sources s ON s.id = b.source_id
+        WHERE s.type = 'folder' AND b.archive_name = '' AND b.ext = 'cbr'
+      )
+    `);
+    db.prepare(`INSERT INTO meta(key, value) VALUES('folder_sidecar_details_v2', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`).run();
+  }
 
   const SCHEMA_BOOT_KEY = 'schema_bootstrap_v6';
   const schemaBootDone = db.prepare(`SELECT value FROM meta WHERE key = ?`).get(SCHEMA_BOOT_KEY)?.value === '1';

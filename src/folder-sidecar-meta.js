@@ -292,6 +292,27 @@ export function parseComicInfo(xml) {
   };
 }
 
+/**
+ * Комикс-архив, который можно читать как CBZ: CBZ как есть, а CBR — только если внутри на деле ZIP
+ * (сигнатура PK\x03\x04, частый случай: файл просто переименован). Настоящий RAR не открываем:
+ * встроенный 7za его не распаковывает. Чтение — 4 байта, только для .cbr.
+ */
+export async function isZipComicFile(filePath, ext) {
+  const kind = String(ext || '').toLowerCase();
+  if (kind === 'cbz') return true;
+  if (kind !== 'cbr') return false;
+  let fh;
+  try {
+    fh = await fs.promises.open(filePath, 'r');
+    const head = await readRange(fh, 0, 4);
+    return head.length === 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+  } catch {
+    return false;
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
+
 async function openZipDirectory(filePath) {
   return promiseWithTimeout(
     unzipper.Open.file(filePath),
@@ -596,9 +617,10 @@ export async function readFolderBookSidecarDetails(bookPath, ext) {
   const layers = [];
   const opfPath = await findSidecarOpfPath(bookPath, isFolderBookFileName);
   if (opfPath) layers.push(await readSidecarOpf(opfPath));
-  if (kind === 'cbz') layers.push(await readComicInfo(bookPath));
+  const zipComic = await isZipComicFile(bookPath, kind);
+  if (zipComic) layers.push(await readComicInfo(bookPath));
   if (kind === 'pdf') layers.push(await readPdfMetadata(bookPath));
-  const cover = kind === 'cbz' ? await readCbzCover(bookPath) : null;
+  const cover = zipComic ? await readCbzCover(bookPath) : null;
   const found = layers.filter(Boolean);
   if (!found.length && !cover) return null;
   const withAnnotation = found.find((layer) => String(layer.annotation || '').trim());
