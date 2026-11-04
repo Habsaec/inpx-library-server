@@ -1857,6 +1857,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
         ${!isAdmin ? `<div class="topbar-main">${renderTopbarSearch(query, field)}</div>` : ''}
         <div class="topbar-right">
           ${!isAdmin ? `<button type="button" class="topbar-search-toggle" data-topbar-search-toggle aria-label="${escapeHtml(t('topbar.searchToggle'))}" aria-expanded="false" aria-controls="global-search-input" title="${escapeHtml(t('topbar.searchToggle'))}">⌕</button>` : ''}
+          ${isAuthenticated && userLabel ? `<a class="topbar-user-chip" href="/profile" title="${escapeHtml(userLabel)}" aria-label="${escapeHtml(userLabel)}"><span class="topbar-user-initial" aria-hidden="true">${escapeHtml(Array.from(String(userLabel))[0]?.toUpperCase() || '?')}</span><span class="topbar-user-name">${escapeHtml(userLabel)}</span></a>` : ''}
           ${renderChromeAccountTools({
         isAdmin,
         canAccessAdmin,

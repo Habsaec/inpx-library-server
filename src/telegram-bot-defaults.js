@@ -22,7 +22,8 @@ export const BOT_MENU_SECTIONS = [
     hint: 'нужна привязка на сайте',
     commands: [
       { command: 'shelves', description: 'Мои полки' },
-      { command: 'favorites', description: 'Избранное' },
+      { command: 'favorites', description: 'Избранное: книги, авторы, серии' },
+      { command: 'want', description: 'Хочу прочитать' },
       { command: 'recommended', description: 'Рекомендации' },
     ],
   },
@@ -59,7 +60,7 @@ export const TELEGRAM_DEFAULT_WELCOME =
   '📚 <b>Библиотека книг</b>\n\n' +
   'Напишите запрос — откроются разделы Книги / Авторы / Серии.\n\n' +
   '<b>Поиск:</b> просто текст · <code>/search</code> · <code>/author</code> · <code>/series</code>\n' +
-  '<b>Личное:</b> <code>/shelves</code> · <code>/favorites</code> · <code>/recommended</code> <i>(после привязки)</i>\n\n' +
+  '<b>Личное:</b> <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/recommended</code> <i>(после привязки)</i>\n\n' +
   '<code>/help</code> — полная справка';
 
 /** Анонс в чаты после индексации, если появились новые книги. Плейсхолдеры: {{count}}, {{url}}, {{link}} */

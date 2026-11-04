@@ -2012,6 +2012,48 @@ form.is-dirty button[type="submit"]::after {
   background: var(--button-bg-hover);
 }
 
+/* Signed-in user in the top bar on phones (the desktop tools with the name live in the drawer there) */
+.topbar-user-chip {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  max-width: 8.5rem;
+  padding: 0 10px 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--button-bg);
+  color: var(--text);
+  font-size: 0.8125rem;
+  text-decoration: none;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.topbar-user-chip:hover {
+  background: var(--button-bg-hover);
+}
+
+.topbar-user-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast, #1a1612);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.topbar-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .topbar-search-toggle[aria-expanded="true"] {
   border-color: var(--accent);
   color: var(--accent);
@@ -8721,6 +8763,10 @@ html[data-theme="light"] .sidebar-overlay {
     display: none !important;
   }
 
+  .topbar-user-chip {
+    display: inline-flex;
+  }
+
   .topbar-main {
     display: none;
     order: 20;
@@ -14419,4 +14465,15 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   max-height: 320px;
   overflow: auto;
   font-size: var(--font-size-sm);
+}
+
+/* Very narrow phones: only the initial, so the search button and the menu keep their room */
+@media (max-width: 340px) {
+  .topbar-user-name {
+    display: none;
+  }
+
+  .topbar-user-chip {
+    padding: 0 4px;
+  }
 }

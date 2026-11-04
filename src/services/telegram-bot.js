@@ -18,6 +18,8 @@ import {
   getAuthorBooksGrouped,
   getFavoriteAuthorsLight,
   getFavoriteSeriesLight,
+  getBookmarksPage,
+  getLibraryView,
   findDidYouMeanSuggestions,
 } from '../inpx.js';
 import { getRecommendedLibraryView } from './recommendations.js';
@@ -679,7 +681,7 @@ async function handleTelegramLink(chatId, telegramUserId, token) {
       chatId,
       `✅ <b>Аккаунт привязан</b>\n\n` +
         `Вы вошли как <b>${esc(result.username)}</b>.\n` +
-        `Доступны: <code>/shelves</code> · <code>/favorites</code> · <code>/recommended</code>\n\n` +
+        `Доступны: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/recommended</code>\n\n` +
         `Справка: <code>/help</code> · Статус: <code>/me</code>`,
     );
     logSystemEvent('info', 'telegram-bot', 'telegram account linked', {
@@ -719,7 +721,8 @@ async function handleTelegramMe(chatId, telegramUserId) {
       (linked.telegramLinkedAt ? `Привязан: ${esc(linked.telegramLinkedAt)}\n` : '') +
       '\n<b>Ваше на сайте:</b>\n' +
       '<code>/shelves</code> — полки\n' +
-      '<code>/favorites</code> — избранное\n' +
+      '<code>/favorites</code> — избранное (книги, авторы, серии)\n' +
+      '<code>/want</code> — хочу прочитать\n' +
       '<code>/recommended</code> — рекомендации\n\n' +
       'Отвязать: <code>/unlink</code>',
   );
@@ -794,10 +797,14 @@ function resolveWelcomeMessage() {
   return custom || TELEGRAM_DEFAULT_WELCOME;
 }
 
-function parsePersonalCommand(text) {
+export function parsePersonalCommand(text) {
   const cmd = String(text || '').trim().split(/\s+/)[0]?.replace(/@\w+$/, '').toLowerCase() || '';
   if (['/shelves', '/полки', '/shelf', '/полка'].includes(cmd)) return { kind: 'shelves' };
   if (['/favorites', '/favourites', '/избранное', '/favorite'].includes(cmd)) return { kind: 'favorites' };
+  if (['/fav_books', '/favbooks', '/избранные_книги'].includes(cmd)) return { kind: 'favorites-section', section: 'books' };
+  if (['/fav_authors', '/favauthors', '/избранные_авторы'].includes(cmd)) return { kind: 'favorites-section', section: 'authors' };
+  if (['/fav_series', '/favseries', '/избранные_серии'].includes(cmd)) return { kind: 'favorites-section', section: 'series' };
+  if (['/want', '/wishlist', '/хочу', '/планирую', '/хочу_прочитать'].includes(cmd)) return { kind: 'want' };
   if (['/recommended', '/recommendations', '/рекомендации', '/recs'].includes(cmd)) return { kind: 'recommended' };
   return null;
 }
@@ -1078,42 +1085,90 @@ async function doShelfBooks(chatId, username, shelfId, shelfName, page = 1) {
   await sendBookResults(chatId, items, page, total, `📚 <b>${esc(shelfName)}</b> — ${total} кн.`);
 }
 
-async function doFavoritesList(chatId, username, page = 1, { fresh = false } = {}) {
-  const authors = getFavoriteAuthorsLight(username, 200);
-  const series = getFavoriteSeriesLight(username, 200);
-  const items = [
-    ...authors.map((a) => ({ type: 'author', name: a.name, displayName: a.displayName || a.name })),
-    ...series.map((s) => ({ type: 'series', name: s.name, displayName: s.displayName || s.name })),
-  ];
-  if (!items.length) {
-    await sendText(chatId, '⭐ Избранное пусто. Добавьте авторов и серии на сайте.');
+/** «Избранное» as on the site: books, authors and series are separate lists (a menu with counts). */
+async function doFavoritesList(chatId, username, _page = 1, { fresh = false } = {}) {
+  const books = getBookmarksPage(username, { page: 1, pageSize: 1 }).total;
+  const authors = getFavoriteAuthorsLight(username, 200).length;
+  const series = getFavoriteSeriesLight(username, 200).length;
+  if (!books && !authors && !series) {
+    await sendText(chatId, '⭐ Избранное пусто. Добавьте книги, авторов и серии на сайте.');
     return;
   }
-  const total = items.length;
-  const slice = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   if (fresh) resetNavForNewSearch(chatId);
-  setSearchState(chatId, { kind: 'favorites-list', username, page, total });
+  setSearchState(chatId, { kind: 'favorites-list', username, page: 1, total: 0 });
+  const button = (icon, label, count, section) => {
+    const key = regNavKey({ kind: 'fav-section', username, section });
+    return [{ text: `${icon} ${label} (${count})`, callback_data: `fa:${key}` }];
+  };
+  await sendText(chatId, '⭐ <b>Избранное</b>\nВыберите раздел:', {
+    reply_markup: {
+      inline_keyboard: [
+        button('📖', 'Книги', books, 'books'),
+        button('👤', 'Авторы', authors, 'authors'),
+        button('📚', 'Серии', series, 'series'),
+      ],
+    },
+  });
+}
+
+async function doFavoritesSection(chatId, username, section, page = 1, { fresh = false } = {}) {
+  if (section === 'books') {
+    const result = getBookmarksPage(username, { page, pageSize: PAGE_SIZE });
+    const books = result.items.map((row) => getBookById(row.id)).filter(Boolean);
+    if (!result.total) {
+      await sendText(chatId, '⭐ Избранных книг пока нет.');
+      return;
+    }
+    if (fresh) resetNavForNewSearch(chatId);
+    setSearchState(chatId, { kind: 'favorites-books', username, page, total: result.total });
+    await sendBookResults(chatId, books, page, result.total, '⭐ <b>Избранные книги</b>');
+    return;
+  }
+  const isAuthors = section === 'authors';
+  const rows = isAuthors ? getFavoriteAuthorsLight(username, 200) : getFavoriteSeriesLight(username, 200);
+  if (!rows.length) {
+    await sendText(chatId, isAuthors ? '⭐ Избранных авторов пока нет.' : '⭐ Избранных серий пока нет.');
+    return;
+  }
+  const total = rows.length;
+  const slice = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  if (fresh) resetNavForNewSearch(chatId);
+  setSearchState(chatId, { kind: isAuthors ? 'favorites-authors' : 'favorites-series', username, page, total });
   await sendTextListResults(
     chatId,
     slice,
     page,
     total,
-    '⭐ <b>Избранное</b>',
+    isAuthors ? '👤 <b>Избранные авторы</b>' : '📚 <b>Избранные серии</b>',
     async (item) => {
-      if (item.type === 'author') {
+      const displayName = item.displayName || item.name;
+      if (isAuthors) {
         const key = regNavKey({ kind: 'author', author: item.name });
-        const res = await sendText(chatId, `👤 <b>${esc(item.displayName)}</b>`, {
+        const res = await sendText(chatId, `👤 <b>${esc(displayName)}</b>`, {
           reply_markup: { inline_keyboard: [[{ text: '📚 Серии автора', callback_data: `fa:${key}` }]] },
         });
         return { messageId: res?.result?.message_id };
       }
       const key = regNavKey({ kind: 'series', series: item.name });
-      const res = await sendText(chatId, `📚 <b>${esc(item.displayName)}</b>`, {
+      const res = await sendText(chatId, `📚 <b>${esc(displayName)}</b>`, {
         reply_markup: { inline_keyboard: [[{ text: '📖 Книги серии', callback_data: `fa:${key}` }]] },
       });
       return { messageId: res?.result?.message_id };
     },
   );
+}
+
+/** «Хочу прочитать» — the same list as /library/want on the site (opened or read books drop out of it). */
+async function doWantList(chatId, username, page = 1, { fresh = false } = {}) {
+  const view = getLibraryView('want', { username, page, pageSize: PAGE_SIZE, sort: 'recent' });
+  if (!view.total) {
+    await sendText(chatId, '🔖 В «Хочу прочитать» пока пусто. Добавьте книги на сайте.');
+    return;
+  }
+  const books = view.items.map((row) => getBookById(row.id)).filter(Boolean);
+  if (fresh) resetNavForNewSearch(chatId);
+  setSearchState(chatId, { kind: 'want-list', username, page, total: view.total });
+  await sendBookResults(chatId, books, page, view.total, `🔖 <b>Хочу прочитать</b> — ${view.total} кн.`);
 }
 
 async function doRecommendedBooks(chatId, username, page = 1, { fresh = false } = {}) {
@@ -1161,6 +1216,8 @@ async function doRecommendedBooks(chatId, username, page = 1, { fresh = false } 
 async function dispatchPersonalCommand(chatId, username, cmd) {
   if (cmd.kind === 'shelves') await doShelvesList(chatId, username, 1, { fresh: true });
   else if (cmd.kind === 'favorites') await doFavoritesList(chatId, username, 1, { fresh: true });
+  else if (cmd.kind === 'favorites-section') await doFavoritesSection(chatId, username, cmd.section, 1, { fresh: true });
+  else if (cmd.kind === 'want') await doWantList(chatId, username, 1, { fresh: true });
   else if (cmd.kind === 'recommended') await doRecommendedBooks(chatId, username, 1, { fresh: true });
 }
 
@@ -1422,6 +1479,9 @@ async function openNavEntry(chatId, entry, page = 1) {
     case 'shelf':
       await doShelfBooks(chatId, entry.username, entry.shelfId, entry.shelfName, page);
       break;
+    case 'fav-section':
+      await doFavoritesSection(chatId, entry.username, entry.section, page);
+      break;
     case 'smart-query':
       await doSmartSearch(chatId, entry.query, { fresh: false });
       break;
@@ -1444,6 +1504,10 @@ async function restoreSearchState(chatId, state) {
   else if (state.kind === 'shelves-list') await doShelvesList(chatId, state.username, state.page);
   else if (state.kind === 'shelf-books') await doShelfBooks(chatId, state.username, state.shelfId, state.shelfName, state.page);
   else if (state.kind === 'favorites-list') await doFavoritesList(chatId, state.username, state.page);
+  else if (state.kind === 'favorites-books') await doFavoritesSection(chatId, state.username, 'books', state.page);
+  else if (state.kind === 'favorites-authors') await doFavoritesSection(chatId, state.username, 'authors', state.page);
+  else if (state.kind === 'favorites-series') await doFavoritesSection(chatId, state.username, 'series', state.page);
+  else if (state.kind === 'want-list') await doWantList(chatId, state.username, state.page);
   else if (state.kind === 'recommended-books') await doRecommendedBooks(chatId, state.username, state.page);
 }
 
@@ -1462,6 +1526,10 @@ async function continueListedSearch(chatId, page) {
   else if (state.kind === 'shelves-list') await doShelvesList(chatId, state.username, page);
   else if (state.kind === 'shelf-books') await doShelfBooks(chatId, state.username, state.shelfId, state.shelfName, page);
   else if (state.kind === 'favorites-list') await doFavoritesList(chatId, state.username, page);
+  else if (state.kind === 'favorites-books') await doFavoritesSection(chatId, state.username, 'books', page);
+  else if (state.kind === 'favorites-authors') await doFavoritesSection(chatId, state.username, 'authors', page);
+  else if (state.kind === 'favorites-series') await doFavoritesSection(chatId, state.username, 'series', page);
+  else if (state.kind === 'want-list') await doWantList(chatId, state.username, page);
   else if (state.kind === 'recommended-books') await doRecommendedBooks(chatId, state.username, page);
 }
 
@@ -1655,7 +1723,7 @@ async function handleUpdate(upd) {
           resolveWelcomeMessage() +
             `\n\n👤 Вы вошли как <b>${esc(linked.username)}</b>.\n` +
             'Поиск: <code>/search</code> · <code>/author</code> · <code>/series</code>\n' +
-            'Личное: <code>/shelves</code> · <code>/favorites</code> · <code>/recommended</code>',
+            'Личное: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/recommended</code>',
         );
         return;
       }
