@@ -43,3 +43,13 @@ test('merge repoints books and favorites before deleting the loser row', async (
   db.prepare('DELETE FROM series_catalog WHERE id = ?').run(winner);
   db.prepare('DELETE FROM users WHERE username = ?').run(user);
 });
+
+test('splitSeriesQualifier / surname matching', async () => {
+  const { splitSeriesQualifier, seriesQualifierMatchesSurnames } = await import('../src/inpx.js');
+  assert.deepEqual(splitSeriesQualifier('Вечная война [Винокуров]'), { base: 'вечная война', qualifier: 'винокуров' });
+  assert.deepEqual(splitSeriesQualifier('Дозоры. Лукьяненко'), { base: 'дозоры', qualifier: 'лукьяненко' });
+  assert.equal(splitSeriesQualifier('Дозоры'), null);
+  assert.equal(seriesQualifierMatchesSurnames('винокуров', new Set(['винокуров'])), true);
+  assert.equal(seriesQualifierMatchesSurnames('воронины', new Set(['воронин'])), true);
+  assert.equal(seriesQualifierMatchesSurnames('карелин', new Set(['винокуров'])), false);
+});

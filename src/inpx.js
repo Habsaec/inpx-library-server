@@ -875,6 +875,106 @@ export function mergeSeriesCatalogByKey() {
   });
 }
 
+/** «Дозоры [межавторская серия]», «Вечная война [Винокуров]», «Дозоры. Лукьяненко» → { base, qualifier }. */
+export function splitSeriesQualifier(displayName = '') {
+  const text = normalizeText(displayName);
+  const m = text.match(/^(.+?)\s*\[([^\]]{2,60})\]$/u)
+    || text.match(/^(.+?)\s*\(([^)]{2,60})\)$/u)
+    || text.match(/^(.+?)\.\s+([^.]{3,40})$/u);
+  if (!m) return null;
+  const base = seriesCatalogKey(m[1]);
+  const qualifier = seriesCatalogKey(m[2]);
+  return base && qualifier ? { base, qualifier } : null;
+}
+
+const GENERIC_SERIES_QUALIFIERS = new Set(['межавторская серия', 'межавторский цикл', 'межавторский сборник', 'цикл', 'серия']);
+
+/** Qualifier word names an author (surname stem, ≥ 5 letters compared by 5-char stem, shorter ones whole). */
+export function seriesQualifierMatchesSurnames(qualifier, surnames) {
+  const words = String(qualifier || '').split(' ').filter((w) => w.length >= 3);
+  for (const word of words) {
+    for (const surname of surnames) {
+      if (!surname) continue;
+      if (word === surname) return true;
+      if (word.length >= 5 && surname.length >= 5 && word.slice(0, 5) === surname.slice(0, 5)) return true;
+    }
+  }
+  return false;
+}
+
+let _qualifierMergeRunning = false;
+
+/**
+ * Flibusta disambiguates same-named series with a suffix: «Вечная война» / «Вечная война [Винокуров]»,
+ * «Дозоры» / «Дозоры. Лукьяненко» / «Дозоры [межавторская серия]». The suffixed row is folded into the bare
+ * series when the qualifier is generic («межавторская серия») or names an author found in BOTH series
+ * (so «Вечная война [Карелин]» stays apart from Винокуров's). Runs at boot and after every index pass
+ * (the indexers recreate the suffixed row); links and favorites move before the row is deleted.
+ */
+export async function mergeSeriesQualifierDuplicates() {
+  if (_qualifierMergeRunning || indexState.active) return 0;
+  _qualifierMergeRunning = true;
+  try {
+    const candidates = [];
+    for (const row of db.prepare(`
+      SELECT id, name, display_name AS displayName, search_name AS searchName FROM series_catalog
+      WHERE display_name LIKE '%[%]' OR display_name LIKE '%(%)' OR display_name LIKE '%. %'
+    `).iterate()) {
+      const parts = splitSeriesQualifier(row.displayName);
+      if (parts && parts.base !== row.name) candidates.push({ ...row, ...parts });
+    }
+    if (!candidates.length) return 0;
+    const selectBase = db.prepare('SELECT id, search_name AS searchName FROM series_catalog WHERE name = ?');
+    const surnamesOf = db.prepare(`
+      SELECT DISTINCT substr(a.name, 1, instr(a.name || ',', ',') - 1) AS surname
+      FROM book_series bs JOIN book_authors ba ON ba.book_id = bs.book_id JOIN authors a ON a.id = ba.author_id
+      WHERE bs.series_id = ? LIMIT 600
+    `);
+    const repointLinks = db.prepare('UPDATE OR IGNORE book_series SET series_id = ? WHERE series_id = ?');
+    const dropLinks = db.prepare('DELETE FROM book_series WHERE series_id = ?');
+    const repointFavs = db.prepare('UPDATE OR IGNORE favorite_series SET series_id = ? WHERE series_id = ?');
+    const dropFavs = db.prepare('DELETE FROM favorite_series WHERE series_id = ?');
+    const dropSeries = db.prepare('DELETE FROM series_catalog WHERE id = ?');
+    const setSearch = db.prepare('UPDATE series_catalog SET search_name = ? WHERE id = ?');
+    const mergeInto = db.transaction((base, loser) => {
+      repointLinks.run(base.id, loser.id);
+      dropLinks.run(loser.id);
+      repointFavs.run(base.id, loser.id);
+      dropFavs.run(loser.id);
+      dropSeries.run(loser.id);
+      const names = new Set(String(base.searchName || '').split(' | ').filter(Boolean));
+      for (const part of String(loser.searchName || '').split(' | ')) if (part) names.add(part);
+      setSearch.run([...names].join(' | '), base.id);
+    });
+    let merged = 0;
+    for (let i = 0; i < candidates.length; i += 1) {
+      if (i && i % 200 === 0) await new Promise((resolve) => setImmediate(resolve));
+      if (indexState.active) break;
+      const loser = candidates[i];
+      const base = selectBase.get(loser.base);
+      if (!base || base.id === loser.id) continue;
+      let ok = GENERIC_SERIES_QUALIFIERS.has(loser.qualifier);
+      if (!ok) {
+        const mine = new Set(surnamesOf.all(loser.id).map((r) => seriesCatalogKey(r.surname)));
+        const theirs = surnamesOf.all(base.id).map((r) => seriesCatalogKey(r.surname));
+        ok = seriesQualifierMatchesSurnames(loser.qualifier, mine)
+          && seriesQualifierMatchesSurnames(loser.qualifier, theirs);
+      }
+      if (!ok) continue;
+      mergeInto(base, loser);
+      merged += 1;
+    }
+    if (merged) {
+      clearRuntimeQueryCaches();
+      await refreshCatalogBookCounts();
+      console.log(`[series] folded ${merged} suffixed duplicate series`);
+    }
+    return merged;
+  } finally {
+    _qualifierMergeRunning = false;
+  }
+}
+
 export function backfillCatalogSearchFields() {
   const catalogDone = getMeta('catalog_normalization_v1') === 'done';
   const booksDone = getMeta('yo_normalization_v1') === 'done';

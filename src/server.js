@@ -71,6 +71,7 @@ import {
   backfillCatalogSearchFields,
   refreshGenreSearchNames,
   mergeSeriesCatalogByKey,
+  mergeSeriesQualifierDuplicates,
   getConfiguredInpxFile,
   getLibraryRoot,
   getIndexStatus,
@@ -1319,6 +1320,12 @@ async function bootstrap() {
   onIndexComplete(({ unchanged }) => {
     if (!unchanged) scheduleCollectionsMatch();
   });
+  onIndexComplete(({ unchanged }) => {
+    if (unchanged) return;
+    setTimeout(() => {
+      mergeSeriesQualifierDuplicates().catch((err) => console.error('[series] qualifier merge:', err.message));
+    }, 5000);
+  });
   onIndexComplete(({ newBooksCount }) => {
     if (newBooksCount <= 0) return;
     if (!shouldRunTelegramBotInThisProcess()) return;
@@ -1454,7 +1461,7 @@ async function bootstrap() {
       console.error('[startup] genre search names:', error.message);
     }
 
-    mergeSeriesCatalogByKey().catch((error) => {
+    mergeSeriesCatalogByKey().then(() => mergeSeriesQualifierDuplicates()).catch((error) => {
       console.error('[startup] series merge:', error.message);
     });
 
