@@ -565,6 +565,8 @@
   "admin.dbRestore.noSpace": "Not enough free disk space.",
   "admin.dbRestore.resultOk": "The database was restored from the copy. The previous one is kept as data/library.db.pre-restore-….",
   "admin.dbRestore.resultFail": "The restore did not run; the previous database is still in place.",
+  "admin.update.legacyTitle": "Old format (users only)",
+  "admin.update.legacyHint": "Only for files made earlier. For moving and restoring use the portable backup above: it has the users and everything else. The settings JSON is a reference only (paths and flags, no passwords); settings cannot be restored from it.",
   "admin.update.downloadDb": "Download DB backup",
   "admin.update.exportJson": "Export settings (JSON)",
   "admin.update.openJson": "Open settings (JSON)",

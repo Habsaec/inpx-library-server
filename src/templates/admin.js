@@ -478,11 +478,23 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
         ${portableRows ? `<table class="admin-table" style="margin-top:10px;width:100%;"><tbody>${portableRows}</tbody></table>` : `<p class="muted" style="margin-top:10px;">${escapeHtml(t('admin.portable.none'))}</p>`}
       </div>
     </div>
-    <div class="admin-card" style="margin-top:20px;">
-      <div class="admin-card-title">${escapeHtml(t('admin.update.backupTitle'))}</div>
-      <div class="admin-card-subtitle">${escapeHtml(t('admin.update.backupSubtitle'))}</div>
+    <div class="admin-card" style="margin-top:20px;" data-db-restore>
+      <div class="admin-card-title">${escapeHtml(t('admin.dbRestore.title'))}</div>
+      <div class="admin-card-subtitle">${escapeHtml(t('admin.dbRestore.subtitle'))}</div>
       <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
         <a class="button" href="/api/operations/backup">${escapeHtml(t('admin.update.downloadDb'))}</a>
+        <button type="button" id="dbr-make-copy">${escapeHtml(t('admin.dbRestore.makeCopy'))}</button>
+        <label for="dbr-upload-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.dbRestore.upload'))}</label>
+        <input type="file" id="dbr-upload-input" accept=".db,application/octet-stream" style="display:none;">
+        <span id="dbr-upload-state" class="muted"></span>
+      </div>
+      ${restoreRows ? `<table class="admin-table" style="margin-top:10px;width:100%;"><tbody>${restoreRows}</tbody></table>` : `<p class="muted" style="margin-top:10px;">${escapeHtml(t('admin.dbRestore.none'))}</p>`}
+      <div id="dbr-status" class="muted" style="margin-top:10px;white-space:pre-line;"></div>
+    </div>
+    <details class="admin-card" style="margin-top:20px;">
+      <summary class="admin-card-title" style="cursor:pointer;">${escapeHtml(t('admin.update.legacyTitle'))}</summary>
+      <div class="admin-card-subtitle">${escapeHtml(t('admin.update.legacyHint'))}</div>
+      <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
         <a class="button" href="/api/operations/users-export">${escapeHtml(t('admin.update.exportUsers'))}</a>
         <a class="button" href="/api/operations/settings-export?download=1">${escapeHtml(t('admin.update.exportJson'))}</a>
       </div>
@@ -496,19 +508,7 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
           <button type="submit" id="users-import-btn" disabled>${escapeHtml(t('admin.update.importUsers'))}</button>
         </div>
       </form>
-    </div>
-    <div class="admin-card" style="margin-top:20px;" data-db-restore>
-      <div class="admin-card-title">${escapeHtml(t('admin.dbRestore.title'))}</div>
-      <div class="admin-card-subtitle">${escapeHtml(t('admin.dbRestore.subtitle'))}</div>
-      <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
-        <button type="button" id="dbr-make-copy">${escapeHtml(t('admin.dbRestore.makeCopy'))}</button>
-        <label for="dbr-upload-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.dbRestore.upload'))}</label>
-        <input type="file" id="dbr-upload-input" accept=".db,application/octet-stream" style="display:none;">
-        <span id="dbr-upload-state" class="muted"></span>
-      </div>
-      ${restoreRows ? `<table class="admin-table" style="margin-top:10px;width:100%;"><tbody>${restoreRows}</tbody></table>` : `<p class="muted" style="margin-top:10px;">${escapeHtml(t('admin.dbRestore.none'))}</p>`}
-      <div id="dbr-status" class="muted" style="margin-top:10px;white-space:pre-line;"></div>
-    </div>
+    </details>
     <div class="admin-card" style="margin-top:20px;">
       <div class="admin-card-title">${escapeHtml(t('admin.update.checkTitle'))}</div>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.update.checkSubtitle'))}</div>
