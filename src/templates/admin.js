@@ -418,11 +418,11 @@ function renderDbMemoryForm({ dbMemory, csrfToken }) {
         <hr class="admin-divider">`;
 }
 
-export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '', portable = { backups: [], schedule: { enabled: true, keep: 7 } }, dbRestore = { sources: [], result: null } }) {
+export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operations = {}, csrfToken = '', portable = { backups: [], schedule: { enabled: true, keep: 7 }, hasPassword: false }, dbRestore = { sources: [], result: null } }) {
   const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} ${t('common.unitMB')}` : `${Math.max(1, Math.round(n / 1024))} KB`);
   const portableRows = (portable.backups || []).map((b) => `
         <tr data-portable-row="${escapeHtml(b.name)}">
-          <td>${escapeHtml(b.name.replace(/^inpx-portable-/, '').replace(/\.jsonl\.gz$/, ''))}</td>
+          <td>${escapeHtml(b.name.replace(/^inpx-portable-/, '').replace(/\.jsonl\.gz(\.enc)?$/, ''))}${b.encrypted ? ` <span class="muted">· ${escapeHtml(t('admin.portable.encryptedTag'))}</span>` : ''}</td>
           <td class="muted">${escapeHtml(fmtSize(b.size))}</td>
           <td style="text-align:right;white-space:nowrap;">
             <a class="button" href="/api/operations/portable-backups/${encodeURIComponent(b.name)}">${escapeHtml(t('admin.portable.downloadShort'))}</a>
@@ -447,6 +447,14 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
     <div class="admin-card">
       <div class="admin-card-title">${escapeHtml(t('admin.portable.title'))}</div>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.portable.subtitle'))}</div>
+      <div class="admin-field-group" style="margin-top:12px;" data-portable-password>
+        <span class="admin-field-hint">${escapeHtml(t(portable.hasPassword ? 'admin.portable.pwSet' : 'admin.portable.pwNone'))}</span>
+        <div class="admin-actions-row" style="margin-top:6px;flex-wrap:wrap;align-items:center;">
+          <input type="password" id="portable-pw" autocomplete="new-password" placeholder="${escapeHtml(t('admin.portable.pwPlaceholder'))}" style="max-width:280px">
+          <button type="button" id="portable-pw-save">${escapeHtml(t(portable.hasPassword ? 'admin.portable.pwChange' : 'admin.portable.pwSave'))}</button>
+          ${portable.hasPassword ? `<button type="button" id="portable-pw-clear">${escapeHtml(t('admin.portable.pwClear'))}</button>` : ''}
+        </div>
+      </div>
       <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
         <a class="button button-primary" href="/api/operations/portable-backup">${escapeHtml(t('admin.portable.download'))}</a>
       </div>
@@ -457,6 +465,7 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
         <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;align-items:flex-start;margin-top:8px;"><input type="checkbox" name="replaceUsers" value="1" style="accent-color:var(--accent);width:16px;height:16px;flex:none;"> <span>${escapeHtml(t('admin.portable.replaceUsers'))}<br><span class="muted">${escapeHtml(t('admin.portable.replaceUsersHint'))}</span></span></label>
         <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;margin-top:6px;"><input type="checkbox" name="includeSettings" value="1" checked style="accent-color:var(--accent);width:16px;height:16px;flex:none;"> <span>${escapeHtml(t('admin.portable.includeSettings'))}</span></label>
         <label class="admin-checkbox-label" style="text-transform:none;letter-spacing:0;font-weight:400;margin-top:6px;"><input type="checkbox" name="includeSources" value="1" checked style="accent-color:var(--accent);width:16px;height:16px;flex:none;"> <span>${escapeHtml(t('admin.portable.includeSources'))}</span></label>
+        <input type="password" id="portable-restore-pw" autocomplete="off" placeholder="${escapeHtml(t('admin.portable.restorePwPlaceholder'))}" style="max-width:320px;margin-top:8px;">
         <div class="admin-actions-row" style="margin-top:10px;flex-wrap:wrap;">
           <label for="portable-restore-input" class="button" style="cursor:pointer;">${escapeHtml(t('admin.portable.pick'))}</label>
           <input type="file" id="portable-restore-input" accept=".gz,application/gzip" style="display:none;">

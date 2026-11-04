@@ -104,16 +104,63 @@ test('rejects files that are not a portable backup', async () => {
   await assert.rejects(() => importPortableBackup(bad), (e) => e.code === 'INVALID_BACKUP');
 });
 
-test('encrypted secrets travel in plain text and are re-encrypted on import', async () => {
-  db.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES('smtp_pass', ?)").run(encryptValue('s3cret-pass'));
-  const file = path.join(tmp, 'enc.jsonl.gz');
-  await writePortableBackupFile(file, { appVersion: 'test' });
+test('with a backup password the whole file is encrypted and secrets travel inside it', async () => {
+  const { deriveBackupKey, newSalt } = await import('../src/services/portable-backup-crypto.js');
   const zlib = await import('node:zlib');
-  const text = zlib.gunzipSync(fs.readFileSync(file)).toString('utf8');
-  assert.ok(text.includes('"s3cret-pass"'), 'exported decrypted');
+  db.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES('smtp_pass', ?)").run(encryptValue('s3cret-pass'));
+  const salt = newSalt();
+  const encryption = { key: deriveBackupKey('correct horse', salt), salt };
+  const file = path.join(tmp, 'enc.jsonl.gz.enc');
+  await writePortableBackupFile(file, { appVersion: 'test', encryption });
+
+  const raw = fs.readFileSync(file);
+  assert.equal(raw.subarray(0, 8).toString(), 'INPXENC1');
+  assert.ok(!raw.includes(Buffer.from('s3cret-pass')), 'plain text must not appear in the file');
+  assert.throws(() => zlib.gunzipSync(raw), 'not a plain gzip any more');
+
   db.prepare("DELETE FROM settings WHERE key = 'smtp_pass'").run();
-  await importPortableBackup(file);
+  await assert.rejects(() => importPortableBackup(file, { password: 'wrong password' }), (e) => e.code === 'BACKUP_PASSWORD');
+  await assert.rejects(() => importPortableBackup(file), (e) => e.code === 'BACKUP_PASSWORD');
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM settings WHERE key = 'smtp_pass'").get().c, 0, 'nothing applied on a wrong password');
+
+  await importPortableBackup(file, { password: 'correct horse' });
   const stored = db.prepare("SELECT value FROM settings WHERE key = 'smtp_pass'").get().value;
-  assert.notEqual(stored, 's3cret-pass');
+  assert.notEqual(stored, 's3cret-pass', 're-encrypted with this install key');
   assert.equal(decryptValue(stored), 's3cret-pass');
+
+  // a flipped byte is caught before anything is applied
+  const damaged = Buffer.from(raw);
+  damaged[40] ^= 0xff;
+  const bad = path.join(tmp, 'damaged.enc');
+  fs.writeFileSync(bad, damaged);
+  await assert.rejects(() => importPortableBackup(bad, { password: 'correct horse' }), (e) => e.code === 'BACKUP_PASSWORD');
+});
+
+test('without a password the file is plain and carries no secrets', async () => {
+  const zlib = await import('node:zlib');
+  db.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES('telegram_bot_token', ?)").run(encryptValue('123:BOT-TOKEN'));
+  db.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES('backup_key', 'x'), ('backup_key_salt', 'y')").run();
+  const file = path.join(tmp, 'plain.jsonl.gz');
+  await writePortableBackupFile(file, { appVersion: 'test' });
+  const text = zlib.gunzipSync(fs.readFileSync(file)).toString('utf8');
+  assert.ok(!text.includes('BOT-TOKEN') && !text.includes('telegram_bot_token'));
+  assert.ok(!text.includes('backup_key'), 'the local backup key never leaves the install');
+  assert.equal(JSON.parse(text.split(String.fromCharCode(10))[0]).secrets, false);
+});
+
+test('backup password: only a derived key is stored, and it round-trips', async () => {
+  const store = await import('../src/services/portable-backup-store.js');
+  const { deriveBackupKey } = await import('../src/services/portable-backup-crypto.js');
+  assert.throws(() => store.setBackupPassword('short'), (e) => e.code === 'BACKUP_PASSWORD_SHORT');
+  store.clearBackupPassword();
+  assert.equal(store.hasBackupPassword(), false);
+  assert.equal(store.getBackupEncryption(), null);
+  store.setBackupPassword('long enough password');
+  assert.equal(store.hasBackupPassword(), true);
+  const enc = store.getBackupEncryption();
+  assert.ok(enc.key.equals(deriveBackupKey('long enough password', enc.salt)));
+  const stored = db.prepare("SELECT value FROM settings WHERE key = 'backup_key'").get().value;
+  assert.ok(!stored.includes(enc.key.toString('hex')), 'the key is encrypted with the install key');
+  assert.ok(!stored.includes('long enough password'));
+  store.clearBackupPassword();
 });

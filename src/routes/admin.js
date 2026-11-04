@@ -87,7 +87,8 @@ import {
 } from '../services/db-restore.js';
 import {
   listPortableBackups, createPortableBackupNow, deletePortableBackup, resolvePortableBackupPath,
-  getPortableBackupSchedule, savePortableBackupSchedule
+  getPortableBackupSchedule, savePortableBackupSchedule,
+  hasBackupPassword, setBackupPassword, clearBackupPassword, getBackupEncryption
 } from '../services/portable-backup-store.js';
 import { listCollections, isCollectionsMatchRunning } from '../collections.js';
 import { renderAdminCollectionsCard } from '../templates/admin.js';
@@ -763,7 +764,7 @@ export function registerAdminRoutes(app, deps) {
     res.send(renderAdminUpdate({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
       operations: getOperationsSnapshot(), csrfToken: req.csrfToken || '',
-      portable: { backups: await listPortableBackups(), schedule: getPortableBackupSchedule() },
+      portable: { backups: await listPortableBackups(), schedule: getPortableBackupSchedule(), hasPassword: hasBackupPassword() },
       dbRestore: { sources: restoreSources(), result: takeRestoreResult() }
     }));
   });
@@ -1638,10 +1639,11 @@ export function registerAdminRoutes(app, deps) {
   app.get('/api/operations/portable-backup', requireAdminApi, async (req, res, next) => {
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      res.setHeader('Content-Disposition', `attachment; filename="inpx-portable-backup-${stamp}.jsonl.gz"`);
-      res.type('application/gzip');
+      const encryption = getBackupEncryption();
+      res.setHeader('Content-Disposition', `attachment; filename="inpx-portable-backup-${stamp}.jsonl.gz${encryption ? '.enc' : ''}"`);
+      res.type(encryption ? 'application/octet-stream' : 'application/gzip');
       res.setHeader('Content-Encoding', 'identity');
-      const counts = await writePortableBackup(res, { appVersion: readPortableAppVersion() });
+      const counts = await writePortableBackup(res, { appVersion: readPortableAppVersion(), encryption });
       logSystemEvent('info', 'operations', 'portable backup exported', { user: req.user.username, counts });
     } catch (error) {
       if (res.headersSent) { res.destroy(error); return; }
@@ -1676,6 +1678,18 @@ export function registerAdminRoutes(app, deps) {
       res.json({ ok: true });
     } catch {
       return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.portable.invalid'));
+    }
+  });
+
+  app.post('/api/operations/portable-backup-password', requireAdminApi, (req, res) => {
+    try {
+      if (req.body?.clear) clearBackupPassword();
+      else setBackupPassword(req.body?.password);
+      logSystemEvent('info', 'operations', 'portable backup password changed', { user: req.user.username, cleared: Boolean(req.body?.clear) });
+      res.json({ ok: true, hasPassword: hasBackupPassword() });
+    } catch (error) {
+      if (error?.code === 'BACKUP_PASSWORD_SHORT') return apiFail(res, 400, ApiErrorCode.VALIDATION, t('admin.portable.passwordShort'));
+      return apiFail(res, 500, ApiErrorCode.INTERNAL, error.message);
     }
   });
 
@@ -1786,6 +1800,7 @@ export function registerAdminRoutes(app, deps) {
       const summary = await importPortableBackup(stored || tmpFile, {
         dryRun,
         replaceUsers: flag('replaceUsers'),
+        password: String(req.get('x-backup-password') || ''),
         includeSettings: !('includeSettings' in req.query) || flag('includeSettings'),
         includeSources: !('includeSources' in req.query) || flag('includeSources')
       });
@@ -1797,6 +1812,9 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) {
       if (error?.code === 'INVALID_BACKUP') {
         return apiFail(res, 400, ApiErrorCode.VALIDATION, t('admin.portable.invalid'));
+      }
+      if (error?.code === 'BACKUP_PASSWORD') {
+        return apiFail(res, 400, ApiErrorCode.VALIDATION, t('admin.portable.badPassword'));
       }
       logSystemEvent('error', 'operations', 'portable restore failed', { user: req.user?.username, error: error.message });
       return apiFail(res, 500, ApiErrorCode.INTERNAL, error.message);

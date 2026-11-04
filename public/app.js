@@ -5629,6 +5629,7 @@ function attachUsersImport() {
     const applyBtn = document.getElementById('portable-restore-apply');
     const result = document.getElementById('portable-restore-result');
     const flag = (name) => (portableForm.querySelector(`[name="${name}"]`)?.checked ? '1' : '0');
+    const restorePw = () => document.getElementById('portable-restore-pw')?.value || '';
     const describe = (d) => uiTp('admin.portable.result', {
       created: d.users?.created || 0, replaced: d.users?.replaced || 0, kept: d.users?.kept || 0,
       shelves: (d.shelves || 0) + (d.smartShelves || 0), books: d.bookRows || 0,
@@ -5655,7 +5656,8 @@ function attachUsersImport() {
           includeSettings: flag('includeSettings'), includeSources: flag('includeSources')
         });
         const response = await fetch(`/api/operations/portable-restore?${qs}`, {
-          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/gzip' }, body: file
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/gzip', 'X-Backup-Password': restorePw() }, body: file
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
@@ -5678,6 +5680,22 @@ function attachUsersImport() {
       if (!response.ok) throw new Error(data.error || uiT('app.networkError'));
       return data;
     };
+    const savePassword = async (body) => {
+      try {
+        await post('/api/operations/portable-backup-password', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        window.location.reload();
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    };
+    document.getElementById('portable-pw-save')?.addEventListener('click', () => {
+      savePassword({ password: document.getElementById('portable-pw')?.value || '' });
+    });
+    document.getElementById('portable-pw-clear')?.addEventListener('click', () => {
+      if (window.confirm(uiT('admin.portable.pwClearConfirm'))) savePassword({ clear: true });
+    });
     const store = document.querySelector('[data-portable-store]');
     document.getElementById('portable-make-now')?.addEventListener('click', async (event) => {
       event.target.disabled = true;
@@ -5722,7 +5740,7 @@ function attachUsersImport() {
         });
         result.textContent = uiT('app.running');
         try {
-          const data = await post(`/api/operations/portable-restore?${qs}`, { method: 'POST' });
+          const data = await post(`/api/operations/portable-restore?${qs}`, { method: 'POST', headers: { 'X-Backup-Password': restorePw() } });
           result.textContent = `${uiT('admin.portable.done')}\n${describe(data)}`;
         } catch (error) {
           result.textContent = error.message;

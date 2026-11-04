@@ -7,14 +7,46 @@ import cluster from 'node:cluster';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
-import { getSetting, setSetting, getMeta, setMeta } from '../db.js';
+import { getSetting, setSetting, getMeta, setMeta, encryptValue, decryptValue } from '../db.js';
 import { writePortableBackupFile } from './portable-backup.js';
+import { deriveBackupKey, newSalt, MIN_PASSWORD_LENGTH } from './portable-backup-crypto.js';
 import { logSystemEvent } from './system-events.js';
 
-const NAME_RE = /^inpx-portable-[0-9TZ-]{10,40}\.jsonl\.gz$/;
+const NAME_RE = /^inpx-portable-[0-9TZ-]{10,40}\.jsonl\.gz(\.enc)?$/;
 const DEFAULT_KEEP = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LAST_META = 'portable_backup_last_ok';
+
+/* ── backup password: only the derived key (encrypted with the install key) + salt are stored ── */
+
+export function hasBackupPassword() {
+  return Boolean(getSetting('backup_key') && getSetting('backup_key_salt'));
+}
+
+export function setBackupPassword(password) {
+  const text = String(password || '');
+  if (text.length < MIN_PASSWORD_LENGTH) {
+    const err = new Error('Password too short');
+    err.code = 'BACKUP_PASSWORD_SHORT';
+    throw err;
+  }
+  const salt = getSetting('backup_key_salt') ? Buffer.from(getSetting('backup_key_salt'), 'hex') : newSalt();
+  setSetting('backup_key_salt', salt.toString('hex'));
+  setSetting('backup_key', encryptValue(deriveBackupKey(text, salt).toString('hex')));
+}
+
+export function clearBackupPassword() {
+  setSetting('backup_key', '');
+  setSetting('backup_key_salt', '');
+}
+
+/** { key, salt } for writePortableBackup, or null when no password is set (plain file, no secrets). */
+export function getBackupEncryption() {
+  const saltHex = getSetting('backup_key_salt');
+  const keyHex = decryptValue(getSetting('backup_key'));
+  if (!saltHex || !keyHex) return null;
+  return { key: Buffer.from(keyHex, 'hex'), salt: Buffer.from(saltHex, 'hex') };
+}
 
 export function portableBackupDir() {
   return path.join(config.dataDir, 'backups', 'portable');
@@ -48,7 +80,7 @@ export async function listPortableBackups() {
   const out = [];
   for (const name of names.filter((n) => NAME_RE.test(n))) {
     const stat = await fs.promises.stat(path.join(portableBackupDir(), name)).catch(() => null);
-    if (stat?.isFile()) out.push({ name, size: stat.size, mtime: stat.mtime.toISOString() });
+    if (stat?.isFile()) out.push({ name, size: stat.size, mtime: stat.mtime.toISOString(), encrypted: name.endsWith('.enc') });
   }
   return out.sort((a, b) => b.name.localeCompare(a.name));
 }
@@ -72,8 +104,9 @@ export async function createPortableBackupNow({ reason = 'manual', appVersion = 
   running = true;
   try {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const name = `inpx-portable-${stamp}.jsonl.gz`;
-    const counts = await writePortableBackupFile(path.join(portableBackupDir(), name), { appVersion });
+    const encryption = getBackupEncryption();
+    const name = `inpx-portable-${stamp}.jsonl.gz${encryption ? '.enc' : ''}`;
+    const counts = await writePortableBackupFile(path.join(portableBackupDir(), name), { appVersion, encryption });
     setMeta(LAST_META, new Date().toISOString());
     await rotate(getPortableBackupSchedule().keep);
     logSystemEvent('info', 'backup', 'portable backup written', { reason, name, counts });

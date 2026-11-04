@@ -20,6 +20,7 @@ import {
   db, runWithForeignKeysOff, reattachDetachedUserData, touchUserReaderRevision, encryptValue, decryptValue
 } from '../db.js';
 import { config } from '../config.js';
+import { createEncryptTransform, openBackupSource } from './portable-backup-crypto.js';
 
 export const PORTABLE_BACKUP_FORMAT = 'inpx-portable-backup';
 export const PORTABLE_BACKUP_VERSION = 1;
@@ -71,6 +72,8 @@ export const PORTABLE_SKIPPED_TABLES = new Set([
  * They travel as plain text (`enc: 1`) and are re-encrypted with the target server's key on import —
  * otherwise a restore onto a fresh install would carry values nobody can decrypt.
  */
+/** Tied to this install (key encrypted with its session secret): never exported, never imported. */
+const LOCAL_ONLY_SETTINGS = new Set(['backup_key', 'backup_key_salt']);
 const ENCRYPTED_SETTINGS = new Set(['smtp_pass', 'telegram_bot_token', 'oidc_client_secret', 'recaptcha_secret_key']);
 
 const UI_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
@@ -129,9 +132,13 @@ function fingerprintOf(row) {
 /**
  * Writes the backup to `out` (any Writable). Returns { records, bytesIn } counts per type.
  */
-export async function writePortableBackup(out, { appVersion = '' } = {}) {
+export async function writePortableBackup(out, { appVersion = '', encryption = null } = {}) {
   const gz = zlib.createGzip({ level: 6 });
-  const done = pipeline(gz, out);
+  // Without a backup password the file is plain and carries NO secrets (bot token, SMTP / OIDC passwords)
+  const includeSecrets = Boolean(encryption);
+  const done = encryption
+    ? pipeline(gz, createEncryptTransform(encryption.key, encryption.salt), out)
+    : pipeline(gz, out);
   const counts = {};
   let chunk = [];
   let chunkBytes = 0;
@@ -157,7 +164,8 @@ export async function writePortableBackup(out, { appVersion = '' } = {}) {
   };
 
   chunk.push(`${JSON.stringify({
-    format: PORTABLE_BACKUP_FORMAT, version: PORTABLE_BACKUP_VERSION, appVersion, createdAt: new Date().toISOString()
+    format: PORTABLE_BACKUP_FORMAT, version: PORTABLE_BACKUP_VERSION, appVersion, createdAt: new Date().toISOString(),
+    encrypted: includeSecrets, secrets: includeSecrets
   })}\n`);
 
   try {
@@ -189,7 +197,9 @@ export async function writePortableBackup(out, { appVersion = '' } = {}) {
     for (const spec of SIMPLE_TABLES) {
       for await (const row of pageRows(spec.table)) {
         const r = pick(row);
-        if (spec.table === 'settings' && ENCRYPTED_SETTINGS.has(r.key) && r.value) {
+        if (spec.table === 'settings' && LOCAL_ONLY_SETTINGS.has(r.key)) continue;
+        if (spec.table === 'settings' && ENCRYPTED_SETTINGS.has(r.key)) {
+          if (!includeSecrets || !r.value) continue;
           const plain = decryptValue(r.value);
           if (!plain) continue; // cannot be decrypted with this install's key: nothing to carry over
           await emit(spec.type, { key: r.key, value: plain, enc: 1 });
@@ -278,14 +288,14 @@ function rewriteHomeLayout(raw, maps) {
 
 /**
  * Imports a portable backup file.
- * @param {string} filePath  gzipped JSONL
- * @param {{ dryRun?: boolean, replaceUsers?: boolean, includeSources?: boolean, includeSettings?: boolean }} opts
+ * @param {string} filePath  gzipped JSONL, optionally encrypted (see portable-backup-crypto.js)
+ * @param {{ dryRun?: boolean, replaceUsers?: boolean, includeSources?: boolean, includeSettings?: boolean, password?: string }} opts
  * @returns summary with per-type counts
  */
 export async function importPortableBackup(filePath, {
-  dryRun = false, replaceUsers = false, includeSources = true, includeSettings = true
+  dryRun = false, replaceUsers = false, includeSources = true, includeSettings = true, password = ''
 } = {}) {
-  const input = fs.createReadStream(filePath);
+  const input = await openBackupSource(filePath, password); // throws BackupPasswordError (code BACKUP_PASSWORD)
   const gunzip = zlib.createGunzip();
   input.on('error', (e) => gunzip.destroy(e));
   const rl = readline.createInterface({ input: input.pipe(gunzip), crlfDelay: Infinity });
@@ -424,7 +434,7 @@ export async function importPortableBackup(filePath, {
         break;
       }
       case 'setting': {
-        if (!includeSettings || !r?.key) { summary.skipped += 1; break; }
+        if (!includeSettings || !r?.key || LOCAL_ONLY_SETTINGS.has(r.key)) { summary.skipped += 1; break; }
         summary.settings += 1;
         const value = r.enc && ENCRYPTED_SETTINGS.has(r.key) ? encryptValue(String(r.value ?? '')) : String(r.value ?? '');
         if (!dryRun) db.prepare('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(r.key, value);
