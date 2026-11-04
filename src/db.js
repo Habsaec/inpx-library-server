@@ -10,6 +10,7 @@ import { config, parseTelegramApiBase } from './config.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { hashPassword } from './auth.js';
 import { runMigrations } from './services/migrations.js';
+import { backupDatabaseOffThread } from './services/db-backup.js';
 import { resolveIndexImportMode } from './index-import-mode.js';
 import { IDLE_MS, sessionStatusFromActivityAt } from '../public/position-sync.js';
 
@@ -6094,8 +6095,8 @@ export async function createDatabaseBackup(reason = 'manual') {
   const backupName = `library-${timestamp}-${reason}.db`;
   const destPath = path.join(backupDir, backupName);
 
-  // db.backup() — атомарная резервная копия через SQLite backup API
-  await db.backup(destPath);
+  // Копия снимается в отдельном потоке: db.backup() на основном соединении блокировал event loop на десятки секунд
+  await backupDatabaseOffThread(destPath, db);
 
   // Ротация: оставить последние 5 бэкапов
   try {

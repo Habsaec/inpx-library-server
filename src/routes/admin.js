@@ -81,6 +81,7 @@ import {
 import { exportUsersBackup, importUsersBackup } from '../services/user-backup.js';
 import { writePortableBackup, importPortableBackup } from '../services/portable-backup.js';
 import { pipeline } from 'node:stream/promises';
+import { backupDatabaseOffThread } from '../services/db-backup.js';
 import {
   restoreSources, restoreUploadDir, freeBytes, getRestoreValidation, startRestoreValidation,
   scheduleRestore, takeRestoreResult, deleteRestoreSource
@@ -1618,7 +1619,7 @@ export function registerAdminRoutes(app, deps) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const fileName = `library-backup-${timestamp}.db`;
       const backupPath = path.join(config.dataDir, fileName);
-      await db.backup(backupPath);
+      await backupDatabaseOffThread(backupPath, db);
       logSystemEvent('info', 'operations', 'database backup exported', { user: req.user.username, fileName });
       const stat = fs.statSync(backupPath);
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);

@@ -130,3 +130,17 @@ test('validation: a healthy database passes, a damaged file fails', async () => 
   startRestoreValidation(`backups/${bad}`);
   assert.equal((await wait()).state, 'failed');
 });
+
+test('database copy is taken off-thread and is a valid database', async () => {
+  const { initDb, createDatabaseBackup, db } = await import('../src/db.js');
+  initDb();
+  db.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES('zz_copy_probe', 'yes')").run();
+  const file = await createDatabaseBackup('offthread-test');
+  const copy = new Database(file, { readonly: true });
+  try {
+    assert.equal(copy.pragma('quick_check', { simple: true }), 'ok');
+    assert.equal(copy.prepare("SELECT value FROM settings WHERE key = 'zz_copy_probe'").get().value, 'yes');
+  } finally {
+    copy.close();
+  }
+});
