@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { initDb, db, reattachDetachedUserData } from '../src/db.js';
+import { initDb, db, reattachDetachedUserData, encryptValue, decryptValue } from '../src/db.js';
 import { initCollections } from '../src/collections.js';
 import {
   writePortableBackupFile, importPortableBackup,
@@ -102,4 +102,18 @@ test('rejects files that are not a portable backup', async () => {
   const bad = path.join(tmp, 'bad.gz');
   fs.writeFileSync(bad, 'not gzip at all');
   await assert.rejects(() => importPortableBackup(bad), (e) => e.code === 'INVALID_BACKUP');
+});
+
+test('encrypted secrets travel in plain text and are re-encrypted on import', async () => {
+  db.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES('smtp_pass', ?)").run(encryptValue('s3cret-pass'));
+  const file = path.join(tmp, 'enc.jsonl.gz');
+  await writePortableBackupFile(file, { appVersion: 'test' });
+  const zlib = await import('node:zlib');
+  const text = zlib.gunzipSync(fs.readFileSync(file)).toString('utf8');
+  assert.ok(text.includes('"s3cret-pass"'), 'exported decrypted');
+  db.prepare("DELETE FROM settings WHERE key = 'smtp_pass'").run();
+  await importPortableBackup(file);
+  const stored = db.prepare("SELECT value FROM settings WHERE key = 'smtp_pass'").get().value;
+  assert.notEqual(stored, 's3cret-pass');
+  assert.equal(decryptValue(stored), 's3cret-pass');
 });

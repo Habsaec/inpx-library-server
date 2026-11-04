@@ -16,7 +16,9 @@ import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { once } from 'node:events';
 import { pipeline } from 'node:stream/promises';
-import { db, runWithForeignKeysOff, reattachDetachedUserData, touchUserReaderRevision } from '../db.js';
+import {
+  db, runWithForeignKeysOff, reattachDetachedUserData, touchUserReaderRevision, encryptValue, decryptValue
+} from '../db.js';
 import { config } from '../config.js';
 
 export const PORTABLE_BACKUP_FORMAT = 'inpx-portable-backup';
@@ -63,6 +65,13 @@ export const PORTABLE_SKIPPED_TABLES = new Set([
   // ephemeral tokens
   'app_pairing_tokens', 'password_reset_tokens', 'telegram_link_tokens'
 ]);
+
+/**
+ * Secrets stored encrypted with a key derived from this install's session secret (`data/.session-secret`).
+ * They travel as plain text (`enc: 1`) and are re-encrypted with the target server's key on import —
+ * otherwise a restore onto a fresh install would carry values nobody can decrypt.
+ */
+const ENCRYPTED_SETTINGS = new Set(['smtp_pass', 'telegram_bot_token', 'oidc_client_secret', 'recaptcha_secret_key']);
 
 const UI_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 const UI_FILE_MAX_BYTES = 16 * 1024 * 1024;
@@ -178,7 +187,16 @@ export async function writePortableBackup(out, { appVersion = '' } = {}) {
       }
     }
     for (const spec of SIMPLE_TABLES) {
-      for await (const row of pageRows(spec.table)) await emit(spec.type, pick(row));
+      for await (const row of pageRows(spec.table)) {
+        const r = pick(row);
+        if (spec.table === 'settings' && ENCRYPTED_SETTINGS.has(r.key) && r.value) {
+          const plain = decryptValue(r.value);
+          if (!plain) continue; // cannot be decrypted with this install's key: nothing to carry over
+          await emit(spec.type, { key: r.key, value: plain, enc: 1 });
+          continue;
+        }
+        await emit(spec.type, r);
+      }
     }
     for await (const row of pageRows('sources')) await emit('source', pick(row, ['id', 'last_indexed_at', 'book_count']));
     for (const table of BOOK_TABLES) {
@@ -408,7 +426,8 @@ export async function importPortableBackup(filePath, {
       case 'setting': {
         if (!includeSettings || !r?.key) { summary.skipped += 1; break; }
         summary.settings += 1;
-        if (!dryRun) db.prepare('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(r.key, String(r.value ?? ''));
+        const value = r.enc && ENCRYPTED_SETTINGS.has(r.key) ? encryptValue(String(r.value ?? '')) : String(r.value ?? '');
+        if (!dryRun) db.prepare('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(r.key, value);
         break;
       }
       case 'source': {
