@@ -20,9 +20,12 @@ import {
   getFavoriteSeriesLight,
   getBookmarksPage,
   getLibraryView,
+  getFollowingNewBooks,
+  markFollowingSeen,
   findDidYouMeanSuggestions,
 } from '../inpx.js';
 import { getRecommendedLibraryView } from './recommendations.js';
+import { effectiveContentLangs } from '../user-content-langs.js';
 import { resolveDownload } from '../conversion.js';
 import { getDetailsFull, resolveBestCoverDetails } from '../routes/library.js';
 import {
@@ -681,7 +684,7 @@ async function handleTelegramLink(chatId, telegramUserId, token) {
       chatId,
       `✅ <b>Аккаунт привязан</b>\n\n` +
         `Вы вошли как <b>${esc(result.username)}</b>.\n` +
-        `Доступны: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/recommended</code>\n\n` +
+        `Доступны: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/following</code> · <code>/recommended</code>\n\n` +
         `Справка: <code>/help</code> · Статус: <code>/me</code>`,
     );
     logSystemEvent('info', 'telegram-bot', 'telegram account linked', {
@@ -723,6 +726,7 @@ async function handleTelegramMe(chatId, telegramUserId) {
       '<code>/shelves</code> — полки\n' +
       '<code>/favorites</code> — избранное (книги, авторы, серии)\n' +
       '<code>/want</code> — хочу прочитать\n' +
+      '<code>/following</code> — новое у любимых авторов и серий\n' +
       '<code>/recommended</code> — рекомендации\n\n' +
       'Отвязать: <code>/unlink</code>',
   );
@@ -805,6 +809,7 @@ export function parsePersonalCommand(text) {
   if (['/fav_authors', '/favauthors', '/избранные_авторы'].includes(cmd)) return { kind: 'favorites-section', section: 'authors' };
   if (['/fav_series', '/favseries', '/избранные_серии'].includes(cmd)) return { kind: 'favorites-section', section: 'series' };
   if (['/want', '/wishlist', '/хочу', '/планирую', '/хочу_прочитать'].includes(cmd)) return { kind: 'want' };
+  if (['/following', '/new', '/новое', '/новинки_любимых'].includes(cmd)) return { kind: 'following' };
   if (['/recommended', '/recommendations', '/рекомендации', '/recs'].includes(cmd)) return { kind: 'recommended' };
   return null;
 }
@@ -1158,6 +1163,26 @@ async function doFavoritesSection(chatId, username, section, page = 1, { fresh =
   );
 }
 
+/** «Новое у любимых»: unread new books of favorite authors and series (the same list as /library/following). */
+async function doFollowingList(chatId, username, page = 1, { fresh = false } = {}) {
+  const result = getFollowingNewBooks(username, {
+    page, pageSize: PAGE_SIZE, langs: effectiveContentLangs(username),
+  });
+  if (!result.total) {
+    await sendText(
+      chatId,
+      '⭐ Новых книг у любимых авторов и серий пока нет. Добавьте авторов и серии в избранное на сайте.',
+    );
+    return;
+  }
+  const books = result.items.map((row) => getBookById(row.id)).filter(Boolean);
+  if (fresh) resetNavForNewSearch(chatId);
+  setSearchState(chatId, { kind: 'following-list', username, page, total: result.total });
+  await sendBookResults(chatId, books, page, result.total, `⭐ <b>Новое у любимых</b> — ${result.total} кн.`);
+  // like the site: opening the first page marks the list as seen (sidebar badge)
+  if (page === 1) markFollowingSeen(username);
+}
+
 /** «Хочу прочитать» — the same list as /library/want on the site (opened or read books drop out of it). */
 async function doWantList(chatId, username, page = 1, { fresh = false } = {}) {
   const view = getLibraryView('want', { username, page, pageSize: PAGE_SIZE, sort: 'recent' });
@@ -1218,6 +1243,7 @@ async function dispatchPersonalCommand(chatId, username, cmd) {
   else if (cmd.kind === 'favorites') await doFavoritesList(chatId, username, 1, { fresh: true });
   else if (cmd.kind === 'favorites-section') await doFavoritesSection(chatId, username, cmd.section, 1, { fresh: true });
   else if (cmd.kind === 'want') await doWantList(chatId, username, 1, { fresh: true });
+  else if (cmd.kind === 'following') await doFollowingList(chatId, username, 1, { fresh: true });
   else if (cmd.kind === 'recommended') await doRecommendedBooks(chatId, username, 1, { fresh: true });
 }
 
@@ -1508,6 +1534,7 @@ async function restoreSearchState(chatId, state) {
   else if (state.kind === 'favorites-authors') await doFavoritesSection(chatId, state.username, 'authors', state.page);
   else if (state.kind === 'favorites-series') await doFavoritesSection(chatId, state.username, 'series', state.page);
   else if (state.kind === 'want-list') await doWantList(chatId, state.username, state.page);
+  else if (state.kind === 'following-list') await doFollowingList(chatId, state.username, state.page);
   else if (state.kind === 'recommended-books') await doRecommendedBooks(chatId, state.username, state.page);
 }
 
@@ -1530,6 +1557,7 @@ async function continueListedSearch(chatId, page) {
   else if (state.kind === 'favorites-authors') await doFavoritesSection(chatId, state.username, 'authors', page);
   else if (state.kind === 'favorites-series') await doFavoritesSection(chatId, state.username, 'series', page);
   else if (state.kind === 'want-list') await doWantList(chatId, state.username, page);
+  else if (state.kind === 'following-list') await doFollowingList(chatId, state.username, page);
   else if (state.kind === 'recommended-books') await doRecommendedBooks(chatId, state.username, page);
 }
 
@@ -1723,7 +1751,7 @@ async function handleUpdate(upd) {
           resolveWelcomeMessage() +
             `\n\n👤 Вы вошли как <b>${esc(linked.username)}</b>.\n` +
             'Поиск: <code>/search</code> · <code>/author</code> · <code>/series</code>\n' +
-            'Личное: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/recommended</code>',
+            'Личное: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/following</code> · <code>/recommended</code>',
         );
         return;
       }
