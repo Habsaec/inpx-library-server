@@ -2034,6 +2034,11 @@ form.is-dirty button[type="submit"]::after {
   background: var(--button-bg-hover);
 }
 
+.topbar-user-chip.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .topbar-user-initial {
   display: inline-flex;
   align-items: center;

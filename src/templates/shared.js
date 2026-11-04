@@ -1650,14 +1650,13 @@ function renderBottomNav({ user = null, currentPath = '', isAdmin = false } = {}
   const homeActive = path === '/' || path === '';
   const catalogActive = path.startsWith('/catalog');
   const myActive = MY_LIBRARY_PATHS.some((p) => path === p || path.startsWith(`${p}/`) || path.startsWith(`${p}?`));
-  const profileActive = path.startsWith('/profile');
   const loginActive = path.startsWith('/login');
   return `
     <nav class="bottom-nav" aria-label="${escapeHtml(t('aria.sidebar'))}" data-bottom-nav>
       ${item('/', t('nav.bottomHome'), homeActive)}
       ${item('/catalog', t('nav.bottomCatalog'), catalogActive)}
       ${isAuthed
-      ? `${item('/library/my', t('nav.bottomMyLibrary'), myActive)}${item('/profile', t('nav.bottomProfile'), profileActive)}`
+      ? item('/library/my', t('nav.bottomMyLibrary'), myActive) // the profile is the user chip in the top bar
       : item('/login', t('nav.bottomLogin'), loginActive)}
     </nav>`;
 }
@@ -1857,7 +1856,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
         ${!isAdmin ? `<div class="topbar-main">${renderTopbarSearch(query, field)}</div>` : ''}
         <div class="topbar-right">
           ${!isAdmin ? `<button type="button" class="topbar-search-toggle" data-topbar-search-toggle aria-label="${escapeHtml(t('topbar.searchToggle'))}" aria-expanded="false" aria-controls="global-search-input" title="${escapeHtml(t('topbar.searchToggle'))}">⌕</button>` : ''}
-          ${isAuthenticated && userLabel ? `<a class="topbar-user-chip" href="/profile" title="${escapeHtml(userLabel)}" aria-label="${escapeHtml(userLabel)}"><span class="topbar-user-initial" aria-hidden="true">${escapeHtml(Array.from(String(userLabel))[0]?.toUpperCase() || '?')}</span><span class="topbar-user-name">${escapeHtml(userLabel)}</span></a>` : ''}
+          ${isAuthenticated && userLabel ? `<a class="topbar-user-chip${String(currentPath || '').startsWith('/profile') ? ' is-active' : ''}" href="/profile"${String(currentPath || '').startsWith('/profile') ? ' aria-current="page"' : ''} title="${escapeHtml(userLabel)}" aria-label="${escapeHtml(userLabel)}"><span class="topbar-user-initial" aria-hidden="true">${escapeHtml(Array.from(String(userLabel))[0]?.toUpperCase() || '?')}</span><span class="topbar-user-name">${escapeHtml(userLabel)}</span></a>` : ''}
           ${renderChromeAccountTools({
         isAdmin,
         canAccessAdmin,
