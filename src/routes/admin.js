@@ -1614,24 +1614,43 @@ export function registerAdminRoutes(app, deps) {
 
   // --- Operations API ---
 
-  app.get('/api/operations/backup', requireAdminApi, async (req, res, next) => {
+  /* One-off copies made for the browser download live in data/ only while they are being sent. A client that
+     leaves early (proxy timeout, closed tab) used to leave a full 2 GB copy behind, so: remove on every close,
+     and sweep leftovers older than 30 minutes before making a new one. */
+  const sweepStaleDownloadCopies = async () => {
     try {
+      for (const name of await fs.promises.readdir(config.dataDir)) {
+        if (!/^library-backup-[0-9TZ-]+\.db(-wal|-shm)?$/.test(name)) continue;
+        const full = path.join(config.dataDir, name);
+        const stat = await fs.promises.stat(full).catch(() => null);
+        if (stat && Date.now() - stat.mtimeMs > 30 * 60_000) await fs.promises.unlink(full).catch(() => {});
+      }
+    } catch { /* best effort */ }
+  };
+
+  app.get('/api/operations/backup', requireAdminApi, async (req, res, next) => {
+    let backupPath = '';
+    const cleanup = () => { if (backupPath) fs.unlink(backupPath, () => {}); };
+    let clientGone = false;
+    res.on('close', () => { clientGone = true; if (!res.writableFinished) cleanup(); });
+    try {
+      await sweepStaleDownloadCopies();
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const fileName = `library-backup-${timestamp}.db`;
-      const backupPath = path.join(config.dataDir, fileName);
+      backupPath = path.join(config.dataDir, fileName);
       await backupDatabaseOffThread(backupPath, db);
+      if (clientGone) { cleanup(); return; } // nobody is waiting any more
       logSystemEvent('info', 'operations', 'database backup exported', { user: req.user.username, fileName });
       const stat = fs.statSync(backupPath);
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
       res.setHeader('Content-Length', stat.size);
       res.type('application/octet-stream');
       const stream = fs.createReadStream(backupPath);
-      const cleanup = () => fs.unlink(backupPath, () => {});
-      stream.on('end', cleanup);
-      stream.on('error', (err) => { stream.destroy(); cleanup(); });
-      res.on('close', () => { if (!res.writableFinished) stream.destroy(); });
+      stream.on('error', () => { stream.destroy(); cleanup(); });
+      res.on('close', () => { stream.destroy(); cleanup(); });
       stream.pipe(res);
     } catch (error) {
+      cleanup();
       next(error);
     }
   });
