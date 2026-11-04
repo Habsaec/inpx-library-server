@@ -431,8 +431,11 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
           </td>
         </tr>`).join('');
   const content = `
-    <div class="admin-card">
-      <div class="admin-card-title">${escapeHtml(t('admin.portable.title'))}</div>
+    <details class="admin-card admin-card-collapsible" data-admin-collapse="portable-backup">
+      <summary>
+        <div class="admin-card-title">${escapeHtml(t('admin.portable.title'))}</div>
+      </summary>
+      <div class="admin-card-collapsible-body">
       <div class="admin-card-subtitle">${escapeHtml(t('admin.portable.subtitle'))}</div>
       <div class="admin-field-group" style="margin-top:12px;" data-portable-password>
         <span class="admin-field-hint">${escapeHtml(t(portable.hasPassword ? 'admin.portable.pwSet' : 'admin.portable.pwNone'))}</span>
@@ -473,7 +476,8 @@ export function renderAdminUpdate({ user, stats = {}, indexStatus = {}, operatio
         </div>
         ${portableRows ? `<table class="admin-table" style="margin-top:10px;width:100%;"><tbody>${portableRows}</tbody></table>` : `<p class="muted" style="margin-top:10px;">${escapeHtml(t('admin.portable.none'))}</p>`}
       </div>
-    </div>
+      </div>
+    </details>
     <details class="admin-card" style="margin-top:20px;">
       <summary class="admin-card-title" style="cursor:pointer;">${escapeHtml(t('admin.update.legacyTitle'))}</summary>
       <div class="admin-card-subtitle">${escapeHtml(t('admin.update.legacyHint'))}</div>
