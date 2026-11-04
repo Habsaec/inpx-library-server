@@ -38,7 +38,6 @@ import {
   getSuppressedBookIds,
   invalidateReadCache,
   getReadBooksCount,
-  createDatabaseBackup,
   onViewRebuild,
   deleteReadingHistoryEntry,
   touchUserReaderRevision,
@@ -2536,15 +2535,6 @@ async function indexSingleSource(sourceId, force = false) {
 
 async function indexAllSources(force = false, incremental = true) {
   await checkIndexControlPoint();
-
-  // Backup database before force reindex (destructive operation)
-  if (force) {
-    try {
-      await createDatabaseBackup('force-reindex');
-    } catch (err) {
-      console.warn('[inpx] Pre-reindex backup failed (proceeding anyway):', err.message);
-    }
-  }
 
   const sources = getEnabledSources();
 

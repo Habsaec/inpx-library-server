@@ -54,7 +54,7 @@ import {
   db, getDistinctLanguages, getDistinctGenres, rebuildActiveBooksView, refreshCatalogBookCounts,
   getSuppressedBooks, unsuppressBook, unsuppressAll, getScheduleLog, adjustCatalogCountsForBook, isBookInActiveView,
   setMeta, getMeta, rebuildBooksFtsFromContent, invalidateBooksFtsHealthCache,
-  getDbMemoryInfo, saveDbMemorySettings, createDatabaseBackup
+  getDbMemoryInfo, saveDbMemorySettings
 } from '../db.js';
 import {
   getBookById, getIndexStatus, getConfiguredInpxFile, setConfiguredInpxFile, findInpxFiles,
@@ -81,11 +81,6 @@ import {
 import { exportUsersBackup, importUsersBackup } from '../services/user-backup.js';
 import { writePortableBackup, importPortableBackup } from '../services/portable-backup.js';
 import { pipeline } from 'node:stream/promises';
-import { backupDatabaseOffThread } from '../services/db-backup.js';
-import {
-  restoreSources, restoreUploadDir, freeBytes, getRestoreValidation, startRestoreValidation,
-  scheduleRestore, takeRestoreResult, deleteRestoreSource
-} from '../services/db-restore.js';
 import {
   listPortableBackups, createPortableBackupNow, deletePortableBackup, resolvePortableBackupPath,
   getPortableBackupSchedule, savePortableBackupSchedule,
@@ -765,8 +760,7 @@ export function registerAdminRoutes(app, deps) {
     res.send(renderAdminUpdate({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
       operations: getOperationsSnapshot(), csrfToken: req.csrfToken || '',
-      portable: { backups: await listPortableBackups(), schedule: getPortableBackupSchedule(), hasPassword: hasBackupPassword() },
-      dbRestore: { sources: restoreSources(), result: takeRestoreResult() }
+      portable: { backups: await listPortableBackups(), schedule: getPortableBackupSchedule(), hasPassword: hasBackupPassword() }
     }));
   });
 
@@ -1614,47 +1608,6 @@ export function registerAdminRoutes(app, deps) {
 
   // --- Operations API ---
 
-  /* One-off copies made for the browser download live in data/ only while they are being sent. A client that
-     leaves early (proxy timeout, closed tab) used to leave a full 2 GB copy behind, so: remove on every close,
-     and sweep leftovers older than 30 minutes before making a new one. */
-  const sweepStaleDownloadCopies = async () => {
-    try {
-      for (const name of await fs.promises.readdir(config.dataDir)) {
-        if (!/^library-backup-[0-9TZ-]+\.db(-wal|-shm)?$/.test(name)) continue;
-        const full = path.join(config.dataDir, name);
-        const stat = await fs.promises.stat(full).catch(() => null);
-        if (stat && Date.now() - stat.mtimeMs > 30 * 60_000) await fs.promises.unlink(full).catch(() => {});
-      }
-    } catch { /* best effort */ }
-  };
-
-  app.get('/api/operations/backup', requireAdminApi, async (req, res, next) => {
-    let backupPath = '';
-    const cleanup = () => { if (backupPath) fs.unlink(backupPath, () => {}); };
-    let clientGone = false;
-    res.on('close', () => { clientGone = true; if (!res.writableFinished) cleanup(); });
-    try {
-      await sweepStaleDownloadCopies();
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const fileName = `library-backup-${timestamp}.db`;
-      backupPath = path.join(config.dataDir, fileName);
-      await backupDatabaseOffThread(backupPath, db);
-      if (clientGone) { cleanup(); return; } // nobody is waiting any more
-      logSystemEvent('info', 'operations', 'database backup exported', { user: req.user.username, fileName });
-      const stat = fs.statSync(backupPath);
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-      res.setHeader('Content-Length', stat.size);
-      res.type('application/octet-stream');
-      const stream = fs.createReadStream(backupPath);
-      stream.on('error', () => { stream.destroy(); cleanup(); });
-      res.on('close', () => { stream.destroy(); cleanup(); });
-      stream.pipe(res);
-    } catch (error) {
-      cleanup();
-      next(error);
-    }
-  });
-
   /* Portable backup: users, settings, sources, shelves, per-book user data (no catalog). See services/portable-backup.js */
   app.get('/api/operations/portable-backup', requireAdminApi, async (req, res, next) => {
     try {
@@ -1716,82 +1669,6 @@ export function registerAdminRoutes(app, deps) {
   app.post('/api/operations/portable-backup-schedule', requireAdminApi, (req, res) => {
     savePortableBackupSchedule({ enabled: Boolean(req.body?.enabled), keep: req.body?.keep });
     res.json({ ok: true, schedule: getPortableBackupSchedule() });
-  });
-
-  /* ── Full database restore: pick / upload → validate (worker) → marker → restart; the swap happens at boot ── */
-  app.get('/api/operations/db-restore', requireAdminApi, (req, res) => {
-    res.json({ ok: true, sources: restoreSources(), validation: getRestoreValidation(), freeBytes: freeBytes(config.dataDir) });
-  });
-
-  app.post('/api/operations/db-backup-local', requireAdminApi, async (req, res) => {
-    try {
-      const file = await createDatabaseBackup('manual');
-      logSystemEvent('info', 'operations', 'database copy saved on the server', { user: req.user.username, file: path.basename(file) });
-      res.json({ ok: true, name: path.basename(file) });
-    } catch (error) {
-      return apiFail(res, 500, ApiErrorCode.INTERNAL, error.message);
-    }
-  });
-
-  app.post('/api/operations/db-restore/upload', requireAdminApi, async (req, res) => {
-    const dir = restoreUploadDir();
-    const name = `upload-${Date.now()}.db`;
-    const target = path.join(dir, name);
-    try {
-      const declared = Number(req.get('content-length')) || 0;
-      if (declared && freeBytes(config.dataDir) < declared * 1.1) {
-        return apiFail(res, 507, ApiErrorCode.VALIDATION, t('admin.dbRestore.noSpace'));
-      }
-      fs.mkdirSync(dir, { recursive: true });
-      await pipeline(req, fs.createWriteStream(target));
-      res.json({ ok: true, id: `restore/${name}` });
-    } catch (error) {
-      fs.promises.unlink(target).catch(() => {});
-      return apiFail(res, 500, ApiErrorCode.INTERNAL, error.message);
-    }
-  });
-
-  app.post('/api/operations/db-restore/validate', requireAdminApi, (req, res) => {
-    try {
-      res.json({ ok: true, validation: startRestoreValidation(String(req.body?.id || '')) });
-    } catch (error) {
-      const busy = error?.code === 'RESTORE_BUSY';
-      return apiFail(res, busy ? 409 : 404, busy ? ApiErrorCode.CONFLICT : ApiErrorCode.NOT_FOUND, t(busy ? 'admin.portable.busy' : 'admin.dbRestore.missing'));
-    }
-  });
-
-  app.post('/api/operations/db-restore/apply', requireAdminApi, (req, res) => {
-    try {
-      const scheduled = scheduleRestore(String(req.body?.id || ''));
-      logSystemEvent('warn', 'operations', 'database restore scheduled (restarting)', { user: req.user.username, ...scheduled });
-      res.json({ ok: true, message: t('admin.operations.restarting') });
-      setTimeout(() => {
-        if (!process.env.INVOCATION_ID) {
-          const child = spawn(process.execPath, [path.join(config.rootDir, 'scripts', 'server-control.js'), 'restart'], {
-            cwd: config.rootDir, detached: true, stdio: 'ignore'
-          });
-          child.unref();
-          gracefulExit();
-        } else {
-          gracefulExit(1);
-        }
-      }, 500);
-    } catch (error) {
-      const map = {
-        RESTORE_SOURCE_MISSING: [404, 'admin.dbRestore.missing'],
-        RESTORE_NOT_VALIDATED: [409, 'admin.dbRestore.notValidated'],
-        RESTORE_NO_SPACE: [507, 'admin.dbRestore.noSpace']
-      };
-      const [status, key] = map[error?.code] || [500, ''];
-      return apiFail(res, status, status === 404 ? ApiErrorCode.NOT_FOUND : ApiErrorCode.VALIDATION, key ? t(key) : error.message);
-    }
-  });
-
-  app.post('/api/operations/db-restore/delete', requireAdminApi, (req, res) => {
-    if (!deleteRestoreSource(String(req.body?.id || ''))) {
-      return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.dbRestore.missing'));
-    }
-    res.json({ ok: true });
   });
 
   let portableRestoreRunning = false;

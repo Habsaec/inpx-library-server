@@ -30,17 +30,6 @@ if (!process.env.UV_THREADPOOL_SIZE) {
   process.env.UV_THREADPOOL_SIZE = String(tuned);
 }
 
-/* ── Full database restore: swap library.db BEFORE anything opens it (primary / single process only) ── */
-if (!cluster.isWorker) {
-  const { config: bootConfig } = await import('./config.js');
-  const { applyPendingDbRestore } = await import('./db-restore-boot.js');
-  try {
-    applyPendingDbRestore(bootConfig.dataDir);
-  } catch (error) {
-    console.error('[restore] boot step crashed:', error.message);
-  }
-}
-
 /* ── Cluster-режим: CLUSTER_WORKERS=N форкает N воркеров ── */
 const requestedWorkers = Number(process.env.CLUSTER_WORKERS) || 0;
 const cpuCount = Array.isArray(os.cpus()) ? os.cpus().length : 4;

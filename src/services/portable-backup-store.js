@@ -1,7 +1,6 @@
 /**
- * Portable backups kept on disk: `data/backups/portable/inpx-portable-<stamp>.jsonl.gz`, a daily schedule and
- * their own rotation. The names never match `library-*.db`, so the keep-5 rotation of the database safety
- * copies (`createDatabaseBackup`) and this one cannot delete each other's files.
+ * Portable backups kept on disk: `data/backups/portable/inpx-portable-<stamp>.jsonl.gz(.enc)`, a daily schedule
+ * and their own rotation.
  */
 import cluster from 'node:cluster';
 import fs from 'node:fs';

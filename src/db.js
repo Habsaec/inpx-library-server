@@ -10,7 +10,6 @@ import { config, parseTelegramApiBase } from './config.js';
 import { appendIndexDiaryLine } from './services/file-log.js';
 import { hashPassword } from './auth.js';
 import { runMigrations } from './services/migrations.js';
-import { backupDatabaseOffThread } from './services/db-backup.js';
 import { resolveIndexImportMode } from './index-import-mode.js';
 import { IDLE_MS, sessionStatusFromActivityAt } from '../public/position-sync.js';
 
@@ -6078,40 +6077,4 @@ export function getBookRating(username, bookId) {
 export function getBookAverageRating(bookId) {
   const row = db.prepare('SELECT AVG(rating) AS avg, COUNT(*) AS cnt FROM book_ratings WHERE book_id = ?').get(bookId);
   return { average: row?.avg ? Math.round(row.avg * 10) / 10 : 0, count: row?.cnt || 0 };
-}
-
-/**
- * Атомарная резервная копия БД перед опасными операциями.
- * Использует SQLite backup API (better-sqlite3 db.backup()).
- * Ротация: хранит последние 5 бэкапов.
- * @param {string} reason - Краткая метка бэкапа (например 'delete-source', 'force-reindex')
- * @returns {Promise<string>} Путь к созданному файлу бэкапа
- */
-export async function createDatabaseBackup(reason = 'manual') {
-  const backupDir = path.join(config.dataDir, 'backups');
-  await fs.promises.mkdir(backupDir, { recursive: true });
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const backupName = `library-${timestamp}-${reason}.db`;
-  const destPath = path.join(backupDir, backupName);
-
-  // Копия снимается в отдельном потоке: db.backup() на основном соединении блокировал event loop на десятки секунд
-  await backupDatabaseOffThread(destPath, db);
-
-  // Ротация: оставить последние 5 бэкапов
-  try {
-    const files = await fs.promises.readdir(backupDir);
-    const backups = files.filter(f => f.startsWith('library-') && f.endsWith('.db')).sort().reverse();
-    for (const old of backups.slice(5)) {
-      await fs.promises.unlink(path.join(backupDir, old)).catch(() => {});
-      // Удалить -wal/-shm спутники от старых бэкапов (обратная совместимость)
-      await fs.promises.unlink(path.join(backupDir, old + '-wal')).catch(() => {});
-      await fs.promises.unlink(path.join(backupDir, old + '-shm')).catch(() => {});
-    }
-  } catch (err) {
-    console.warn('[db] Backup rotation failed:', err.message);
-  }
-
-  console.log(`[db] Backup created: ${destPath}`);
-  return destPath;
 }
