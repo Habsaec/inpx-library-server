@@ -855,12 +855,14 @@ export function mergeSeriesCatalogByKey() {
     const step = async () => {
       try {
         if (indexState.active) { setTimeout(step, 5000); return; }
-        const end = Math.min(index + 200, todo.length);
-        for (; index < end; index += 1) {
+        /* Бюджет по времени, а не по числу групп: группа с тысячами связей — секунды блокировки. */
+        const sliceEnd = Date.now() + 40;
+        while (index < todo.length && Date.now() < sliceEnd) {
           mergeGroup(todo[index]);
           merged += todo[index][1].length - 1;
+          index += 1;
         }
-        if (index < todo.length) { setImmediate(step); return; }
+        if (index < todo.length) { setTimeout(step, 15); return; }
         setMeta(SERIES_KEY_MERGE_META, 'done');
         clearRuntimeQueryCaches();
         if (merged) await refreshCatalogBookCounts();
@@ -947,8 +949,12 @@ export async function mergeSeriesQualifierDuplicates() {
       setSearch.run([...names].join(' | '), base.id);
     });
     let merged = 0;
+    let sliceEnd = Date.now() + 40;
     for (let i = 0; i < candidates.length; i += 1) {
-      if (i && i % 200 === 0) await new Promise((resolve) => setImmediate(resolve));
+      if (Date.now() >= sliceEnd) {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        sliceEnd = Date.now() + 40;
+      }
       if (indexState.active) break;
       const loser = candidates[i];
       const base = selectBase.get(loser.base);
