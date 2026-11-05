@@ -21,6 +21,7 @@ import {
   getFavoriteSeriesLight,
   getLibraryView,
   getFollowingNewBooks,
+  warmOpdsTitleQuery,
 } from '../inpx.js';
 import { getRecommendedLibraryView } from '../services/recommendations.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
@@ -462,10 +463,11 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.series'), selfPath: req.originalUrl, entries }));
   });
 
-  app.get('/opds/title', requireOpdsAuth, (req, res) => {
+  app.get('/opds/title', requireOpdsAuth, async (req, res) => {
     const titleQ = String(req.query.title || '');
     const genre = String(req.query.genre || '');
     const base = baseUrl(req);
+    await warmOpdsTitleQuery(titleQ, genre); // the title-prefix scan runs on the query worker
 
     const entries = [];
     if (!titleQ && !genre) {

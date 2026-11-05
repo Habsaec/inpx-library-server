@@ -19,6 +19,7 @@ import {
   getBookmarks,
   getFavoriteAuthorsLight,
   getFavoriteSeriesLight,
+  warmOpdsTitleQuery,
   getLibraryView,
   getFollowingNewBooks,
 } from '../inpx.js';
@@ -313,6 +314,7 @@ export function registerOpdsV2Routes(app, deps) {
     const genre = String(req.query.genre || '');
     const base = baseUrl(req);
 
+    await warmOpdsTitleQuery(prefix, genre); // the title-prefix scan runs on the query worker
     const items = opdsQuery('title', prefix, 0, genre);
 
     // Check if any are book entries (not nav)

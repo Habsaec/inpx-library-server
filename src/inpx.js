@@ -51,7 +51,7 @@ import {
   catalogLangCountsReady,
   CATALOG_LANG_KIND,
 } from './db.js';
-import { languageFilterClause } from './user-content-langs.js';
+import { languageFilterClause, resolveContentLangFilter } from './user-content-langs.js';
 import { queryAsync } from './services/query-pool.js';
 import { appendStemmedSearchTokens, expandSearchTokenVariants } from './search-stem.js';
 import { filterSearchContentTokens, normalizeLookalikeSortKey } from './search-normalize.js';
@@ -166,6 +166,7 @@ function resetInpxPreparedStatements() {
   _stmtGetBookById = null;
   _browseTotalMemo.clear();
   _opdsQueryMemo.clear();
+  _opdsTitleRowsMemo.clear();
   _authorsTotalMemo.clear();
   _recentCutoffMemo = null;
   _stmtGenresGroupedCount = null;
@@ -251,8 +252,9 @@ function clearRuntimeQueryCaches() {
   runtimeQueryCacheGeneration += 1;
   _browseTotalMemo.clear();
   _opdsQueryMemo.clear();
+  _opdsTitleRowsMemo.clear();
   _followingListMemo.clear();
-  _followingWindowMemo = null;
+  if (_followingWindowMemo) _followingWindowMemo.at = 0; // stale: served once more, rebuilt on the query worker
   facetBooksCache.clear();
   facetDedupTotalCache.clear();
   facetSummaryCache.clear();
@@ -5652,6 +5654,24 @@ const _browseTotalInflight = new Map();
  * series flag, year, rating, language, genre …) used to freeze the whole server for 0.5–1.2 s (4 s with the
  * genre options). Call it before `searchCatalog` in async handlers; it never throws.
  */
+/**
+ * Pre-computes the catalog total of every distinct profile-language filter on the query worker (boot, after an index
+ * pass): the first catalog page of such a user then needs no 0.9 s count.
+ */
+export async function prewarmBrowseTotals() {
+  try {
+    const seen = new Set();
+    for (const row of db.prepare("SELECT username FROM users WHERE content_langs IS NOT NULL AND TRIM(content_langs) != '' LIMIT 50").all()) {
+      const filter = resolveContentLangFilter(row.username, '');
+      const key = JSON.stringify(filter);
+      if (seen.has(key) || (!filter.lang && !(filter.langs && filter.langs.length))) continue;
+      seen.add(key);
+      await warmBrowseTotal({ lang: filter.lang, langs: filter.langs });
+    }
+    await warmFollowingWindow();
+  } catch { /* best effort */ }
+}
+
 export async function warmBrowseTotal({
   query = '', genre = '', genreMode = 'or', letter = '', lang = '', langs = null,
   format = '', year = 0, minRate = 0, hasSeries = null, hideReadUser = ''
@@ -7538,7 +7558,7 @@ export function getBooksByFacet({
   if (cached) return cached;
   const offset = (page - 1) * pageSize;
 
-  if (facet === 'languages' && /^[a-z]{2,8}$/.test(String(value || ''))) {
+  if (facet === 'languages' && String(value) !== 'unknown' && /^[a-z]{2,8}$/.test(String(value || ''))) {
     /* A language facet IS plain browse with `lang = value` (+ the page filters): the id-projection plan and the
        memoized total instead of COUNT(DISTINCT) + a full sort (6.5 s for `ru` with a profile language). */
     const result = searchCatalog({
@@ -7626,7 +7646,7 @@ export async function getBooksByFacetCoalesced({
   const cacheKey = `${facet}|${v}|${sort}|${order}|${page}|${pageSize}|${author}|f:${filterKey}`;
   const cached = readTimedCache(facetBooksCache, cacheKey);
   if (cached) return cached;
-  if (facet === 'languages' && /^[a-z]{2,8}$/.test(v)) {
+  if (facet === 'languages' && v !== 'unknown' && /^[a-z]{2,8}$/.test(v)) {
     await warmBrowseTotal({ genre: genreKey, lang: v, langs: langList, format, year, minRate, hasSeries: seriesFlag, hideReadUser });
   }
   let shared = facetBooksInflight.get(cacheKey);
@@ -8332,23 +8352,56 @@ const _followingListMemo = new Map(); // username -> { rows: [{ id, d, lang }], 
    read set — no SQL per user, which was 0.3–0.5 s with dozens of favorite authors. */
 let _followingWindowMemo = null; // { cutoff, books: [{ id, d, lang, authors: number[], series: number[] }], at }
 
-function followingWindowBooks(cutoff) {
-  const hit = _followingWindowMemo;
-  if (hit && hit.cutoff === cutoff && Date.now() - hit.at < FOLLOWING_LIST_TTL_MS) return hit.books;
-  const pred = `${ISO_DATE_PRED('ab')} AND SUBSTR(ab.date, 1, 10) >= ?`;
-  const books = db.prepare(`
-    SELECT ab.id AS id, SUBSTR(ab.date, 1, 10) AS d, ab.lang AS lang
-    FROM active_books ab WHERE ${pred}
-    ORDER BY d DESC, ab.id DESC`).all(cutoff).map((r) => ({ id: r.id, d: r.d, lang: String(r.lang || '').trim().toLowerCase(), authors: [], series: [] }));
+function buildFollowingWindow(cutoff, bookRows, authorRows, seriesRows) {
+  const books = bookRows.map((r) => ({ id: r.id, d: r.d, lang: String(r.lang || '').trim().toLowerCase(), authors: [], series: [] }));
   const byId = new Map(books.map((b) => [b.id, b]));
-  for (const row of db.prepare(`
-    SELECT ba.book_id AS bookId, ba.author_id AS refId
-    FROM active_books ab JOIN book_authors ba ON ba.book_id = ab.id WHERE ${pred}`).all(cutoff)) byId.get(row.bookId)?.authors.push(row.refId);
-  for (const row of db.prepare(`
-    SELECT bs.book_id AS bookId, bs.series_id AS refId
-    FROM active_books ab JOIN book_series bs ON bs.book_id = ab.id WHERE ${pred}`).all(cutoff)) byId.get(row.bookId)?.series.push(row.refId);
+  for (const row of authorRows) byId.get(row.bookId)?.authors.push(row.refId);
+  for (const row of seriesRows) byId.get(row.bookId)?.series.push(row.refId);
   _followingWindowMemo = { cutoff, books, at: Date.now() };
   return books;
+}
+
+function followingWindowSql() {
+  const pred = `${ISO_DATE_PRED('ab')} AND SUBSTR(ab.date, 1, 10) >= ?`;
+  return {
+    books: `SELECT ab.id AS id, SUBSTR(ab.date, 1, 10) AS d, ab.lang AS lang FROM active_books ab WHERE ${pred} ORDER BY d DESC, ab.id DESC`,
+    authors: `SELECT ba.book_id AS bookId, ba.author_id AS refId FROM active_books ab JOIN book_authors ba ON ba.book_id = ab.id WHERE ${pred}`,
+    series: `SELECT bs.book_id AS bookId, bs.series_id AS refId FROM active_books ab JOIN book_series bs ON bs.book_id = ab.id WHERE ${pred}`
+  };
+}
+
+let _followingWindowRefresh = null;
+
+/** Builds / refreshes the shared window on the query worker, so no request (sidebar badge included) scans it. */
+export async function warmFollowingWindow() {
+  try {
+    const window = followingCutoffDate();
+    if (!window) return;
+    const hit = _followingWindowMemo;
+    if (hit && hit.cutoff === window.cutoff && Date.now() - hit.at < FOLLOWING_LIST_TTL_MS) return;
+    if (!_followingWindowRefresh) {
+      const q = followingWindowSql();
+      const params = [window.cutoff];
+      _followingWindowRefresh = Promise.all([queryAsync(q.books, params), queryAsync(q.authors, params), queryAsync(q.series, params)])
+        .then(([b, a, s2]) => { buildFollowingWindow(window.cutoff, b, a, s2); })
+        .catch(() => {})
+        .finally(() => { _followingWindowRefresh = null; });
+    }
+    await _followingWindowRefresh;
+  } catch { /* the sync build below still works */ }
+}
+
+function followingWindowBooks(cutoff) {
+  const hit = _followingWindowMemo;
+  if (hit && hit.cutoff === cutoff) {
+    // a stale window is still good for a while: serve it and refresh in the background
+    if (Date.now() - hit.at >= FOLLOWING_LIST_TTL_MS) void warmFollowingWindow();
+    return hit.books;
+  }
+  const q = followingWindowSql();
+  return buildFollowingWindow(
+    cutoff, db.prepare(q.books).all(cutoff), db.prepare(q.authors).all(cutoff), db.prepare(q.series).all(cutoff)
+  );
 }
 
 function followingRows(username, langs) {
@@ -8976,32 +9029,72 @@ function sortOpdsPrefixRows(rows) {
   });
 }
 
-function opdsTitleQuery(prefix = '', depth = 0, genre = '') {
-  const prefixKey = prefix ? createSortKey(prefix) : '';
-  const effectiveDepth = depth || (prefixKey.length + 1);
+/* Grouped title prefixes: a GROUP BY over every visible book (0.9–1.5 s for the root). The rows are memoized, and
+   `warmOpdsTitleQuery` can fill them on the query worker so the OPDS request itself never runs the scan. */
+const _opdsTitleRowsMemo = new Map();
 
+function opdsTitleRowsSql(prefixKey, effectiveDepth, genre) {
   /* A range, not `LIKE ? || '%'`: the concatenated pattern cannot use idx_books_title_search (0.65 s per prefix). */
   const prefixCond = prefixKey ? `AND b.title_search >= ? AND b.title_search < ?` : '';
-  const prefixParams = prefixKey ? [prefixKey, prefixKey + '￿'] : [];
-  let sql, params;
+  const prefixParams = prefixKey ? [prefixKey, prefixKey + String.fromCharCode(0xffff)] : [];
   if (genre) {
-    sql = `SELECT SUBSTR(b.title_search, 1, ?) AS prefix_val, COUNT(*) AS cnt
+    const genreParams = genre.split(',').map((g) => g.trim());
+    return {
+      sql: `SELECT SUBSTR(b.title_search, 1, ?) AS prefix_val, COUNT(*) AS cnt
            FROM active_books b
            JOIN book_genres bg ON bg.book_id = b.id
            JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genre.split(',').map(() => '?').join(',')})
            WHERE 1=1 ${prefixCond}
-           GROUP BY prefix_val ORDER BY prefix_val`;
-    const genreParams = genre.split(',').map(g => g.trim());
-    params = [effectiveDepth, ...genreParams, ...prefixParams];
-  } else {
-    sql = `SELECT SUBSTR(b.title_search, 1, ?) AS prefix_val, COUNT(*) AS cnt
+           GROUP BY prefix_val ORDER BY prefix_val`,
+      params: [effectiveDepth, ...genreParams, ...prefixParams]
+    };
+  }
+  return {
+    sql: `SELECT SUBSTR(b.title_search, 1, ?) AS prefix_val, COUNT(*) AS cnt
            FROM active_books b
            WHERE 1=1 ${prefixCond}
-           GROUP BY prefix_val ORDER BY prefix_val`;
-    params = [effectiveDepth, ...prefixParams];
-  }
+           GROUP BY prefix_val ORDER BY prefix_val`,
+    params: [effectiveDepth, ...prefixParams]
+  };
+}
 
+function opdsTitleRows(prefixKey, effectiveDepth, genre) {
+  const key = `${effectiveDepth}|${prefixKey}|${genre}`;
+  const hit = _opdsTitleRowsMemo.get(key);
+  if (hit && Date.now() - hit.at < OPDS_QUERY_MEMO_TTL_MS) return hit.rows;
+  const { sql, params } = opdsTitleRowsSql(prefixKey, effectiveDepth, genre);
   const rows = db.prepare(sql).all(...params);
+  if (_opdsTitleRowsMemo.size >= 400) _opdsTitleRowsMemo.delete(_opdsTitleRowsMemo.keys().next().value);
+  _opdsTitleRowsMemo.set(key, { rows, at: Date.now() });
+  return rows;
+}
+
+/** Fills the title-prefix memo for `opdsQuery('title', prefix, 0, genre)` on the query worker (follows the same deepening). */
+export async function warmOpdsTitleQuery(prefix = '', genre = '') {
+  try {
+    const prefixKey = prefix ? createSortKey(prefix) : '';
+    let depth = prefixKey.length + 1;
+    for (let step = 0; step < 6; step += 1) {
+      const key = `${depth}|${prefixKey}|${genre}`;
+      let rows = _opdsTitleRowsMemo.get(key)?.rows;
+      if (!rows || Date.now() - _opdsTitleRowsMemo.get(key).at >= OPDS_QUERY_MEMO_TTL_MS) {
+        const { sql, params } = opdsTitleRowsSql(prefixKey, depth, genre);
+        rows = await queryAsync(sql, params);
+        if (_opdsTitleRowsMemo.size >= 400) _opdsTitleRowsMemo.delete(_opdsTitleRowsMemo.keys().next().value);
+        _opdsTitleRowsMemo.set(key, { rows, at: Date.now() });
+      }
+      const total = rows.reduce((sum, r) => sum + r.cnt, 0);
+      if (total <= 50 || !(prefixKey && rows.length < 10 && depth < 6)) return;
+      depth += 1;
+    }
+  } catch { /* the sync path still works */ }
+}
+
+function opdsTitleQuery(prefix = '', depth = 0, genre = '') {
+  const prefixKey = prefix ? createSortKey(prefix) : '';
+  const effectiveDepth = depth || (prefixKey.length + 1);
+
+  const rows = opdsTitleRows(prefixKey, effectiveDepth, genre);
   let totalCount = 0;
   for (const r of rows) totalCount += r.cnt;
 

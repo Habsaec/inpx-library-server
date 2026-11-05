@@ -74,6 +74,7 @@ import {
   mergeSeriesCatalogByKey,
   mergeSeriesQualifierDuplicates,
   ensureLanguageTotals,
+  prewarmBrowseTotals,
   getConfiguredInpxFile,
   getLibraryRoot,
   getIndexStatus,
@@ -1324,6 +1325,7 @@ async function bootstrap() {
   });
   onIndexComplete(({ unchanged }) => {
     if (unchanged) return;
+    setTimeout(() => { prewarmBrowseTotals().catch(() => {}); }, 30_000).unref?.();
     setTimeout(() => {
       mergeSeriesQualifierDuplicates().catch((err) => console.error('[series] qualifier merge:', err.message));
     }, 5000);
@@ -1464,6 +1466,7 @@ async function bootstrap() {
     }
 
     ensureLanguageTotals().catch((error) => console.error('[startup] language totals:', error.message));
+    setTimeout(() => { prewarmBrowseTotals().catch(() => {}); }, 8000).unref?.();
     mergeSeriesCatalogByKey().then(() => mergeSeriesQualifierDuplicates()).catch((error) => {
       console.error('[startup] series merge:', error.message);
     });
