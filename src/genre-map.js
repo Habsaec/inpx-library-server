@@ -476,16 +476,16 @@ export function formatAuthorLabel(value = '') {
 }
 
 /**
- * Placeholder letters of an author: first letter of the NAME + first letter of the SURNAME («Достоевский,Фёдор,Михайлович»
- * → «ФД»). INPX keys are `Surname,Name,Patronymic`; a plain «Name Surname» label uses its first two words as written;
- * a single word gives its first two letters.
+ * Placeholder letters of an author in the order the name is written on the card: INPX keys are
+ * `Surname,Name,Patronymic` and the label reads «Головачев Василий» → «ГВ» (a plain label uses its first two words
+ * as written; a single word gives its first two letters).
  */
 export function authorInitials(value = '') {
   const raw = String(value || '').split(':')[0].trim();
   const letter = (word) => (String(word || '').match(/\p{L}/u) || [''])[0].toLocaleUpperCase('ru-RU');
   if (raw.includes(',')) {
     const [surname, name] = raw.split(',').map((part) => part.trim());
-    const pair = `${letter(name)}${letter(surname)}`;
+    const pair = `${letter(surname)}${letter(name)}`;
     if (pair) return pair;
   }
   const words = raw.split(/\s+/).filter(Boolean);

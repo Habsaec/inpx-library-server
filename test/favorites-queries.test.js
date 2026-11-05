@@ -63,10 +63,12 @@ test('favorites lists: catalog counters, portrait-only authors, first-volume ser
   }
 });
 
-test('author placeholder letters: name first, then surname', async () => {
+test('author placeholder letters: in the written order (surname, name)', async () => {
   const { authorInitials } = await import('../src/genre-map.js');
-  assert.equal(authorInitials('достоевский,фёдор,михайлович'), 'ФД');
-  assert.equal(authorInitials('Pushkin,Alexander'), 'AP');
+  assert.equal(authorInitials('головачев,василий'), 'ГВ');
+  assert.equal(authorInitials('лукас,дженни'), 'ЛД');
+  assert.equal(authorInitials('достоевский,фёдор,михайлович'), 'ДФ');
+  assert.equal(authorInitials('Pushkin,Alexander'), 'PA');
   assert.equal(authorInitials('Лев Толстой'), 'ЛТ');
   assert.equal(authorInitials('Гомер'), 'ГО');
   assert.equal(authorInitials('  '), '?');
