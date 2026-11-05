@@ -9882,6 +9882,24 @@ function seriesVolumeKey(row) {
 const seriesInfoCache = new Map();
 const SERIES_INFO_AUTHORS_MAX = 24;
 const SERIES_INFO_GENRES_MAX = 12;
+/**
+ * Author's series → its first volume (the hero shows that book's annotation), else null. The founder = an author of
+ * the first volume; it counts when he has the most books of the series and at least 20% of them: «Дозоры» (Лукьяненко
+ * 23 of 70 next to 47 fan authors) qualifies, a publisher series («Библиотека приключений», «Мастера фантазии»)
+ * does not.
+ */
+function seriesFounderFirstBookId(rows, authors) {
+  if (rows.length < 2 || !authors.length) return null;
+  const firstId = firstSeriesVolumeId(rows);
+  if (!firstId) return null;
+  const top = authors[0].bookCount;
+  if (top * 5 < rows.length) return null;
+  const leaders = new Set(authors.filter((a) => a.bookCount === top).map((a) => a.name));
+  const firstAuthors = db.prepare(`
+    SELECT a.name AS name FROM book_authors ba JOIN authors a ON a.id = ba.author_id WHERE ba.book_id = ?`).all(firstId);
+  return firstAuthors.some((a) => leaders.has(a.name)) ? firstId : null;
+}
+
 /** Lowest volume number first, unnumbered last. */
 function firstSeriesVolumeId(rows) {
   const num = (row) => {
@@ -9964,8 +9982,7 @@ export function getSeriesInfo(seriesName, { langs = null } = {}) {
       .sort((a, b) => b.bookCount - a.bookCount || a.code.localeCompare(b.code)),
     yearFrom,
     yearTo,
-    // Author's series (one author has most books): its first volume, whose annotation the hero shows.
-    firstBookId: authors[0] && rows.length >= 2 && authors[0].bookCount * 2 > rows.length ? firstSeriesVolumeId(rows) : null
+    firstBookId: seriesFounderFirstBookId(rows, authors)
   };
   writeTimedCache(seriesInfoCache, cacheKey, info, FACET_SUMMARY_CACHE_TTL_MS, 300);
   return info;
