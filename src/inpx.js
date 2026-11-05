@@ -5681,6 +5681,10 @@ const _browseTotalInflight = new Map();
  * Pre-computes the catalog total of every distinct profile-language filter on the query worker (boot, after an index
  * pass): the first catalog page of such a user then needs no 0.9 s count.
  */
+const _prewarmHooks = [];
+/** Other modules (smart shelves) add their own warm-ups, run with `prewarmBrowseTotals`. */
+export function registerBrowsePrewarmHook(fn) { _prewarmHooks.push(fn); }
+
 export async function prewarmBrowseTotals() {
   try {
     const seen = new Set();
@@ -5692,6 +5696,7 @@ export async function prewarmBrowseTotals() {
       await warmBrowseTotal({ lang: filter.lang, langs: filter.langs });
     }
     await warmFollowingWindow();
+    for (const hook of _prewarmHooks) { try { await hook(); } catch { /* best effort */ } }
   } catch { /* best effort */ }
 }
 

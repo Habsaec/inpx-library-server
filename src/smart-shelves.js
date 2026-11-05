@@ -3,7 +3,8 @@
  * Книги не хранятся — подбираются при открытии полки, поэтому полка «сама» пополняется после индексации.
  */
 import { db } from './db.js';
-import { getRuntimeQueryCacheGeneration, parseGenreList, parseGenreMode, parseHasSeries, searchCatalog } from './inpx.js';
+import { getRuntimeQueryCacheGeneration, parseGenreList, parseGenreMode, parseHasSeries, searchCatalog, warmBrowseTotal, registerBrowsePrewarmHook } from './inpx.js';
+import { effectiveContentLangs } from './user-content-langs.js';
 
 const SORTS = ['recent', 'title', 'author', 'series', 'rating'];
 const NAME_MAX = 100;
@@ -165,3 +166,24 @@ export function getSmartShelfBooks(shelf, { page = 1, pageSize = 24, langs = nul
     year: f.year, minRate: f.minRate, hasSeries: f.hasSeries
   });
 }
+
+/* The catalog total of a smart shelf's filter (genre / language / format …) is a 0.3–0.9 s COUNT; the browse-total memo
+   is wiped by every catalog change, so the first view afterwards counted on the main thread. Warm every shelf's total
+   on the query worker (without and with the owner's profile languages, the two ways shelves are read). */
+registerBrowsePrewarmHook(async () => {
+  const seen = new Set();
+  for (const row of db.prepare('SELECT username, query FROM smart_shelves LIMIT 200').all()) {
+    let f;
+    try { f = parseSmartShelfFilter(row.query); } catch { continue; }
+    if (f.q) continue;
+    let userLangs = null;
+    try { userLangs = effectiveContentLangs(row.username); } catch { /* none */ }
+    for (const langs of [null, userLangs]) {
+      const args = { genre: f.genre.join(','), genreMode: f.genreMode, lang: f.lang, langs, format: f.format, year: f.year, minRate: f.minRate, hasSeries: f.hasSeries };
+      const key = JSON.stringify(args);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      await warmBrowseTotal(args);
+    }
+  }
+});
