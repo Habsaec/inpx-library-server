@@ -161,10 +161,24 @@ const authorGroupedInflight = new Map();
 const facetBooksInflight = new Map();
 const archiveStemLookupCache = new Map();
 
+/* The browse-total memo is wiped by every catalog change; a user's first catalog page then recounted 0.5–0.9 s on the
+   main thread. Re-warm the per-profile totals (on the query worker) a few seconds after the last wipe. */
+let _prewarmTimer = null;
+function scheduleBrowsePrewarm() {
+  if (_prewarmTimer) return;
+  _prewarmTimer = setTimeout(() => {
+    _prewarmTimer = null;
+    if (getIndexStatus().active) return; // the post-index hook warms after the pass
+    prewarmBrowseTotals().catch(() => {});
+  }, 4000);
+  _prewarmTimer.unref?.();
+}
+
 /* ── Reset cached prepared statements when active_books VIEW is rebuilt ── */
 function resetInpxPreparedStatements() {
   _stmtGetBookById = null;
   _browseTotalMemo.clear();
+  scheduleBrowsePrewarm();
   _opdsQueryMemo.clear();
   _opdsTitleRowsMemo.clear();
   _authorsTotalMemo.clear();
@@ -251,6 +265,7 @@ export function getRuntimeQueryCacheGeneration() {
 function clearRuntimeQueryCaches() {
   runtimeQueryCacheGeneration += 1;
   _browseTotalMemo.clear();
+  scheduleBrowsePrewarm();
   _opdsQueryMemo.clear();
   _opdsTitleRowsMemo.clear();
   _followingListMemo.clear();
@@ -4743,6 +4758,7 @@ export function searchBooks({
         : resolveBookAliasSort(sort, 'b', order);
 
     /* Total is the same for every page of the same filters — count 600k rows once per TTL, not per page. */
+    const tBrowse = Date.now();
     const memoKey = mode === 'exact' ? `${browseBooksView}|${whereSql}|${JSON.stringify(gfParams)}` : '';
     const memoHit = memoKey ? _browseTotalMemo.get(memoKey) : null;
     const { total } = memoHit && (Date.now() - memoHit.at) < PAGE_CACHE_TTL_MS
@@ -4760,6 +4776,7 @@ export function searchBooks({
       _browseTotalMemo.set(memoKey, { total, at: Date.now() });
     }
 
+    const tBrowseItems = Date.now();
     const items = db
       .prepare(
         `
@@ -4775,6 +4792,11 @@ export function searchBooks({
       .map(mapBookListRow);
 
     attachSeriesListsToBooks(items);
+    const tBrowseEnd = Date.now();
+    if (tBrowseEnd - tBrowse >= SLOW_SEARCH_LOG_MS) {
+      logSlowSearchSteps('browse', `${browseBooksView}${memoHit ? ' memo' : ''}${whereSql ? ' ' + whereSql.replace(/\s+/g, ' ').slice(0, 120) : ''}`,
+        [['total', tBrowseItems - tBrowse], ['items', tBrowseEnd - tBrowseItems]]);
+    }
     return { total: mode === 'omit' ? items.length : total, items };
   }
 
