@@ -402,6 +402,8 @@ async function prepareSiteLogoProfilePhoto() {
   if (!fsSync.existsSync(SITE_LOGO_PATH)) return null;
   const raw = fsSync.readFileSync(SITE_LOGO_PATH);
   if (!raw?.length) return null;
+  const sharp = await getSharp();
+  if (!sharp) return null; // image processing is off or sharp is not installed
   return sharp(raw, { failOn: 'error' })
     .rotate()
     .resize(640, 640, { fit: 'cover' })
