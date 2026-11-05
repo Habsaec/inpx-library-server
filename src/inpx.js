@@ -180,6 +180,7 @@ function resetInpxPreparedStatements() {
   _browseTotalMemo.clear();
   scheduleBrowsePrewarm();
   _opdsQueryMemo.clear();
+  _alphaIndexMemo.clear();
   _opdsTitleRowsMemo.clear();
   _authorsTotalMemo.clear();
   _recentCutoffMemo = null;
@@ -267,6 +268,7 @@ function clearRuntimeQueryCaches() {
   _browseTotalMemo.clear();
   scheduleBrowsePrewarm();
   _opdsQueryMemo.clear();
+  _alphaIndexMemo.clear();
   _opdsTitleRowsMemo.clear();
   _followingListMemo.clear();
   if (_followingWindowMemo) _followingWindowMemo.at = 0; // stale: served once more, rebuilt on the query worker
@@ -8966,6 +8968,75 @@ export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {
   if (_opdsQueryMemo.size >= 400) _opdsQueryMemo.delete(_opdsQueryMemo.keys().next().value);
   _opdsQueryMemo.set(key, { rows, at: Date.now() });
   return rows;
+}
+
+/* ── Alphabet index of authors / series (web /authors, /series and the Android catalog) ──
+   A letter opens its next-letter groups with counts («К» → «Ка 4235 · Ко 5622 …»), a group deepens until it holds
+   at most ALPHA_INDEX_LIST_MAX names, which are then listed alphabetically. Every query is a range on the
+   `search_name` index (`book_count > 0`, the profile languages through `catalog_lang_counts`) and runs on the query
+   worker; results are memoized until the catalog changes. */
+const ALPHA_INDEX_LIST_MAX = 300;
+const ALPHA_INDEX_MAX_DEPTH = 12;
+const _alphaIndexMemo = new Map();
+
+export async function getAlphaIndex(kind, prefix = '', { langs = null } = {}) {
+  const isSeries = kind === 'series';
+  const table = isSeries ? 'series_catalog' : 'authors';
+  const rawPrefix = String(prefix || '');
+  // A group may end in a space («кор » = «Кор Иван …»): keep it, createSortKey would trim it back to the parent.
+  const keyBase = createSortKey(rawPrefix);
+  const key = keyBase ? `${keyBase}${/\s$/.test(rawPrefix) ? ' ' : ''}`.slice(0, ALPHA_INDEX_MAX_DEPTH) : '';
+  const langList = Array.isArray(langs) ? langs.filter(Boolean) : [];
+  const memoKey = `${kind}|${key}|${langList.join(',')}`;
+  const hit = _alphaIndexMemo.get(memoKey);
+  if (hit && Date.now() - hit.at < OPDS_QUERY_MEMO_TTL_MS) return hit.value;
+
+  const where = ['c.book_count > 0'];
+  const params = [];
+  if (key) { where.push('c.search_name >= ? AND c.search_name < ?'); params.push(key, key + String.fromCharCode(0xffff)); }
+  let countExpr = 'c.book_count';
+  const langParams = [];
+  if (langList.length && catalogLangCountsReady()) {
+    const clause = languageFilterClause('l.lang', '', langList);
+    if (clause?.where === '0') return { kind: isSeries ? 'series' : 'authors', prefix: key, total: 0, groups: [], items: [] };
+    if (clause) {
+      const sub = `FROM catalog_lang_counts l WHERE l.kind = ${isSeries ? 2 : 1} AND l.id = c.id AND ${clause.where}`;
+      where.push(`EXISTS (SELECT 1 ${sub} AND l.book_count > 0)`);
+      langParams.push(...clause.params);
+      countExpr = `(SELECT SUM(l.book_count) ${sub})`;
+    }
+  }
+  const whereSql = where.join(' AND ');
+  const run = (sql, p) => queryAsync(sql, p, { fallback: () => db.prepare(sql).all(...p) });
+
+  let groups = [];
+  let total = 0;
+  let depth = key.length + 1;
+  for (;;) {
+    groups = await run(`SELECT SUBSTR(c.search_name, 1, ?) AS prefix, COUNT(*) AS count FROM ${table} c WHERE ${whereSql}
+      GROUP BY prefix ORDER BY prefix`, [depth, ...params, ...langParams]);
+    total = groups.reduce((sum, g) => sum + g.count, 0);
+    // One group only (every name shares the next letter): go one letter deeper straight away.
+    if (key && groups.length === 1 && total > ALPHA_INDEX_LIST_MAX && depth < ALPHA_INDEX_MAX_DEPTH) { depth += 1; continue; }
+    break;
+  }
+  let items = [];
+  if (key && (total <= ALPHA_INDEX_LIST_MAX || depth >= ALPHA_INDEX_MAX_DEPTH)) {
+    items = await run(`SELECT c.name AS name, COALESCE(c.display_name, c.name) AS displayName, ${countExpr} AS bookCount
+      FROM ${table} c WHERE ${whereSql} ORDER BY c.search_name, c.name LIMIT 1000`, [...langParams, ...params, ...langParams]);
+    groups = [];
+  }
+  const value = {
+    kind: isSeries ? 'series' : 'authors',
+    prefix: key,
+    total,
+    // A name equal to the prefix itself cannot be opened deeper; it is left out of the groups.
+    groups: groups.filter((g) => String(g.prefix || '').trim() && g.prefix !== key).map((g) => ({ prefix: g.prefix, count: g.count })),
+    items: items.map((r) => ({ name: r.name, displayName: r.displayName, bookCount: Number(r.bookCount) || 0 }))
+  };
+  if (_alphaIndexMemo.size >= 500) _alphaIndexMemo.delete(_alphaIndexMemo.keys().next().value);
+  _alphaIndexMemo.set(memoKey, { value, at: Date.now() });
+  return value;
 }
 
 function opdsQueryUncached(facet, prefix = '', depth = 0, genre = '') {

@@ -23,6 +23,7 @@ import {
   formatGenreLabel, localizeGenreLabel, facetItemLabel, parseGenreCodes
 } from './shared.js';
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
+import { formatSingleAuthorName } from '../inpx.js';
 import { encodeBookRef } from '../utils/book-ref.js';
 import { getUserHideRead } from '../db.js';
 import { normalizeHomeLayout, isHomeSectionVisible, orderShelves, WEB_HOME_SECTION_IDS } from '../home-layout.js';
@@ -1178,7 +1179,47 @@ export function renderFavorites({
 }
 
 
-export function renderBrowsePage({ title, items, total, page, pageSize, user, stats, query, letter = '', path, facetBasePath, indexStatus, sort, order = '', csrfToken = '', readSeriesNames = null }) {
+/** «А · Б · В …» index (getAlphaIndex): letters, then the next-letter groups with counts, then the names in columns. */
+function renderAlphaIndex({ path, facetBasePath, root, current }) {
+  if (!root?.groups?.length) return '';
+  const cap = (s) => String(s || '').replace(/^./u, (c) => c.toUpperCase()).replace(/ $/, '\u00a0…');
+  const href = (prefix) => `${path}?idx=${encodeURIComponent(prefix)}`;
+  const active = current?.prefix || '';
+  // Two rows: Russian and Latin letters (rare letters — Á, Ә, CJK … — are left to the search), the page language first.
+  const letterLink = (g) => `<a href="${escapeHtml(href(g.prefix))}"${active[0] === g.prefix ? ' class="is-active" aria-current="true"' : ''} title="${escapeHtml(formatLocaleInt(g.count))}">${escapeHtml(g.prefix.toUpperCase())}</a>`;
+  const cyr = root.groups.filter((g) => /^[а-яё]$/.test(g.prefix));
+  const lat = root.groups.filter((g) => /^[a-z]$/.test(g.prefix));
+  const rows = (getLocale() === 'en' ? [lat, cyr] : [cyr, lat]).filter((row) => row.length);
+  const letterRow = `<nav class="alpha-index-letters" aria-label="${escapeHtml(t('browse.alphaIndex'))}">${rows.map((row) =>
+    `<div class="alpha-index-letter-row">${row.map(letterLink).join('')}</div>`
+  ).join('')}${active ? `<a class="alpha-index-reset" href="${escapeHtml(path)}">${escapeHtml(t('browse.reset'))}</a>` : ''}</nav>`;
+  if (!current) return `<section class="alpha-index">${letterRow}</section>`;
+  const crumbs = [];
+  for (let i = 1; i <= active.length; i += 1) {
+    const p = active.slice(0, i);
+    if (p.endsWith(' ') && i < active.length) continue;
+    crumbs.push(i === active.length
+      ? `<strong>${escapeHtml(cap(p))}</strong>`
+      : `<a href="${escapeHtml(href(p))}">${escapeHtml(cap(p))}</a>`);
+  }
+  const groups = current.groups?.length
+    ? `<div class="alpha-index-groups">${current.groups.map((g) =>
+      `<a class="alpha-index-chip" href="${escapeHtml(href(g.prefix))}">${escapeHtml(cap(g.prefix))} <span>${escapeHtml(formatLocaleInt(g.count))}</span></a>`
+    ).join('')}</div>`
+    : '';
+  const isAuthors = facetBasePath === '/facet/authors';
+  const names = current.items?.length
+    ? `<ul class="alpha-index-names">${current.items.map((item) => {
+      const label = isAuthors ? (formatSingleAuthorName(item.displayName || item.name) || item.displayName || item.name) : (item.displayName || item.name);
+      return `<li><a href="${escapeHtml(`${facetBasePath}/${encodeURIComponent(item.name)}`)}">${escapeHtml(label)}</a> <span class="muted">${escapeHtml(formatLocaleInt(item.bookCount))}</span></li>`;
+    }).join('')}</ul>`
+    : (current.groups?.length ? '' : `<p class="muted">${escapeHtml(t('browse.emptyFiltered'))}</p>`);
+  return `<section class="alpha-index">${letterRow}
+    <div class="alpha-index-path">${crumbs.join(' › ')} <span class="muted">· ${escapeHtml(formatLocaleInt(current.total))}</span></div>
+    ${groups}${names}</section>`;
+}
+
+export function renderBrowsePage({ title, items, total, page, pageSize, user, stats, query, letter = '', path, facetBasePath, indexStatus, sort, order = '', csrfToken = '', readSeriesNames = null, alphaRoot = null, alphaIndex = null }) {
   const letterParam = letter ? `&letter=${encodeURIComponent(letter)}` : '';
   const paginationBase = `${path}?sort=${encodeURIComponent(sort || 'count')}${letterParam}`;
   const browseLabels = { '/authors': t('nav.authors'), '/series': t('nav.series'), '/genres': t('nav.genres'), '/languages': t('nav.languages') };
@@ -1214,10 +1255,11 @@ export function renderBrowsePage({ title, items, total, page, pageSize, user, st
         })}
       </div>
     </section>
-    ${letterHint}
+    ${renderAlphaIndex({ path, facetBasePath, root: alphaRoot, current: alphaIndex })}
+    ${alphaIndex ? '' : `${letterHint}
     <div class="list-context-hint list-context-hint-spacious">${browseTotalLine(path, total, query)}</div>
     ${renderEntityGrid(items, facetBasePath, query || letter ? t('browse.emptyFiltered') : t('browse.empty'), readSeriesNames)}
-    ${renderPagination(paginationBase, page, pageSize, total, query)}
+    ${renderPagination(paginationBase, page, pageSize, total, query)}`}
   `;
   const alphabet = { path, sort: 'name', label: browseLabels[path] || title, activeLetter: letter };
   return pageShell({ title, content, user, stats, query, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: title }], alphabet, currentPath: path, csrfToken });

@@ -138,3 +138,14 @@ test('getStaleOrScheduleAsync: a cold miss waits once, a hit is instant, a stale
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.ok(runs >= 2, 'refreshed in the background');
 });
+
+test('alphabet index: letters → groups → names, range on search_name, profile languages', async () => {
+  const { getAlphaIndex } = await import('../src/inpx.js');
+  const root = await getAlphaIndex('authors', '');
+  assert.ok(root.groups.some((g) => g.prefix === 'z'), 'first letters with counts');
+  const z = await getAlphaIndex('authors', 'Zzperf');
+  assert.deepEqual(z.items.map((i) => i.name).sort(), ['zzperf,alpha', 'zzperf,beta'], 'a small group lists the names');
+  assert.equal(z.groups.length, 0);
+  const ruOnly = await getAlphaIndex('authors', 'zzperf', { langs: ['ru'] });
+  assert.deepEqual(ruOnly.items.map((i) => [i.name, i.bookCount]), [['zzperf,alpha', 2]], 'only books in the profile languages count');
+});

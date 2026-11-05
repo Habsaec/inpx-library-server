@@ -7793,6 +7793,82 @@ html[data-theme="light"] .page-jump::after {
   margin: 0;
 }
 
+/* Alphabet index of /authors and /series (getAlphaIndex): letters → next-letter groups → names in columns. */
+.alpha-index {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+.alpha-index-letters {
+  display: grid;
+  gap: 4px;
+}
+
+.alpha-index-letter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+}
+
+.alpha-index-letters a {
+  min-width: 2em;
+  padding: 4px 6px;
+  border-radius: 6px;
+  text-align: center;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.alpha-index-letters a:hover,
+.alpha-index-letters a.is-active {
+  background: var(--accent-soft, rgba(212, 167, 106, 0.18));
+}
+
+.alpha-index-letters .alpha-index-reset {
+  justify-self: start;
+  font-weight: 400;
+}
+
+.alpha-index-path {
+  font-size: 1.05rem;
+}
+
+.alpha-index-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.alpha-index-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.alpha-index-chip span {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.alpha-index-names {
+  columns: 17rem;
+  column-gap: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alpha-index-names li {
+  break-inside: avoid;
+  padding: 2px 0;
+}
+
+.alpha-index-names .muted {
+  font-size: 0.85em;
+}
+
 @media (max-width: 900px) {
   .series-facet-hero .card-detail-panel {
     grid-template-columns: 1fr;

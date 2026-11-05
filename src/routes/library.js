@@ -86,6 +86,7 @@ import {
   recordReadingHistory,
   searchCatalog,
   warmBrowseTotal,
+  getAlphaIndex,
   listEntitiesByGenreAsync,
   listEntitiesByLanguageAsync,
   searchOverview,
@@ -737,7 +738,7 @@ export function registerLibraryRoutes(app, deps) {
   });
 
   // --- Browse pages ---
-  app.get('/authors', requireBrowseAuth, (req, res) => {
+  app.get('/authors', requireBrowseAuth, asyncHandler(async (req, res) => {
     const query = String(req.query.q || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
     const sort = String(req.query.sort || 'name');
@@ -748,16 +749,19 @@ export function registerLibraryRoutes(app, deps) {
     const stats = getCachedStats();
     const authorLangs = effectiveContentLangs(req.user?.username);
     const cacheKey = `browse:authors:${contentLangCacheKey(authorLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, order, startsWith, letter, langs: authorLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const idx = query ? '' : String(req.query.idx || '').slice(0, 12);
+    const alphaRoot = query ? null : await getAlphaIndex('authors', '', { langs: authorLangs });
+    const alphaIndex = idx ? await getAlphaIndex('authors', idx, { langs: authorLangs }) : null;
+    const result = alphaIndex ? { total: 0, items: [] } : getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, order, startsWith, letter, langs: authorLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     res.send(renderBrowsePage({
       title: t('nav.authors'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
-      path: '/authors', facetBasePath: '/facet/authors',
+      path: '/authors', facetBasePath: '/facet/authors', alphaRoot, alphaIndex,
       indexStatus: getIndexStatus(), sort, order, csrfToken: req.csrfToken || ''
     }));
-  });
+  }));
 
-  app.get('/series', requireBrowseAuth, (req, res) => {
+  app.get('/series', requireBrowseAuth, asyncHandler(async (req, res) => {
     const query = String(req.query.q || '');
     const letter = String(req.query.letter || '').trim().slice(0, 2);
     const sort = String(req.query.sort || 'name');
@@ -767,16 +771,19 @@ export function registerLibraryRoutes(app, deps) {
     const stats = getCachedStats();
     const seriesLangs = effectiveContentLangs(req.user?.username);
     const cacheKey = `browse:series:${contentLangCacheKey(seriesLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
-    const result = getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, order, letter, langs: seriesLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+    const idx = query ? '' : String(req.query.idx || '').slice(0, 12);
+    const alphaRoot = query ? null : await getAlphaIndex('series', '', { langs: seriesLangs });
+    const alphaIndex = idx ? await getAlphaIndex('series', idx, { langs: seriesLangs }) : null;
+    const result = alphaIndex ? { total: 0, items: [] } : getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, order, letter, langs: seriesLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
     const username = req.user?.username || '';
     res.send(renderBrowsePage({
       title: t('nav.series'),
       ...result, page, pageSize, user: req.user || null, stats, query, letter,
-      path: '/series', facetBasePath: '/facet/series',
+      path: '/series', facetBasePath: '/facet/series', alphaRoot, alphaIndex,
       indexStatus: getIndexStatus(), sort, order, csrfToken: req.csrfToken || '',
-      readSeriesNames: username ? getFullyReadSeriesNames(username) : null
+      readSeriesNames: username && !alphaIndex ? getFullyReadSeriesNames(username) : null
     }));
-  });
+  }));
 
 
   app.get('/genres', requireBrowseAuth, (req, res) => {
