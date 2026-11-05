@@ -19,7 +19,7 @@ import {
   renderCoverFallbackImage,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
   formatLocaleDateLong, clientI18nScriptUrl,
-  formatAuthorLabel, formatLanguageLabel,
+  formatAuthorLabel, authorInitials, formatLanguageLabel,
   formatGenreLabel, localizeGenreLabel, facetItemLabel, parseGenreCodes
 } from './shared.js';
 import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-quotes.js';
@@ -1108,7 +1108,7 @@ export function renderFavorites({
       <div class="table-list entity-list favorites-list">
         ${authors.map((item) => {
           const label = formatAuthorLabel(item.displayName || item.name) || item.displayName || item.name;
-          const initial = String(label || '?').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase() || '?';
+          const initial = authorInitials(item.name || item.displayName || label);
           const portraitSrc = `/api/authors/portrait?name=${encodeURIComponent(item.name)}`;
           const onError = `const p=this.parentElement;this.remove();if(p)p.classList.add('is-fallback')`;
           return `
@@ -1136,8 +1136,7 @@ export function renderFavorites({
       </div>
       <div class="table-list entity-list favorites-list">
         ${series.map((item) => {
-          const firstVolumeId = Array.isArray(item.previewBookIds) ? item.previewBookIds[0] : '';
-          const previews = firstVolumeId ? [firstVolumeId] : [];
+          const previews = Array.isArray(item.previewBookIds) ? item.previewBookIds.slice(0, 6) : [];
           return `
           <div class="table-row account-list-row favorites-row">
             <a class="account-list-row-main shelf-row-info" href="/facet/series/${encodeURIComponent(item.name)}">

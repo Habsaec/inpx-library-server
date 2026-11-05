@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { formatAuthorLabel, localizeGenreLabel, formatLanguageLabel, parseGenreCodes } from '../genre-map.js';
+import { formatAuthorLabel, authorInitials, localizeGenreLabel, formatLanguageLabel, parseGenreCodes } from '../genre-map.js';
 import { getAvailableDownloadFormats, getConfiguredDownloadFormats, FORMAT_LABELS, isDownloadFormatEnabled } from '../conversion.js';
 import { resolveTelegramRuntimeConfig, getUserDownloadFormat } from '../db.js';
 import { config } from '../config.js';
@@ -34,7 +34,7 @@ import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarku
 import { APP_DOWNLOAD_URL, appDownloadQrSvg } from '../app-download-qr.js';
 
 export { t, tp, getLocale, plural, countLabel, formatLocaleInt, formatLocaleDateShort, formatLocaleDateTimeShort, formatLocaleDateLong, serializeClientI18n, clientI18nScriptUrl };
-export { formatAuthorLabel, formatLanguageLabel, parseGenreCodes, localizeGenreLabel };
+export { formatAuthorLabel, authorInitials, formatLanguageLabel, parseGenreCodes, localizeGenreLabel };
 
 /** Genre name for display in the request's UI language (English names when the page is English). */
 export function formatGenreLabel(value = '') {

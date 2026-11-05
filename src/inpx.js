@@ -8951,6 +8951,8 @@ export function toggleFavoriteSeries(username, seriesName) {
   return true;
 }
 
+const FAVORITE_SERIES_COVERS = 6;
+
 export function getFavoriteAuthors(username, limit = 20, sort = 'name', order = '') {
   const orderMap = {
     name: `COALESCE(a.display_name, a.name) COLLATE NOCASE ASC`,
@@ -9007,17 +9009,20 @@ export function getFavoriteSeries(username, limit = 20, sort = 'name', order = '
     ORDER BY ${orderBy}
     LIMIT ?
   `).all(username, limit);
-  /* The cover of a series is its first volume (lowest number, unnumbered last): only book_series rows of the series
-     are ordered, then the first few are checked against active_books — never the books of the whole series. */
+  /* A series is shown by the covers of its first FAVORITE_SERIES_COVERS volumes (lowest number first, unnumbered
+     last): only book_series rows of the series are ordered, then the first few are checked against active_books —
+     never the books of the whole series. */
   const firstVolumes = db.prepare(`
     SELECT book_id FROM book_series WHERE series_id = ?
     ORDER BY (series_no IS NULL OR TRIM(series_no) = ''), CAST(series_no AS REAL), book_id
-    LIMIT 8
+    LIMIT ${FAVORITE_SERIES_COVERS * 4}
   `);
   const isActive = db.prepare('SELECT 1 FROM active_books WHERE id = ?');
   for (const row of rows) {
-    const first = firstVolumes.all(row.seriesId).find((c) => isActive.get(c.book_id));
-    row.previewBookIds = first ? [first.book_id] : [];
+    row.previewBookIds = firstVolumes.all(row.seriesId)
+      .filter((c) => isActive.get(c.book_id))
+      .slice(0, FAVORITE_SERIES_COVERS)
+      .map((c) => c.book_id);
     delete row.seriesId;
   }
   return rows;

@@ -31,7 +31,7 @@ test('favorites lists: catalog counters, portrait-only authors, first-volume ser
     assert.equal(authors[0].coverBookId, null, 'an author is shown by his portrait, never by a book cover');
     const series = getFavoriteSeries(user, 10, 'name', '');
     assert.equal(series[0].bookCount, 2);
-    assert.deepEqual(series[0].previewBookIds, ['pf1'], 'the first volume');
+    assert.deepEqual(series[0].previewBookIds, ['pf1', 'pf2'], 'first volumes in order (up to six)');
     // few favorites relative to the window → both query shapes must agree with each other
     const list = getFollowingNewBooks(user, { page: 1, pageSize: 10 });
     assert.equal(list.total, 3);
@@ -61,4 +61,14 @@ test('favorites lists: catalog counters, portrait-only authors, first-volume ser
     db.prepare("DELETE FROM sources WHERE path = 'fav-perf-path'").run();
     db.pragma('foreign_keys = ON');
   }
+});
+
+test('author placeholder letters: name first, then surname', async () => {
+  const { authorInitials } = await import('../src/genre-map.js');
+  assert.equal(authorInitials('достоевский,фёдор,михайлович'), 'ФД');
+  assert.equal(authorInitials('Pushkin,Alexander'), 'AP');
+  assert.equal(authorInitials('Лев Толстой'), 'ЛТ');
+  assert.equal(authorInitials('Гомер'), 'ГО');
+  assert.equal(authorInitials('  '), '?');
+  assert.equal(authorInitials('Иванов,Иван:Петров,Пётр'), 'ИИ');
 });

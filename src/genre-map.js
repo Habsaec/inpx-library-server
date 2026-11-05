@@ -475,6 +475,25 @@ export function formatAuthorLabel(value = '') {
   return authors.slice(0, 3).join(', ') + (authors.length > 3 ? ` и ещё ${authors.length - 3}` : '');
 }
 
+/**
+ * Placeholder letters of an author: first letter of the NAME + first letter of the SURNAME («Достоевский,Фёдор,Михайлович»
+ * → «ФД»). INPX keys are `Surname,Name,Patronymic`; a plain «Name Surname» label uses its first two words as written;
+ * a single word gives its first two letters.
+ */
+export function authorInitials(value = '') {
+  const raw = String(value || '').split(':')[0].trim();
+  const letter = (word) => (String(word || '').match(/\p{L}/u) || [''])[0].toLocaleUpperCase('ru-RU');
+  if (raw.includes(',')) {
+    const [surname, name] = raw.split(',').map((part) => part.trim());
+    const pair = `${letter(name)}${letter(surname)}`;
+    if (pair) return pair;
+  }
+  const words = raw.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return `${letter(words[0])}${letter(words[1])}`;
+  const only = (words[0] || '').replace(/[^\p{L}]/gu, '').slice(0, 2).toLocaleUpperCase('ru-RU');
+  return only || '?';
+}
+
 export function formatLanguageLabel(value = '') {
   const raw = String(value || '').trim();
   if (!raw || raw === 'unknown') {
