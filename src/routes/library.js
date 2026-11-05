@@ -1045,6 +1045,13 @@ export function registerLibraryRoutes(app, deps) {
           console.warn('[series] info failed:', err.message);
         }
       }
+      let seriesAnnotation = null;
+      if (seriesInfo?.firstBookId) {
+        try {
+          const firstBook = getBookById(seriesInfo.firstBookId);
+          if (firstBook) seriesAnnotation = await getDetails(firstBook);
+        } catch { /* the hero works without it */ }
+      }
       const seriesRead = facet === 'series' && username ? isSeriesFullyRead(username, value) : false;
       let seriesProgress = null;
       // Whole series even under ?author= (the usual link from author / book pages).
@@ -1060,7 +1067,7 @@ export function registerLibraryRoutes(app, deps) {
         ...result, summary, page, pageSize,
         user: req.user || null, stats, facetPath,
         indexStatus: getIndexStatus(), sort, order, facet, facetValue: value,
-        favorite, seriesRead, seriesProgress, seriesInfo, breadcrumbs, csrfToken: req.csrfToken || '',
+        favorite, seriesRead, seriesProgress, seriesInfo, seriesAnnotation, breadcrumbs, csrfToken: req.csrfToken || '',
         readBookIds: username ? getReadBookIdSet(username) : null,
         view, authorFilter,
         listView: bookLayout === 'list', layout: bookLayout,

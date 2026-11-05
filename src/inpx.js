@@ -9882,6 +9882,19 @@ function seriesVolumeKey(row) {
 const seriesInfoCache = new Map();
 const SERIES_INFO_AUTHORS_MAX = 24;
 const SERIES_INFO_GENRES_MAX = 12;
+/** Lowest volume number first, unnumbered last. */
+function firstSeriesVolumeId(rows) {
+  const num = (row) => {
+    const n = Number.parseFloat(String(row.seriesNo ?? '').replace(',', '.'));
+    return Number.isFinite(n) && n > 0 ? n : Infinity;
+  };
+  let best = null;
+  for (const row of rows) {
+    if (!best || num(row) < num(best) || (num(row) === num(best) && String(row.titleSort || '') < String(best.titleSort || ''))) best = row;
+  }
+  return best ? best.id : null;
+}
+
 export function getSeriesInfo(seriesName, { langs = null } = {}) {
   const canonical = resolveSeriesCatalogName(String(seriesName || ''));
   if (!canonical) return null;
@@ -9898,7 +9911,7 @@ export function getSeriesInfo(seriesName, { langs = null } = {}) {
     JOIN book_series bs ON bs.series_id = sc.id
     JOIN active_books b ON b.id = bs.book_id`;
   const rows = db.prepare(`
-    SELECT b.title, b.title_sort AS titleSort, COALESCE(NULLIF(bs.series_no, ''), b.series_no) AS seriesNo,
+    SELECT b.id AS id, b.title, b.title_sort AS titleSort, COALESCE(NULLIF(bs.series_no, ''), b.series_no) AS seriesNo,
            b.lang AS lang, b.date AS date
     ${from}
     WHERE sc.name = ?${langWhere}
@@ -9950,7 +9963,9 @@ export function getSeriesInfo(seriesName, { langs = null } = {}) {
     languages: [...langCounts].map(([code, bookCount]) => ({ code, bookCount }))
       .sort((a, b) => b.bookCount - a.bookCount || a.code.localeCompare(b.code)),
     yearFrom,
-    yearTo
+    yearTo,
+    // Author's series (one author has most books): its first volume, whose annotation the hero shows.
+    firstBookId: authors[0] && rows.length >= 2 && authors[0].bookCount * 2 > rows.length ? firstSeriesVolumeId(rows) : null
   };
   writeTimedCache(seriesInfoCache, cacheKey, info, FACET_SUMMARY_CACHE_TTL_MS, 300);
   return info;

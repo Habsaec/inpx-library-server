@@ -1296,7 +1296,7 @@ function renderSeriesInfo(info) {
   return rows.length ? `<div class="series-facet-info">${rows.join('')}</div>` : '';
 }
 
-export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, seriesProgress = null, seriesInfo = null, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '', lang = '', langs = [] }) {
+export function renderFacetBooks({ title, items, total, page, pageSize, user, stats, facetPath, indexStatus, sort, order = '', breadcrumbs, summary = {}, facet = '', facetValue = '', favorite = false, seriesRead = false, seriesProgress = null, seriesInfo = null, seriesAnnotation = null, csrfToken = '', readBookIds = null, view = 'books', entityItems = null, authorFilter = '', listView = false, layout = '', lang = '', langs = [] }) {
   const isGenre = facet === 'genres';
   const isLang = facet === 'languages';
   const isEntityView = (isGenre || isLang) && (view === 'authors' || view === 'series');
@@ -1413,6 +1413,13 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
               ? ` · ${escapeHtml(t('facet.seriesInfoVolumes'))}: <strong>${formatLocaleInt(seriesInfo.volumeCount)}</strong>`
               : ''
           }${authorFilter ? ` · <a class="series-facet-full-link" href="${escapeHtml(lang ? `${facetPath}?lang=${encodeURIComponent(lang)}` : facetPath)}">${escapeHtml(t('facet.seriesFullLink'))}</a>` : ''}</div>
+          ${
+            seriesAnnotation?.annotationIsHtml && String(seriesAnnotation.annotation || '').trim()
+              ? `<div class="book-detail-annotation book-detail-annotation--html">${sanitizeHtml(seriesAnnotation.annotation)}</div>`
+              : String(seriesAnnotation?.annotation || '').trim()
+                ? `<p class="book-detail-annotation">${escapeHtml(seriesAnnotation.annotation)}</p>`
+                : ''
+          }
           ${renderSeriesInfo(seriesInfo)}
           ${user ? renderSeriesProgress(seriesProgress) : ''}
         </div>

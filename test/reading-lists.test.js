@@ -161,6 +161,7 @@ test('series info: volumes, authors, genres, languages, years, profile languages
   assert.deepEqual(info.languages, [{ code: 'ru', bookCount: 4 }, { code: 'en', bookCount: 1 }]);
   assert.equal(info.yearFrom, 2001);
   assert.equal(info.yearTo, 2012);
+  assert.ok([ids.s1fb2, ids.s1epub].includes(info.firstBookId), 'one author has most books: the first volume is offered');
 
   const ruOnly = getSeriesInfo('lists saga', { langs: ['ru'] });
   assert.equal(ruOnly.bookCount, 4);
