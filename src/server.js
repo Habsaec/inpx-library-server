@@ -52,7 +52,7 @@ import {
   getClientKey, pruneExpiredEntries as pruneLoginAttempts
 } from './services/rate-limiter.js';
 import { getOnlineUserCount, pruneOfflineUsers } from './services/online-tracker.js';
-import { createPerfMetricsMiddleware, getPerfSnapshot } from './services/perf-metrics.js';
+import { createPerfMetricsMiddleware, getPerfSnapshot, recentSlowRequests } from './services/perf-metrics.js';
 import { getCachedPageData, clearPageDataCache } from './services/cache.js';
 import { getPublicUiSettingsJson, serveUiAsset } from './services/ui-customization.js';
 import { logSystemEvent } from './services/system-events.js';
@@ -252,7 +252,7 @@ const LOOP_STALL_LOG_MS = Number(process.env.LOOP_STALL_LOG_MS) || 2000;
     if (stall >= CLOCK_JUMP_MS) {
       console.warn(`[perf] clock jumped ${(stall / 1000).toFixed(0)} s (system sleep/resume or time sync, not an event-loop stall)`);
     } else if (stall >= LOOP_STALL_LOG_MS) {
-      console.warn(`[perf] event loop stalled ${(stall / 1000).toFixed(1)} s (blocked main thread: heavy sync SQLite/IO); index=${getIndexStatus().active ? 'active' : 'idle'}`);
+      console.warn(`[perf] event loop stalled ${(stall / 1000).toFixed(1)} s (blocked main thread: heavy sync SQLite/IO); index=${getIndexStatus().active ? 'active' : 'idle'}; slow requests just before: ${recentSlowRequests(stall + 3000).join(' | ') || 'none (background task)'}`);
     }
   }, STALL_TICK_MS);
   stallTimer.unref();

@@ -5158,15 +5158,16 @@ export function findDidYouMeanSuggestions(query = '', limit = 3) {
   for (const token of tokens) {
     const maxDist = token.length >= 6 ? 2 : 1;
     const prefixLen = Math.max(2, token.length - maxDist);
-    const prefix = `${token.slice(0, prefixLen)}%`;
+    const prefix = token.slice(0, prefixLen);
+    const prefixEnd = prefix + String.fromCharCode(0xffff); // a range, not LIKE: LIKE on COALESCE(...) cannot use the name index
 
     const authors = db.prepare(`
       SELECT name, COALESCE(display_name, name) AS displayName, sort_name, book_count
       FROM authors
-      WHERE book_count > 0 AND COALESCE(search_name, '') LIKE ?
+      WHERE book_count > 0 AND search_name >= ? AND search_name < ?
       ORDER BY book_count DESC
       LIMIT 48
-    `).all(prefix);
+    `).all(prefix, prefixEnd);
 
     for (const row of authors) {
       for (const part of createSortKey(row.sort_name || '').split(/\s+/).filter(Boolean)) {
@@ -5189,10 +5190,10 @@ export function findDidYouMeanSuggestions(query = '', limit = 3) {
     const seriesRows = db.prepare(`
       SELECT name, COALESCE(display_name, name) AS displayName, sort_name, book_count
       FROM series_catalog
-      WHERE book_count > 0 AND COALESCE(search_name, '') LIKE ?
+      WHERE book_count > 0 AND search_name >= ? AND search_name < ?
       ORDER BY book_count DESC
       LIMIT 48
-    `).all(prefix);
+    `).all(prefix, prefixEnd);
 
     for (const row of seriesRows) {
       for (const part of createSortKey(row.sort_name || row.name || '').split(/\s+/).filter(Boolean)) {
@@ -5216,10 +5217,10 @@ export function findDidYouMeanSuggestions(query = '', limit = 3) {
       const titleRows = db.prepare(`
         SELECT token, freq
         FROM search_title_tokens
-        WHERE token LIKE ?
+        WHERE token >= ? AND token < ?
         ORDER BY freq DESC
         LIMIT 48
-      `).all(prefix);
+      `).all(prefix, prefixEnd);
       for (const row of titleRows) {
         const part = String(row.token || '');
         /* Стем-префикс введённого слова («плам» для «пламя») — не исправление опечатки. */

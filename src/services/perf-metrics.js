@@ -11,6 +11,13 @@ let totalRequests = 0;
 let inFlight = 0;
 let lastEventLoopLagMs = 0;
 const eventLoopLagSamples = [];
+const slowRequestRing = [];
+
+/** Requests that finished within the last `windowMs` after taking at least 150 ms: names a suspect for a loop stall. */
+export function recentSlowRequests(windowMs) {
+  const since = Date.now() - windowMs;
+  return slowRequestRing.filter((r) => r.endedAt >= since).map((r) => `${r.label} ${r.ms}ms`);
+}
 
 function quantile(values, q) {
   if (!values.length) return 0;
@@ -69,6 +76,7 @@ export function createPerfMetricsMiddleware() {
       stats.totalMs += durationMs;
       stats.maxMs = Math.max(stats.maxMs, durationMs);
       pushBounded(stats.samples, durationMs, ROUTE_SAMPLE_LIMIT);
+      if (durationMs >= 150) pushBounded(slowRequestRing, { label, ms: Math.round(durationMs), endedAt: Date.now() }, 40);
     };
 
     res.on('finish', finalize);
