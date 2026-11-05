@@ -73,6 +73,7 @@ import {
   refreshGenreSearchNames,
   mergeSeriesCatalogByKey,
   mergeSeriesQualifierDuplicates,
+  ensureLanguageTotals,
   getConfiguredInpxFile,
   getLibraryRoot,
   getIndexStatus,
@@ -1462,6 +1463,7 @@ async function bootstrap() {
       console.error('[startup] genre search names:', error.message);
     }
 
+    ensureLanguageTotals().catch((error) => console.error('[startup] language totals:', error.message));
     mergeSeriesCatalogByKey().then(() => mergeSeriesQualifierDuplicates()).catch((error) => {
       console.error('[startup] series merge:', error.message);
     });

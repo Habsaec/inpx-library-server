@@ -29,6 +29,7 @@ import {
   beginExclusiveOperation,
   endExclusiveOperation,
   refreshCatalogBookCounts,
+  getReadBookIdSet,
   isActiveBooksProjectionFresh,
   adjustCatalogCountsForBook,
   isBookInActiveView,
@@ -51,6 +52,7 @@ import {
   CATALOG_LANG_KIND,
 } from './db.js';
 import { languageFilterClause } from './user-content-langs.js';
+import { queryAsync } from './services/query-pool.js';
 import { appendStemmedSearchTokens, expandSearchTokenVariants } from './search-stem.js';
 import { filterSearchContentTokens, normalizeLookalikeSortKey } from './search-normalize.js';
 import {
@@ -163,6 +165,7 @@ const archiveStemLookupCache = new Map();
 function resetInpxPreparedStatements() {
   _stmtGetBookById = null;
   _browseTotalMemo.clear();
+  _opdsQueryMemo.clear();
   _authorsTotalMemo.clear();
   _recentCutoffMemo = null;
   _stmtGenresGroupedCount = null;
@@ -247,6 +250,9 @@ export function getRuntimeQueryCacheGeneration() {
 function clearRuntimeQueryCaches() {
   runtimeQueryCacheGeneration += 1;
   _browseTotalMemo.clear();
+  _opdsQueryMemo.clear();
+  _followingListMemo.clear();
+  _followingWindowMemo = null;
   facetBooksCache.clear();
   facetDedupTotalCache.clear();
   facetSummaryCache.clear();
@@ -4724,16 +4730,8 @@ export function searchBooks({
        look every book up and sort the whole catalog in a TEMP B-TREE for every page (~1 s, 2.8 s for `recent` on
        620k books — the «slow catalog q=""» / event-loop stalls). CROSS JOIN fixes the order: `books` is walked in
        the ORDER BY index order, each row probes the id list by primary key, and LIMIT stops the walk (0–50 ms). */
-    const browseFrom = projectionFresh
-      ? 'books b CROSS JOIN active_book_ids visible ON visible.book_id = b.id'
-      : 'active_books b';
-    const whereParts = [];
-    const whereParams = [];
-    if (genreFilter) { whereParts.push(genreFilter.where.replace(/active_books\./g, 'b.')); whereParams.push(...genreFilter.params); }
-    if (letterNorm) { whereParts.push('b.title_sort LIKE ?'); whereParams.push(`${letterNorm}%`); }
-    for (const ef of extraFilters) { whereParts.push(ef.where.replace(/active_books\./g, 'b.')); whereParams.push(...ef.params); }
-    const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
-    const gfParams = whereParams;
+    const browseFrom = projectionFresh ? BROWSE_FROM_PROJECTION : 'active_books b';
+    const { whereSql, params: gfParams } = browseWhere(genreFilter, letterNorm, extraFilters);
     /* Ключ по s.flibusta_sidecar живёт в присоединённой таблице — с ним индекс books бесполезен и
        каждая страница сортирует весь каталог (~1.2 с). Нужен он только если у включённых источников
        флаг различается; при одном источнике ORDER BY совпадает с idx_books_recent_sort. */
@@ -5255,6 +5253,53 @@ export function findDidYouMeanSuggestions(query = '', limit = 3) {
  * Genres present among books matching q + filters (genre filter excluded — faceted UX).
  * Used by Android/web filter sheet to offer only relevant genres.
  */
+const searchGenresMapRows = (rows) => withGenreNameEn((rows || []).map((row) => ({
+  name: row.name,
+  displayName: row.displayName || row.name,
+  bookCount: Math.max(0, Math.floor(Number(row.bookCount) || 0))
+})));
+
+const searchGenresFinalize = (items) => ({
+  scoped: true,
+  items: [...(items || [])].sort((a, b) => {
+    const la = String(a?.displayName || a?.name || '').trim();
+    const lb = String(b?.displayName || b?.name || '').trim();
+    return la.localeCompare(lb, 'ru', { sensitivity: 'base' });
+  })
+});
+
+/**
+ * Same answer as `listSearchGenres`, but the heavy case — genres among all books matching filters other than
+ * language (format / year / rating / series flag: a GROUP BY over every matching book × genre, 2–3 s) — runs on
+ * the query worker instead of the event loop.
+ */
+export async function listSearchGenresAsync(opts = {}) {
+  const { query = '', lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, limit = 100 } = opts;
+  if (String(query || '').trim()) return listSearchGenres(opts);
+  const extraFilters = buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries });
+  if (!extraFilters.length) return { items: [], scoped: false };
+  const langOnly = !format && !(Number(year) > 0) && !(Number(minRate) >= 1) && hasSeries == null;
+  if (langOnly && catalogLangCountsReady()) return listSearchGenres(opts);
+  const lim = Math.min(200, Math.max(1, Math.floor(Number(limit) || 100)));
+  const whereParts = [];
+  const params = [];
+  for (const ef of extraFilters) {
+    whereParts.push(ef.where.replace(/active_books\./g, 'b.'));
+    params.push(...ef.params);
+  }
+  const sql = `
+    SELECT g.name AS name, COALESCE(g.display_name, g.name) AS displayName, COUNT(DISTINCT bg.book_id) AS bookCount
+    FROM active_books b
+    JOIN book_genres bg ON bg.book_id = b.id
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    WHERE ${whereParts.join(' AND ')}
+    GROUP BY g.id
+    ORDER BY bookCount DESC, displayName ASC
+    LIMIT ?`;
+  const rows = await queryAsync(sql, [...params, lim], { fallback: () => db.prepare(sql).all(...params, lim) });
+  return searchGenresFinalize(searchGenresMapRows(rows));
+}
+
 export function listSearchGenres({
   query = '',
   lang = '',
@@ -5272,11 +5317,7 @@ export function listSearchGenres({
     return { items: [], scoped: false };
   }
 
-  const mapRows = (rows) => withGenreNameEn((rows || []).map((row) => ({
-    name: row.name,
-    displayName: row.displayName || row.name,
-    bookCount: Math.max(0, Math.floor(Number(row.bookCount) || 0))
-  })));
+  const mapRows = searchGenresMapRows;
 
   const runGrouped = (fromSql, params) => mapRows(db.prepare(`
     SELECT g.name AS name,
@@ -5288,16 +5329,28 @@ export function listSearchGenres({
     LIMIT ?
   `).all(...params, lim));
 
-  const finalize = (items) => ({
-    scoped: true,
-    items: [...(items || [])].sort((a, b) => {
-      const la = String(a?.displayName || a?.name || '').trim();
-      const lb = String(b?.displayName || b?.name || '').trim();
-      return la.localeCompare(lb, 'ru', { sensitivity: 'base' });
-    })
-  });
+  const finalize = searchGenresFinalize;
 
   if (!q) {
+    /* Language-only scope (the profile's content languages — every catalog page of such a user): per-language
+       genre counters, not a GROUP BY over every visible book × its genres (~3 s on 620k books). */
+    const langOnly = !format && !(Number(year) > 0) && !(Number(minRate) >= 1) && hasSeries == null;
+    const langClause = langOnly && catalogLangCountsReady() ? languageFilterClause('c.lang', lang, langs) : null;
+    const counts = langClause ? {
+      sql: `(SELECT c.id AS id, SUM(c.book_count) AS bookCount FROM catalog_lang_counts c
+        WHERE c.kind = ${Number(CATALOG_LANG_KIND.genres)} AND ${langClause.where}
+        GROUP BY c.id HAVING SUM(c.book_count) > 0)`,
+      params: langClause.params
+    } : null;
+    if (counts) {
+      return finalize(mapRows(db.prepare(`
+        SELECT g.name AS name, COALESCE(g.display_name, g.name) AS displayName, c.bookCount AS bookCount
+        FROM ${counts.sql} c
+        JOIN genres_catalog g ON g.id = c.id
+        ORDER BY c.bookCount DESC, displayName ASC
+        LIMIT ?
+      `).all(...counts.params, lim)));
+    }
     const whereParts = [];
     const whereParams = [];
     for (const ef of extraFilters) {
@@ -5578,6 +5631,59 @@ export function buildSearchRecoveryHints({ query = '', field = 'books', langs = 
 
   hints.didYouMean = findDidYouMeanSuggestions(q, 3);
   return hints;
+}
+
+/** WHERE + params of plain catalog browse (no text query) — shared by `searchCatalog` and `warmBrowseTotal`. */
+function browseWhere(genreFilter, letterNorm, extraFilters) {
+  const whereParts = [];
+  const params = [];
+  if (genreFilter) { whereParts.push(genreFilter.where.replace(/active_books\./g, 'b.')); params.push(...genreFilter.params); }
+  if (letterNorm) { whereParts.push('b.title_sort LIKE ?'); params.push(`${letterNorm}%`); }
+  for (const ef of extraFilters) { whereParts.push(ef.where.replace(/active_books\./g, 'b.')); params.push(...ef.params); }
+  return { whereSql: whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '', params };
+}
+
+const BROWSE_FROM_PROJECTION = 'books b CROSS JOIN active_book_ids visible ON visible.book_id = b.id';
+const _browseTotalInflight = new Map();
+
+/**
+ * Makes the (exact) total of a plain browse page ready in the memo WITHOUT blocking the event loop: the COUNT
+ * runs on the query worker, `searchCatalog` then finds it. A first view of a filter combination (format,
+ * series flag, year, rating, language, genre …) used to freeze the whole server for 0.5–1.2 s (4 s with the
+ * genre options). Call it before `searchCatalog` in async handlers; it never throws.
+ */
+export async function warmBrowseTotal({
+  query = '', genre = '', genreMode = 'or', letter = '', lang = '', langs = null,
+  format = '', year = 0, minRate = 0, hasSeries = null, hideReadUser = ''
+} = {}) {
+  try {
+    if (String(prepareSearchQueryInput(query) || '').trim()) return;
+    const projectionFresh = isActiveBooksProjectionFresh();
+    const view = projectionFresh ? 'catalog_active_books' : 'active_books';
+    const from = projectionFresh ? BROWSE_FROM_PROJECTION : 'active_books b';
+    const { whereSql, params } = browseWhere(
+      buildGenreFilterSql(genre, genreMode),
+      String(letter || '').trim().toLowerCase(),
+      buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries, hideReadUser })
+    );
+    if (!whereSql && projectionFresh) return; // COUNT(*) FROM active_book_ids: cheap
+    const key = `${view}|${whereSql}|${JSON.stringify(params)}`;
+    const hit = _browseTotalMemo.get(key);
+    if (hit && Date.now() - hit.at < PAGE_CACHE_TTL_MS) return;
+    let job = _browseTotalInflight.get(key);
+    if (!job) {
+      const sql = `SELECT COUNT(*) AS count FROM ${from} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`;
+      job = queryAsync(sql, params, { mode: 'get' })
+        .then((row) => {
+          if (_browseTotalMemo.size >= 64) _browseTotalMemo.delete(_browseTotalMemo.keys().next().value);
+          _browseTotalMemo.set(key, { total: Number(row?.count) || 0, at: Date.now() });
+        })
+        .catch(() => {})
+        .finally(() => _browseTotalInflight.delete(key));
+      _browseTotalInflight.set(key, job);
+    }
+    await job;
+  } catch { /* the sync path in searchCatalog still works */ }
 }
 
 export function searchCatalog({
@@ -6848,6 +6954,51 @@ export function listGenresForLocale(opts = {}, locale = getLocale()) {
  * Authors that have at least one book in the given genre, paginated.
  * Used by /facet/genres/:value?view=authors so big genres don't dump 27k books in one flat list.
  */
+/**
+ * Authors / series with books in one genre, run on the query worker (the GROUP BY over a big genre took seconds
+ * on the event loop). Same SQL and answer as `listAuthorsByGenre` / `listSeriesByGenre`.
+ */
+export async function listEntitiesByGenreAsync(kind, { genre, page = 1, pageSize = 50, sort = 'name', order = '', langs = null }) {
+  const value = String(genre || '').trim();
+  const sync = () => (kind === 'series'
+    ? listSeriesByGenre({ genre, page, pageSize, sort, order, langs })
+    : listAuthorsByGenre({ genre, page, pageSize, sort, order, langs }));
+  if (!value) return { total: 0, items: [] };
+  const offset = (page - 1) * pageSize;
+  const langClause = languageFilterClause('b.lang', '', langs);
+  const langSql = langClause ? `AND ${langClause.where}` : '';
+  const langParams = langClause ? langClause.params : [];
+  const isSeries = kind === 'series';
+  const alias = isSeries ? 's' : 'a';
+  const link = isSeries ? 'book_series bs' : 'book_authors ba';
+  const linkCond = isSeries ? 'bs.book_id = b.id' : 'ba.book_id = b.id';
+  const entity = isSeries ? 'series_catalog s ON s.id = bs.series_id' : 'authors a ON a.id = ba.author_id';
+  const orderBy = sort === 'name'
+    ? applyOrder(`COALESCE(${alias}.sort_name, LOWER(${alias}.name)) ASC`, order)
+    : applyOrder(`bookCount DESC, COALESCE(${alias}.sort_name, LOWER(${alias}.name)) ASC`, order);
+  const from = `
+    FROM book_genres bg
+    JOIN genres_catalog g ON g.id = bg.genre_id
+    JOIN active_books b ON b.id = bg.book_id
+    JOIN ${link} ON ${linkCond}
+    JOIN ${entity}
+    WHERE g.name = ? ${langSql}`;
+  try {
+    const [totalRow, items] = await Promise.all([
+      queryAsync(`SELECT COUNT(DISTINCT ${alias}.id) AS count ${from}`, [value, ...langParams], { mode: 'get' }),
+      queryAsync(`
+        SELECT ${alias}.name AS name, COALESCE(${alias}.display_name, ${alias}.name) AS displayName, COUNT(DISTINCT b.id) AS bookCount
+        ${from}
+        GROUP BY ${alias}.id, ${alias}.name, ${alias}.display_name, ${alias}.sort_name
+        ORDER BY ${orderBy}
+        LIMIT ? OFFSET ?`, [value, ...langParams, pageSize, offset])
+    ]);
+    return { total: Number(totalRow?.count) || 0, items };
+  } catch {
+    return sync();
+  }
+}
+
 export function listAuthorsByGenre({ genre, page = 1, pageSize = 50, sort = 'name', order = '', langs = null }) {
   const value = String(genre || '').trim();
   if (!value) return { total: 0, items: [] };
@@ -6933,11 +7084,78 @@ export function listSeriesByGenre({ genre, page = 1, pageSize = 50, sort = 'name
 /**
  * Authors that have at least one book in the given language, paginated.
  */
+/**
+ * Entities (authors = kind 1, series = kind 2) with books in one language, from the per-language counters
+ * (catalog_lang_counts) — the GROUP BY over every visible book of that language took 6 s for `ru`.
+ * Null when the counters are not built yet.
+ */
+function languageEntityQueries(kind, { lang, page, pageSize, sort, order }) {
+  const table = kind === 1 ? 'authors' : 'series_catalog';
+  const alias = kind === 1 ? 'a' : 's';
+  const offset = (page - 1) * pageSize;
+  const orderBy = sort === 'name'
+    ? applyOrder(`COALESCE(${alias}.sort_name, LOWER(${alias}.name)) ASC`, order)
+    : applyOrder(`bookCount DESC, COALESCE(${alias}.sort_name, LOWER(${alias}.name)) ASC`, order);
+  const langExpr = "CASE WHEN NULLIF(c.lang, '') IS NULL THEN 'unknown' ELSE c.lang END";
+  return {
+    totalSql: `
+      SELECT COUNT(*) AS count FROM (
+        SELECT c.id FROM catalog_lang_counts c
+        WHERE c.kind = ${Number(kind)} AND ${langExpr} = ?
+        GROUP BY c.id HAVING SUM(c.book_count) > 0
+      )`,
+    totalParams: [lang],
+    itemsSql: `
+      SELECT ${alias}.name AS name, COALESCE(${alias}.display_name, ${alias}.name) AS displayName, SUM(c.book_count) AS bookCount
+      FROM catalog_lang_counts c
+      JOIN ${table} ${alias} ON ${alias}.id = c.id
+      WHERE c.kind = ${Number(kind)} AND ${langExpr} = ?
+      GROUP BY ${alias}.id, ${alias}.name, ${alias}.display_name, ${alias}.sort_name
+      HAVING SUM(c.book_count) > 0
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?`,
+    itemsParams: [lang, pageSize, offset]
+  };
+}
+
+function listEntitiesByLanguageFromCounters(kind, opts) {
+  if (!catalogLangCountsReady()) return null;
+  const q = languageEntityQueries(kind, opts);
+  return {
+    total: db.prepare(q.totalSql).get(...q.totalParams).count,
+    items: db.prepare(q.itemsSql).all(...q.itemsParams)
+  };
+}
+
+/** The same answer on the query worker (165k author rows for `ru`: 0.3–0.4 s on the main thread). */
+export async function listEntitiesByLanguageAsync(kind, { lang, page = 1, pageSize = 50, sort = 'name', order = '', langs = null }) {
+  const sync = () => (kind === 'series'
+    ? listSeriesByLanguage({ lang, page, pageSize, sort, order, langs })
+    : listAuthorsByLanguage({ lang, page, pageSize, sort, order, langs }));
+  const value = String(lang || '').trim();
+  if (!value) return { total: 0, items: [] };
+  const pref = languageFilterClause('b.lang', '', langs);
+  if (pref && (pref.where === '0' || !pref.params.includes(value.toLowerCase()))) return { total: 0, items: [] };
+  if (!catalogLangCountsReady()) return sync();
+  const q = languageEntityQueries(kind === 'series' ? 2 : 1, { lang: value, page, pageSize, sort, order });
+  try {
+    const [totalRow, items] = await Promise.all([
+      queryAsync(q.totalSql, q.totalParams, { mode: 'get' }),
+      queryAsync(q.itemsSql, q.itemsParams)
+    ]);
+    return { total: Number(totalRow?.count) || 0, items };
+  } catch {
+    return sync();
+  }
+}
+
 export function listAuthorsByLanguage({ lang, page = 1, pageSize = 50, sort = 'name', order = '', langs = null }) {
   const value = String(lang || '').trim();
   if (!value) return { total: 0, items: [] };
   const pref = languageFilterClause('b.lang', '', langs);
   if (pref && (pref.where === '0' || !pref.params.includes(value.toLowerCase()))) return { total: 0, items: [] };
+  const fast = listEntitiesByLanguageFromCounters(1, { lang: value, page, pageSize, sort, order });
+  if (fast) return fast;
   const offset = (page - 1) * pageSize;
   const orderBy = sort === 'name'
     ? applyOrder('COALESCE(a.sort_name, LOWER(a.name)) ASC', order)
@@ -6975,6 +7193,8 @@ export function listSeriesByLanguage({ lang, page = 1, pageSize = 50, sort = 'na
   if (!value) return { total: 0, items: [] };
   const pref = languageFilterClause('b.lang', '', langs);
   if (pref && (pref.where === '0' || !pref.params.includes(value.toLowerCase()))) return { total: 0, items: [] };
+  const fast = listEntitiesByLanguageFromCounters(2, { lang: value, page, pageSize, sort, order });
+  if (fast) return fast;
   const offset = (page - 1) * pageSize;
   const orderBy = sort === 'name'
     ? applyOrder('COALESCE(s.sort_name, LOWER(s.name)) ASC', order)
@@ -7004,6 +7224,45 @@ export function listSeriesByLanguage({ lang, page = 1, pageSize = 50, sort = 'na
   return { total, items };
 }
 
+/** Books-per-language counters (catalog_lang_counts kind 0, filled by the counts worker); false until they exist. */
+let _languageTotalsReadyAt = 0;
+let _languageTotalsReady = false;
+function languageTotalsReady() {
+  if (_languageTotalsReady) return true;
+  if (Date.now() - _languageTotalsReadyAt < 30_000) return false;
+  _languageTotalsReadyAt = Date.now();
+  try {
+    _languageTotalsReady = catalogLangCountsReady()
+      && Boolean(db.prepare('SELECT 1 FROM catalog_lang_counts WHERE kind = 0 LIMIT 1').get());
+  } catch {
+    _languageTotalsReady = false;
+  }
+  return _languageTotalsReady;
+}
+
+/** Boot: databases built before the language counters existed get them from one background refresh. */
+export function ensureLanguageTotals() {
+  try {
+    if (!catalogLangCountsReady() || languageTotalsReady()) return Promise.resolve(false);
+    return refreshCatalogBookCounts().then(() => {
+      _languageTotalsReady = false;
+      _languageTotalsReadyAt = 0;
+      return true;
+    });
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+/** Books of one language from the counters (null when they are not built yet). */
+function languageBookTotal(value) {
+  if (!languageTotalsReady()) return null;
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(book_count), 0) AS c FROM catalog_lang_counts
+    WHERE kind = 0 AND CASE WHEN NULLIF(lang, '') IS NULL THEN 'unknown' ELSE lang END = ?`).get(value);
+  return Number(row?.c) || 0;
+}
+
 export function listLanguages({ page = 1, pageSize = 50, query = '', sort = 'name', order = '', langs = null }) {
   const offset = (page - 1) * pageSize;
   const langClause = languageFilterClause('lang', '', langs);
@@ -7019,7 +7278,16 @@ export function listLanguages({ page = 1, pageSize = 50, query = '', sort = 'nam
   const langSql = langClause ? `WHERE ${langClause.where}` : '';
   const langParams = langClause ? langClause.params : [];
 
-  const groupedSql = `
+  const useTotals = languageTotalsReady();
+  const groupedSql = useTotals ? `
+    SELECT CASE WHEN NULLIF(lang, '') IS NULL THEN 'unknown' ELSE lang END AS name,
+           SUM(book_count) AS bookCount,
+           CASE WHEN NULLIF(lang, '') IS NULL THEN 'Не указан' ELSE UPPER(lang) END AS displayName
+    FROM catalog_lang_counts
+    WHERE kind = 0${langClause ? ` AND ${langClause.where}` : ''}
+    GROUP BY CASE WHEN NULLIF(lang, '') IS NULL THEN 'unknown' ELSE lang END
+    ${whereClause}
+  ` : `
     SELECT CASE WHEN NULLIF(lang, '') IS NULL THEN 'unknown' ELSE lang END AS name,
            COUNT(*) AS bookCount,
            CASE WHEN NULLIF(lang, '') IS NULL THEN 'Не указан' ELSE UPPER(lang) END AS displayName
@@ -7067,14 +7335,14 @@ function _getFacetStmts(facet, sort, order = '', author = '') {
     authors: `SELECT COUNT(DISTINCT b.id) AS count FROM book_authors ba JOIN authors a ON a.id = ba.author_id JOIN active_books b ON b.id = ba.book_id WHERE ${authorAliasMatchSql('a')}`,
     series: `SELECT COUNT(DISTINCT b.id) AS count FROM book_series bs JOIN series_catalog s ON s.id = bs.series_id JOIN active_books b ON b.id = bs.book_id${seriesJoin} WHERE s.name = ?${seriesWhere}`,
     genres: `SELECT COUNT(*) AS count FROM book_genres bg JOIN genres_catalog g ON g.id = bg.genre_id JOIN active_books b ON b.id = bg.book_id WHERE g.name = ?`,
-    languages: `SELECT COUNT(*) AS count FROM active_books b WHERE COALESCE(NULLIF(b.lang, ''), 'unknown') = ?`
+    languages: `SELECT COUNT(*) AS count FROM active_books b WHERE b.lang = ?`
   };
   const itemsSql = {
     authors: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted FROM book_authors ba JOIN authors a ON a.id = ba.author_id JOIN active_books b ON b.id = ba.book_id LEFT JOIN sources s ON s.id = b.source_id WHERE ${authorAliasMatchSql('a')} GROUP BY b.id ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b', order)} LIMIT ? OFFSET ?`,
     // seriesNo из book_series (bs) — номер в открытой серии, не primary series_no книги
     series: `SELECT b.id, b.title, b.authors, b.genres, sc.name AS series, bs.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted FROM book_series bs JOIN series_catalog sc ON sc.id = bs.series_id JOIN active_books b ON b.id = bs.book_id${seriesJoin} LEFT JOIN sources s ON s.id = b.source_id WHERE sc.name = ?${seriesWhere} ORDER BY ${seriesItemsOrder} LIMIT ? OFFSET ?`,
     genres: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted FROM book_genres bg JOIN genres_catalog g ON g.id = bg.genre_id JOIN active_books b ON b.id = bg.book_id LEFT JOIN sources s ON s.id = b.source_id WHERE g.name = ? ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b', order)} LIMIT ? OFFSET ?`,
-    languages: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted FROM active_books b LEFT JOIN sources s ON s.id = b.source_id WHERE COALESCE(NULLIF(b.lang, ''), 'unknown') = ? ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b', order)} LIMIT ? OFFSET ?`
+    languages: `SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted FROM active_books b LEFT JOIN sources s ON s.id = b.source_id WHERE b.lang = ? ORDER BY ${sort === 'recent' ? rankOrder : resolveBookAliasSort(sort, 'b', order)} LIMIT ? OFFSET ?`
   };
   entry = {
     total: db.prepare(totalSql[facet]),
@@ -7174,7 +7442,13 @@ function getBooksByFacetFiltered({
   } else if (facet === 'genres') {
     fromSql = `FROM book_genres bg JOIN genres_catalog g ON g.id = bg.genre_id JOIN active_books b ON b.id = bg.book_id LEFT JOIN sources s ON s.id = b.source_id WHERE g.name = ?`;
   } else if (facet === 'languages') {
-    fromSql = `FROM active_books b LEFT JOIN sources s ON s.id = b.source_id WHERE COALESCE(NULLIF(b.lang, ''), 'unknown') = ?`;
+    // sargable (b.lang = ?): COALESCE(NULLIF(...)) = ? read and sorted the whole catalog (6 s)
+    if (value === 'unknown') {
+      fromSql = `FROM active_books b LEFT JOIN sources s ON s.id = b.source_id WHERE (b.lang IS NULL OR b.lang = '' OR b.lang = 'unknown')`;
+      baseParams.length = 0;
+    } else {
+      fromSql = `FROM active_books b LEFT JOIN sources s ON s.id = b.source_id WHERE b.lang = ?`;
+    }
   } else {
     return { total: 0, items: [] };
   }
@@ -7213,6 +7487,38 @@ function getBooksByFacetFiltered({
   return { total, items };
 }
 
+/**
+ * Books of one language, unfiltered: total from the per-language counters, items by walking `books` in the
+ * sort-index order through the id projection (see searchCatalog) with a sargable `lang = ?` — the old
+ * `COALESCE(NULLIF(lang, ''), 'unknown') = ?` could use no index and took 6 s for `ru`.
+ */
+function getLanguageFacetPage(value, sort, order, page, pageSize) {
+  const offset = (page - 1) * pageSize;
+  const unknown = value === 'unknown';
+  const projectionFresh = isActiveBooksProjectionFresh();
+  const from = projectionFresh ? BROWSE_FROM_PROJECTION : 'active_books b';
+  const rankOrder = "COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, ''), b.imported_at) DESC, b.imported_at DESC, b.id DESC";
+  const orderBy = sort === 'recent' && enabledSourcesHaveMixedSidecarFlag()
+    ? applyOrder(rankOrder, order)
+    : resolveBookAliasSort(sort, 'b', order);
+  const where = unknown ? "(b.lang IS NULL OR b.lang = '' OR b.lang = 'unknown')" : 'b.lang = ?';
+  const params = unknown ? [] : [value];
+  let total = languageBookTotal(value);
+  if (total == null) {
+    total = Number(db.prepare(`SELECT COUNT(*) AS count FROM active_books b WHERE ${where}`).get(...params).count) || 0;
+  }
+  if (total === 0 || offset >= total) return { total, items: [] };
+  const items = db.prepare(`
+    SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate,
+           b.archive_name AS archiveName, b.deleted
+    FROM ${from} LEFT JOIN sources s ON s.id = b.source_id
+    WHERE ${where}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?`).all(...params, pageSize, offset).map(mapBookListRow);
+  attachSeriesListsToBooks(items);
+  return { total, items };
+}
+
 export function getBooksByFacet({
   facet, value, page = 1, pageSize = 24, sort = 'title', order = '', author = '',
   lang = '', langs = null, format = '', year = 0, minRate = 0, hasSeries = null, genre = '', hideReadUser = ''
@@ -7232,11 +7538,29 @@ export function getBooksByFacet({
   if (cached) return cached;
   const offset = (page - 1) * pageSize;
 
+  if (facet === 'languages' && /^[a-z]{2,8}$/.test(String(value || ''))) {
+    /* A language facet IS plain browse with `lang = value` (+ the page filters): the id-projection plan and the
+       memoized total instead of COUNT(DISTINCT) + a full sort (6.5 s for `ru` with a profile language). */
+    const result = searchCatalog({
+      query: '', page, pageSize, sort, order, genre: genreKey, genreMode: 'or',
+      lang: String(value), langs: langList, format, year, minRate, hasSeries: seriesFlag, hideReadUser
+    });
+    const out = { total: result.total, items: result.items };
+    writeTimedCache(facetBooksCache, cacheKey, out, FACET_CACHE_TTL_MS, 120);
+    return out;
+  }
+
   if (extra.active) {
     const result = getBooksByFacetFiltered({
       facet, value, page, pageSize, sort, order, author,
       lang, langs: langList, format, year, minRate, hasSeries: seriesFlag, genre: genreKey, hideReadUser
     });
+    writeTimedCache(facetBooksCache, cacheKey, result, FACET_CACHE_TTL_MS, 120);
+    return result;
+  }
+
+  if (facet === 'languages') {
+    const result = getLanguageFacetPage(value, sort, order, page, pageSize);
     writeTimedCache(facetBooksCache, cacheKey, result, FACET_CACHE_TTL_MS, 120);
     return result;
   }
@@ -7302,6 +7626,9 @@ export async function getBooksByFacetCoalesced({
   const cacheKey = `${facet}|${v}|${sort}|${order}|${page}|${pageSize}|${author}|f:${filterKey}`;
   const cached = readTimedCache(facetBooksCache, cacheKey);
   if (cached) return cached;
+  if (facet === 'languages' && /^[a-z]{2,8}$/.test(v)) {
+    await warmBrowseTotal({ genre: genreKey, lang: v, langs: langList, format, year, minRate, hasSeries: seriesFlag, hideReadUser });
+  }
   let shared = facetBooksInflight.get(cacheKey);
   if (!shared) {
     shared = new Promise((resolve, reject) => {
@@ -7994,23 +8321,102 @@ function followingSqlParts(username, cutoff, { lang = '', langs = null, newerTha
   return { cte, body, params };
 }
 
+/* One scan of the favorites' recent books per user (≈ 0.15–0.5 s with dozens of favorite authors) serves the page,
+   the total, the sidebar badge and the home shelf: they used to run 3 – 4 such scans per request. */
+const FOLLOWING_LIST_TTL_MS = 600_000;
+const FOLLOWING_LIST_MAX = 5000;
+const _followingListMemo = new Map(); // username -> { rows: [{ id, d, lang }], at, cutoff }
+
+/* The books of the 90-day window with their author / series ids: shared by every user (one ~0.15 s scan per
+   catalog change / 10 min). A user's list is then a JS filter over ~11k rows by his favorite ids, language and
+   read set — no SQL per user, which was 0.3–0.5 s with dozens of favorite authors. */
+let _followingWindowMemo = null; // { cutoff, books: [{ id, d, lang, authors: number[], series: number[] }], at }
+
+function followingWindowBooks(cutoff) {
+  const hit = _followingWindowMemo;
+  if (hit && hit.cutoff === cutoff && Date.now() - hit.at < FOLLOWING_LIST_TTL_MS) return hit.books;
+  const pred = `${ISO_DATE_PRED('ab')} AND SUBSTR(ab.date, 1, 10) >= ?`;
+  const books = db.prepare(`
+    SELECT ab.id AS id, SUBSTR(ab.date, 1, 10) AS d, ab.lang AS lang
+    FROM active_books ab WHERE ${pred}
+    ORDER BY d DESC, ab.id DESC`).all(cutoff).map((r) => ({ id: r.id, d: r.d, lang: String(r.lang || '').trim().toLowerCase(), authors: [], series: [] }));
+  const byId = new Map(books.map((b) => [b.id, b]));
+  for (const row of db.prepare(`
+    SELECT ba.book_id AS bookId, ba.author_id AS refId
+    FROM active_books ab JOIN book_authors ba ON ba.book_id = ab.id WHERE ${pred}`).all(cutoff)) byId.get(row.bookId)?.authors.push(row.refId);
+  for (const row of db.prepare(`
+    SELECT bs.book_id AS bookId, bs.series_id AS refId
+    FROM active_books ab JOIN book_series bs ON bs.book_id = ab.id WHERE ${pred}`).all(cutoff)) byId.get(row.bookId)?.series.push(row.refId);
+  _followingWindowMemo = { cutoff, books, at: Date.now() };
+  return books;
+}
+
+function followingRows(username, langs) {
+  // Favorite-matched window books are memoized per user; the read set and the languages are applied on every
+  // call (cheap, a few hundred rows) so that marking a book read shows up at once.
+  let matched = null;
+  const hit = _followingListMemo.get(username);
+  const window = followingCutoffDate();
+  if (!window) return [];
+  if (hit && Date.now() - hit.at < FOLLOWING_LIST_TTL_MS && hit.cutoff === window.cutoff) {
+    matched = hit.rows;
+  } else {
+    matched = [];
+    const favAuthors = new Set(db.prepare('SELECT author_id AS id FROM favorite_authors WHERE username = ?').all(username).map((r) => r.id));
+    const favSeries = new Set(db.prepare('SELECT series_id AS id FROM favorite_series WHERE username = ?').all(username).map((r) => r.id));
+    if (favAuthors.size || favSeries.size) {
+      for (const book of followingWindowBooks(window.cutoff)) {
+        if (book.authors.some((id) => favAuthors.has(id)) || book.series.some((id) => favSeries.has(id))) {
+          matched.push({ id: book.id, d: book.d, lang: book.lang });
+          if (matched.length >= FOLLOWING_LIST_MAX) break;
+        }
+      }
+    }
+    if (_followingListMemo.size >= 200) _followingListMemo.delete(_followingListMemo.keys().next().value);
+    _followingListMemo.set(username, { rows: matched, at: Date.now(), cutoff: window.cutoff });
+  }
+  if (!matched.length) return matched;
+  const clause = languageFilterClause('lang', '', langs);
+  if (clause && clause.where === '0') return [];
+  const allowed = clause ? new Set(clause.params.map((l) => String(l).toLowerCase())) : null;
+  const read = getReadBookIdSet(username);
+  return matched.filter((r) => (!allowed || allowed.has(r.lang)) && !read.has(r.id));
+}
+
 export function getFollowingNewBooks(username, { page = 1, pageSize = 24, lang = '', langs = null, newerThan = '' } = {}) {
   const u = String(username || '').trim();
   const window = followingCutoffDate();
   if (!u || !window) return { total: 0, items: [] };
-  const { cte, body, params } = followingSqlParts(u, window.cutoff, { lang, langs, newerThan });
-  const total = db.prepare(`${cte} SELECT COUNT(*) AS count ${body}`).get(...params).count;
   const offset = (Math.max(1, page) - 1) * pageSize;
-  const items = db.prepare(`${cte}
-    SELECT active_books.id, active_books.title, active_books.authors, active_books.genres, active_books.series,
-           active_books.series_no AS seriesNo, active_books.ext, active_books.lang, active_books.lib_rate AS libRate,
-           active_books.archive_name AS archiveName, active_books.deleted, active_books.date
-    ${body}
-    ORDER BY SUBSTR(active_books.date, 1, 10) DESC, active_books.id DESC
-    LIMIT ? OFFSET ?`).all(...params, pageSize, offset).map(mapBookListRow);
-  attachSeriesListsToBooks(items);
-  attachCachedAnnotationsToBooks(items);
-  return { total, items };
+  if (lang) {
+    // an explicit page language: the rare path stays a direct query
+    const { cte, body, params } = followingSqlParts(u, window.cutoff, { lang, langs, newerThan });
+    const total = db.prepare(`${cte} SELECT COUNT(*) AS count ${body}`).get(...params).count;
+    const items = db.prepare(`${cte}
+      SELECT active_books.id, active_books.title, active_books.authors, active_books.genres, active_books.series,
+             active_books.series_no AS seriesNo, active_books.ext, active_books.lang, active_books.lib_rate AS libRate,
+             active_books.archive_name AS archiveName, active_books.deleted, active_books.date
+      ${body}
+      ORDER BY SUBSTR(active_books.date, 1, 10) DESC, active_books.id DESC
+      LIMIT ? OFFSET ?`).all(...params, pageSize, offset).map(mapBookListRow);
+    attachSeriesListsToBooks(items);
+    attachCachedAnnotationsToBooks(items);
+    return { total, items };
+  }
+  const all = followingRows(u, langs);
+  const rows = newerThan ? all.filter((r) => r.d > newerThan) : all;
+  const ids = rows.slice(offset, offset + pageSize).map((r) => r.id);
+  let items = [];
+  if (ids.length) {
+    const byId = new Map(db.prepare(`
+      SELECT id, title, authors, genres, series, series_no AS seriesNo, ext, lang, lib_rate AS libRate,
+             archive_name AS archiveName, deleted, date
+      FROM active_books WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map((row) => [row.id, row]));
+    items = ids.map((id) => byId.get(id)).filter(Boolean).map(mapBookListRow);
+    attachSeriesListsToBooks(items);
+    attachCachedAnnotationsToBooks(items);
+  }
+  return { total: rows.length, items };
 }
 
 /** Unseen «Новое у любимых» for the sidebar badge (memoized; cleared on favorite changes and visits).
@@ -8026,11 +8432,10 @@ export function getFollowingNewCount(username, { langs = null, unseenOnly = true
     const hasFavorites = db.prepare(`
       SELECT 1 FROM favorite_authors WHERE username = ? UNION ALL SELECT 1 FROM favorite_series WHERE username = ? LIMIT 1
     `).get(u, u);
-    const window = hasFavorites ? followingCutoffDate() : null;
-    if (window) {
+    if (hasFavorites && followingCutoffDate()) {
       const seen = unseenOnly ? String(getMeta(followingSeenKey(u)) || '') : '';
-      const { cte, body, params } = followingSqlParts(u, window.cutoff, { langs, newerThan: seen });
-      count = db.prepare(`${cte} SELECT COUNT(*) AS count ${body}`).get(...params).count;
+      const rows = followingRows(u, langs);
+      count = seen ? rows.filter((r) => r.d > seen).length : rows.length;
     }
   } catch (err) {
     console.warn('[following] badge count failed:', err.message);
@@ -8045,7 +8450,8 @@ export function markFollowingSeen(username) {
   const window = followingCutoffDate();
   if (!u || !window) return;
   setMeta(followingSeenKey(u), window.maxDate);
-  _followingBadgeMemo.delete(u);
+  // everything up to maxDate is seen now: the badge is 0, no recount needed
+  _followingBadgeMemo.set(u, { count: 0, at: Date.now() });
 }
 
 export function invalidateFollowingBadge(username) {
@@ -8053,8 +8459,10 @@ export function invalidateFollowingBadge(username) {
     const u = String(username).trim();
     _followingBadgeMemo.delete(u);
     _followingBadgeMemo.delete(`${u}\u0000all`);
+    _followingListMemo.delete(u);
   } else {
     _followingBadgeMemo.clear();
+    _followingListMemo.clear();
   }
 }
 
@@ -8092,7 +8500,8 @@ export function getRecentArrivals({
     whereParams.push(...genreFilter.params);
   }
   for (const ef of buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries, hideReadUser })) {
-    whereParts.push(ef.where.replace(/active_books\./g, 'b.'));
+    // unary plus: keep the planner on the narrow date index (idx_books_lang scanned 540k rows, 1 s, same answer)
+    whereParts.push(ef.where.replace(/active_books\./g, 'b.').replace(/\bb\.lang\b/g, '+b.lang'));
     whereParams.push(...ef.params);
   }
   const whereSql = whereParts.join(' AND ');
@@ -8138,7 +8547,7 @@ export function listRecentSectionGenres({
   const whereParts = [`${ISO_DATE_PRED('b')}`, 'SUBSTR(b.date, 1, 10) >= ?'];
   const whereParams = [bounds.cutoff];
   for (const ef of buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries })) {
-    whereParts.push(ef.where.replace(/active_books\./g, 'b.'));
+    whereParts.push(ef.where.replace(/active_books\./g, 'b.').replace(/\bb\.lang\b/g, '+b.lang'));
     whereParams.push(...ef.params);
   }
 
@@ -8463,7 +8872,22 @@ export function getLibraryView(view = 'recent', {
   return getRecentArrivals({ page, pageSize, sort, order, genre, genreMode, lang, langs, format, year, minRate, hasSeries, hideReadUser });
 }
 
+/* The letter / prefix tree of OPDS (authors, series, titles) only changes when the catalog does: cache it.
+   Titles are grouped over every visible book (~1 s on 620k), authors / series over the catalogs. */
+const _opdsQueryMemo = new Map();
+const OPDS_QUERY_MEMO_TTL_MS = 30 * 60_000;
+
 export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {
+  const key = `${facet}|${prefix}|${depth}|${genre}`;
+  const hit = _opdsQueryMemo.get(key);
+  if (hit && Date.now() - hit.at < OPDS_QUERY_MEMO_TTL_MS) return hit.rows;
+  const rows = opdsQueryUncached(facet, prefix, depth, genre);
+  if (_opdsQueryMemo.size >= 400) _opdsQueryMemo.delete(_opdsQueryMemo.keys().next().value);
+  _opdsQueryMemo.set(key, { rows, at: Date.now() });
+  return rows;
+}
+
+function opdsQueryUncached(facet, prefix = '', depth = 0, genre = '') {
   const tableMap = {
     authors: { table: 'authors', join: 'book_authors', joinCol: 'author_id', nameCol: 'name', displayCol: 'display_name' },
     series: { table: 'series_catalog', join: 'book_series', joinCol: 'series_id', nameCol: 'name', displayCol: 'display_name' },
@@ -8480,7 +8904,8 @@ export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {
   const prefixKey = prefix ? createSortKey(prefix) : '';
   const effectiveDepth = depth || (prefixKey.length + 1);
 
-  const prefixCond = prefixKey ? `AND c.search_name LIKE ? || '%'` : '';
+  const prefixCond = prefixKey ? `AND c.search_name >= ? AND c.search_name < ?` : '';
+  const prefixParams = prefixKey ? [prefixKey, prefixKey + '￿'] : [];
   let sql, params;
   if (genre) {
     sql = `SELECT SUBSTR(c.search_name, 1, ?) AS prefix_val, COUNT(DISTINCT c.id) AS cnt
@@ -8493,20 +8918,16 @@ export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {
            GROUP BY prefix_val
            ORDER BY prefix_val`;
     const genreParams = genre.split(',').map(g => g.trim());
-    params = prefixKey
-      ? [effectiveDepth, ...genreParams, prefixKey]
-      : [effectiveDepth, ...genreParams];
+    params = [effectiveDepth, ...genreParams, ...prefixParams];
   } else {
-    sql = `SELECT SUBSTR(c.search_name, 1, ?) AS prefix_val, COUNT(DISTINCT c.id) AS cnt
+    /* book_count > 0 = «has a visible book» (refreshCatalogBookCounts / adjustCatalogCountsForBook). The old
+       join author × book_authors × active_books grouped over ~1.5M links took 1.8–3.5 s on every request. */
+    sql = `SELECT SUBSTR(c.search_name, 1, ?) AS prefix_val, COUNT(*) AS cnt
            FROM ${conf.table} c
-           JOIN ${conf.join} j ON j.${conf.joinCol} = c.id
-           JOIN active_books b ON b.id = j.book_id
-           WHERE 1=1 ${prefixCond}
+           WHERE c.book_count > 0 ${prefixCond}
            GROUP BY prefix_val
            ORDER BY prefix_val`;
-    params = prefixKey
-      ? [effectiveDepth, prefixKey]
-      : [effectiveDepth];
+    params = [effectiveDepth, ...prefixParams];
   }
 
   const rows = db.prepare(sql).all(...params);
@@ -8519,7 +8940,7 @@ export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {
 
   // Auto-deepen if too few prefixes (like inpx-web recursive depth)
   if (prefixKey && rows.length < 10 && effectiveDepth < 6) {
-    return opdsQuery(facet, prefix, effectiveDepth + 1, genre);
+    return opdsQueryUncached(facet, prefix, effectiveDepth + 1, genre);
   }
 
   return sortOpdsPrefixRows(rows).map(r => ({
@@ -8559,7 +8980,9 @@ function opdsTitleQuery(prefix = '', depth = 0, genre = '') {
   const prefixKey = prefix ? createSortKey(prefix) : '';
   const effectiveDepth = depth || (prefixKey.length + 1);
 
-  const prefixCond = prefixKey ? `AND b.title_search LIKE ? || '%'` : '';
+  /* A range, not `LIKE ? || '%'`: the concatenated pattern cannot use idx_books_title_search (0.65 s per prefix). */
+  const prefixCond = prefixKey ? `AND b.title_search >= ? AND b.title_search < ?` : '';
+  const prefixParams = prefixKey ? [prefixKey, prefixKey + '￿'] : [];
   let sql, params;
   if (genre) {
     sql = `SELECT SUBSTR(b.title_search, 1, ?) AS prefix_val, COUNT(*) AS cnt
@@ -8569,17 +8992,13 @@ function opdsTitleQuery(prefix = '', depth = 0, genre = '') {
            WHERE 1=1 ${prefixCond}
            GROUP BY prefix_val ORDER BY prefix_val`;
     const genreParams = genre.split(',').map(g => g.trim());
-    params = prefixKey
-      ? [effectiveDepth, ...genreParams, prefixKey]
-      : [effectiveDepth, ...genreParams];
+    params = [effectiveDepth, ...genreParams, ...prefixParams];
   } else {
     sql = `SELECT SUBSTR(b.title_search, 1, ?) AS prefix_val, COUNT(*) AS cnt
            FROM active_books b
            WHERE 1=1 ${prefixCond}
            GROUP BY prefix_val ORDER BY prefix_val`;
-    params = prefixKey
-      ? [effectiveDepth, prefixKey]
-      : [effectiveDepth];
+    params = [effectiveDepth, ...prefixParams];
   }
 
   const rows = db.prepare(sql).all(...params);
@@ -8627,9 +9046,9 @@ function opdsSearchFacet(facet, prefix, genre = '') {
     params = [...genreParams, prefixKey, prefixKey + '\uffff'];
   } else {
     sql = `SELECT c.name AS name, COALESCE(c.display_name, c.name) AS displayName,
-             (SELECT COUNT(*) FROM ${conf.join} j JOIN active_books ab ON ab.id = j.book_id WHERE j.${conf.joinCol} = c.id) AS bookCount
+             COALESCE(c.book_count, 0) AS bookCount
            FROM ${conf.table} c
-           WHERE c.search_name >= ? AND c.search_name < ?
+           WHERE c.search_name >= ? AND c.search_name < ? AND c.book_count > 0
            ORDER BY c.search_name LIMIT 200`;
     params = [prefixKey, prefixKey + '\uffff'];
   }

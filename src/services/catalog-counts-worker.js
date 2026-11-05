@@ -79,6 +79,14 @@ try {
     recount(db, target);
     timings[target.table] = Date.now() - t0;
   }
+  /* kind 0 = books per language (id 0): the «Языки» list and the language facet totals read it instead of a
+     GROUP BY over every visible book (1.3 s) */
+  parentPort.postMessage({ type: 'progress', stage: 'catalog_languages' });
+  const tl = Date.now();
+  db.exec('DELETE FROM catalog_lang_counts WHERE kind = 0');
+  db.exec(`INSERT INTO catalog_lang_counts (kind, id, lang, book_count)
+    SELECT 0, 0, COALESCE(lang, ''), COUNT(*) FROM active_books GROUP BY COALESCE(lang, '')`);
+  timings.languages = Date.now() - tl;
   db.prepare("INSERT INTO meta (key, value) VALUES ('catalog_lang_counts_ready', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   /* Close before "done": the parent starts the stats snapshot immediately, and
      close() still holds the file. That wait has no timeout and never finishes. */

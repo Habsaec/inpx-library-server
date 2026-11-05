@@ -5,8 +5,9 @@ import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { PAGE_CACHE_TTL_MS } from '../constants.js';
 import { effectiveContentLangs, resolveContentLangFilter, contentLangCacheKey } from '../user-content-langs.js';
 import { resolveHideReadUser } from '../hide-read.js';
-import { getCachedPageData, getStaleOrSchedule } from '../services/cache.js';
+import { getCachedPageData, getCachedPageDataAsync, getStaleOrSchedule } from '../services/cache.js';
 import { safePage } from '../utils/safe-int.js';
+import { asyncHandler } from '../utils/async-handler.js';
 import {
   getAuthorBooksGroupedCoalesced,
   getAuthorFlibustaSourceId,
@@ -21,6 +22,8 @@ import {
   listSeries,
   resolveAuthorName,
   searchCatalog,
+  warmBrowseTotal,
+  listSearchGenresAsync,
   searchOverview,
   listSearchGenres,
   parseGenreList,
@@ -79,7 +82,7 @@ export function registerBrowseApiRoutes(app) {
   });
 
   /** Genres present in books matching q + filters (excludes genre filter for faceting). */
-  app.get('/api/search/genres', requireBrowseAuth, (req, res) => {
+  app.get('/api/search/genres', requireBrowseAuth, asyncHandler(async (req, res) => {
     const q = String(req.query.q || '').trim();
     const lang = String(req.query.lang || '').trim();
     const format = String(req.query.format || '').trim();
@@ -89,15 +92,10 @@ export function registerBrowseApiRoutes(app) {
     const username = req.user?.username || '';
     const langFilter = resolveContentLangFilter(username, lang);
     const cacheKey = `api:search:genres:${q}:${lang}:${contentLangCacheKey(effectiveContentLangs(username))}:${format}:${year}:${minRate}:${hasSeries}`;
-    const result = getCachedPageData(
-      cacheKey,
-      () => listSearchGenres({
-        query: q, lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries
-      }),
-      PAGE_CACHE_TTL_MS
-    );
+    const opts = { query: q, lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries };
+    const result = await getCachedPageDataAsync(cacheKey, () => listSearchGenresAsync(opts), PAGE_CACHE_TTL_MS);
     res.json(result);
-  });
+  }));
 
   app.get('/api/library/:view(recent|continue|read|recommended|want|following|rated)', requireBrowseAuth, (req, res) => {
     const view = String(req.params.view);
@@ -157,7 +155,7 @@ export function registerBrowseApiRoutes(app) {
     res.json(json);
   });
 
-  app.get('/api/catalog', requireBrowseAuth, (req, res) => {
+  app.get('/api/catalog', requireBrowseAuth, asyncHandler(async (req, res) => {
     const query = String(req.query.q || '');
     const field = ['books', 'authors', 'series'].includes(String(req.query.field || '')) ? String(req.query.field) : 'books';
     const isBookField = field === 'books';
@@ -181,6 +179,9 @@ export function registerBrowseApiRoutes(app) {
     const langFilter = resolveContentLangFilter(username, lang);
     const hideReadUser = resolveHideReadUser(req);
     const cacheKey = `api:catalog:v4:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${contentLangCacheKey(effectiveContentLangs(username))}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}:s${pageSize}:r:${hideReadUser}`;
+    if (isBookField) {
+      await warmBrowseTotal({ query, genre, genreMode, letter, lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, hideReadUser });
+    }
     const result = getCachedPageData(
       cacheKey,
       () => searchCatalog({
@@ -192,7 +193,7 @@ export function registerBrowseApiRoutes(app) {
     const payload = { items: result.items, total: result.total, page, pageSize, field: result.field };
     if (result.searchHints) payload.searchHints = result.searchHints;
     res.json(payload);
-  });
+  }));
 
   app.get('/api/browse/authors', requireBrowseAuth, (req, res) => {
     const page = safePage(req.query.page);

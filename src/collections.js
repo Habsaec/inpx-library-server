@@ -224,12 +224,14 @@ export function listCollections({ includeDisabled = false, username = '' } = {})
   const pinned = username ? pinnedCollectionIds(username) : null;
   const rows = db.prepare(`
     SELECT c.id, c.slug, c.title, c.description, c.source, c.source_url AS sourceUrl, c.builtin, c.enabled,
-           c.matched_at AS matchedAt, COUNT(ci.position) AS total, COUNT(ab.id) AS found
+           c.matched_at AS matchedAt,
+           (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id) AS total,
+           /* EXISTS per item, not LEFT JOIN active_books: a LEFT JOIN on that view materialized the whole
+              catalog (1.5 s on every /api/collections call). */
+           (SELECT COUNT(*) FROM collection_items ci2 WHERE ci2.collection_id = c.id
+              AND EXISTS (SELECT 1 FROM active_books ab WHERE ab.id = ci2.book_id)) AS found
     FROM collections c
-    LEFT JOIN collection_items ci ON ci.collection_id = c.id
-    LEFT JOIN active_books ab ON ab.id = ci.book_id
     ${includeDisabled ? '' : 'WHERE c.enabled = 1'}
-    GROUP BY c.id
     ORDER BY c.display_order ASC, c.title COLLATE NOCASE ASC
   `).all();
   const previewStmt = db.prepare(`

@@ -21,7 +21,8 @@ import { config } from '../config.js';
 import { t, tp, getLocale } from '../i18n.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireApiAuth, requireBrowseAuth, requireBrowseOrOpds, requireWebAuth, requireAdminWeb } from '../middleware/auth.js';
-import { getCachedPageData, getStaleOrSchedule, clearPageDataCache, invalidateUserPageCaches } from '../services/cache.js';
+import { getCachedPageData, getStaleOrSchedule, getStaleOrScheduleAsync, clearPageDataCache, invalidateUserPageCaches } from '../services/cache.js';
+import { asyncHandler } from '../utils/async-handler.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { getRecommendedLibraryView, getHomeRecommendations, buildSimilarBooks, listRecommendedSectionGenres } from '../services/recommendations.js';
 import { bookPagePath, apiBookPath } from '../utils/book-ref.js';
@@ -84,6 +85,9 @@ import {
   resolveSeriesCatalogName,
   recordReadingHistory,
   searchCatalog,
+  warmBrowseTotal,
+  listEntitiesByGenreAsync,
+  listEntitiesByLanguageAsync,
   searchOverview,
   getSourceRoot,
   effectiveSourceFlibustaForBook,
@@ -449,7 +453,7 @@ export function registerLibraryRoutes(app, deps) {
   });
 
   // --- Catalog search ---
-  app.get('/catalog', requireBrowseAuth, (req, res) => {
+  app.get('/catalog', requireBrowseAuth, asyncHandler(async (req, res) => {
     const query = String(req.query.q || '');
     const genres = parseGenreList(req.query.genre);
     const genre = genres.join(',');
@@ -483,6 +487,10 @@ export function registerLibraryRoutes(app, deps) {
     const langFilter = resolveContentLangFilter(username, lang);
     const hideReadUser = resolveHideReadUser(req);
     const cacheKey = `catalog:v5:${field}:${sort}:${order}:${genre}:${genreMode}:${letter}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries}:${query}:p${page}:r:${hideReadUser}`;
+    // the filtered total is counted on the query worker, not on the event loop
+    if (isBookField) {
+      await warmBrowseTotal({ query, genre, genreMode, letter, lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, hideReadUser });
+    }
     const result = getCachedPageData(cacheKey, () => searchCatalog({
       query, field, page, pageSize, sort, order, genre, genreMode, letter,
       lang: langFilter.lang, langs: langFilter.langs, format, year, minRate, hasSeries, hideReadUser
@@ -541,7 +549,12 @@ export function registerLibraryRoutes(app, deps) {
       } else if (query.trim()) {
         genreOptionsLazy = true;
         items = [];
+      } else if (format || year || minRate >= 1 || hasSeries === 0 || hasSeries === 1) {
+        // a GROUP BY over every matching book: the browser asks /api/search/genres, which runs on the query worker
+        genreOptionsLazy = true;
+        items = [];
       } else {
+        // language-only scope (profile languages): per-language genre counters, a few ms
         const scoped = getCachedPageData(
           `catalog:search-genres:${query.trim()}:${lang}:${contentLangCacheKey(contentLangs)}:${format}:${year}:${minRate}:${hasSeries}`,
           () => listSearchGenres({
@@ -590,7 +603,7 @@ export function registerLibraryRoutes(app, deps) {
       user, stats,
       indexStatus: getIndexStatus(), csrfToken: req.csrfToken || '', readBookIds
     }));
-  });
+  }));
 
   // --- Library views ---
   app.get('/library/:view(recent|continue|read|recommended|want|following|rated)', requireBrowseAuth, (req, res) => {
@@ -985,16 +998,17 @@ export function registerLibraryRoutes(app, deps) {
         // на крупный жанр/язык не гоняли многосекундный синхронный подсчёт.
         const entityLangs = langState.list;
         const entityCacheKey = `facet:entity:${entityLangs.join(',')}:${facet}:${view}:${value}:${entitySort}:p${page}`;
-        const entityResult = getStaleOrSchedule(entityCacheKey, () => {
+        // computed on the query worker (genres) or from per-language counters (languages): never on the event loop
+        const entityResult = await getStaleOrScheduleAsync(entityCacheKey, async () => {
           if (facet === 'genres') {
-            return view === 'authors'
-              ? listAuthorsByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs })
-              : listSeriesByGenre({ genre: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs });
+            return listEntitiesByGenreAsync(view === 'authors' ? 'authors' : 'series', {
+              genre: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs
+            });
           }
-          return view === 'authors'
-            ? listAuthorsByLanguage({ lang: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs })
-            : listSeriesByLanguage({ lang: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs });
-        }, PAGE_CACHE_TTL_MS, { total: 0, items: [] });
+          return listEntitiesByLanguageAsync(view === 'authors' ? 'authors' : 'series', {
+            lang: value, page, pageSize: entityPageSize, sort: entitySort, langs: entityLangs
+          });
+        }, PAGE_CACHE_TTL_MS);
         const summary = getFacetSummary(facet, value);
         res.send(renderFacetBooks({
           title: tp('facet.titleWithValue', { label: facetLabels[facet] || t('facet.sectionFallback'), value: displayValue }),

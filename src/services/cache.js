@@ -15,6 +15,44 @@ const refreshing = new Set();
  * @param {number} [ttlMs]
  * @returns {any}
  */
+const _asyncInflight = new Map();
+
+/** Like getCachedPageData, for async computations (query worker): one computation per key at a time. */
+export async function getCachedPageDataAsync(key, computeAsync, ttlMs = PAGE_CACHE_TTL_MS) {
+  const cached = pageDataCache.get(key);
+  if (cached && Date.now() - cached.createdAt < ttlMs) return cached.value;
+  let job = _asyncInflight.get(key);
+  if (!job) {
+    job = Promise.resolve()
+      .then(computeAsync)
+      .then((value) => {
+        if (pageDataCache.size >= PAGE_CACHE_MAX) {
+          const oldest = pageDataCache.keys().next().value;
+          if (oldest !== undefined) pageDataCache.delete(oldest);
+        }
+        pageDataCache.set(key, { value, createdAt: Date.now() });
+        return value;
+      })
+      .finally(() => _asyncInflight.delete(key));
+    _asyncInflight.set(key, job);
+  }
+  return job;
+}
+
+/**
+ * Stale-while-revalidate for async (query-worker) computations: a fresh or stale value is returned at once (a stale
+ * one also refreshes in the background); only a cold miss waits for the computation, without blocking the loop.
+ */
+export async function getStaleOrScheduleAsync(key, computeAsync, ttlMs = PAGE_CACHE_TTL_MS) {
+  const cached = pageDataCache.get(key);
+  if (cached && Date.now() - cached.createdAt < ttlMs) return cached.value;
+  if (cached) {
+    void getCachedPageDataAsync(key, computeAsync, 0).catch(() => {});
+    return cached.value;
+  }
+  return getCachedPageDataAsync(key, computeAsync, ttlMs);
+}
+
 export function getCachedPageData(key, compute, ttlMs = PAGE_CACHE_TTL_MS) {
   const now = Date.now();
   const cached = pageDataCache.get(key);
