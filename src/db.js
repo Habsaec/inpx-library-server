@@ -5219,7 +5219,7 @@ export function getReadBooksCount(username) {
 }
 
 /* ── Per-user read status cache (short TTL, invalidated on toggle) ── */
-const _readCache = new Map();  // username → { ids: Set, series: Set, expiresAt }
+const _readCache = new Map();  // username → { ids: Set, series: Set|null (lazy), expiresAt }
 const READ_CACHE_TTL_MS = 30 * 60_000; // 30 мин (инвалидируется invalidateReadCache при действиях юзера)
 let _stmtReadIds = null;
 let _stmtReadSeries = null;
@@ -5258,13 +5258,13 @@ function _getCachedRead(username) {
   return null;
 }
 
+/* The fully-read series set is the expensive half (every book of every series the user touched is checked).
+   Only the series view needs it, so it is built lazily and the cheap id set is cached on its own. */
 function _buildReadCache(username) {
   _ensureReadStmts();
   const rows = _stmtReadIds.all(username);
   const ids = new Set(rows.map((r) => r.book_id));
-  const sRows = _stmtReadSeries.all(username, username);
-  const series = new Set(sRows.map((r) => String(r.series_name || '')).filter(Boolean));
-  const entry = { ids, series, expiresAt: Date.now() + READ_CACHE_TTL_MS };
+  const entry = { ids, series: null, expiresAt: Date.now() + READ_CACHE_TTL_MS };
   _readCache.set(username, entry);
   // Evict oldest if too many users cached
   if (_readCache.size > 200) {
@@ -5272,6 +5272,15 @@ function _buildReadCache(username) {
     if (oldest !== undefined) _readCache.delete(oldest);
   }
   return entry;
+}
+
+function _readSeriesOf(entry, username) {
+  if (!entry.series) {
+    _ensureReadStmts();
+    const sRows = _stmtReadSeries.all(username, username);
+    entry.series = new Set(sRows.map((r) => String(r.series_name || '')).filter(Boolean));
+  }
+  return entry.series;
 }
 
 export function invalidateReadCache(username) {
@@ -5287,7 +5296,7 @@ export function getReadBookIdSet(username) {
 export function getFullyReadSeriesNames(username) {
   if (!username) return new Set();
   const c = _getCachedRead(username);
-  return c ? c.series : _buildReadCache(username).series;
+  return _readSeriesOf(c || _buildReadCache(username), username);
 }
 
 let _stmtUserStats = null;

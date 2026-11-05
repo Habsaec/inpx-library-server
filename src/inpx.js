@@ -7909,7 +7909,7 @@ function resolveRecentCatalogCutoff() {
  * badge counts the ones newer than the last visit of /library/following (meta following_seen:<user>).
  */
 const FOLLOWING_WINDOW_DAYS = 90;
-const FOLLOWING_BADGE_TTL_MS = 120_000;
+const FOLLOWING_BADGE_TTL_MS = 600_000;
 const _followingBadgeMemo = new Map(); // username -> { count, at }
 
 function followingSeenKey(username) {
@@ -7925,6 +7925,20 @@ export function followingCutoffDate() {
   return { cutoff: d.toISOString().slice(0, 10), maxDate: bounds.maxDate };
 }
 
+/** True when the favorites cover fewer books than a quarter of the recent window (decided from catalog counters). */
+function followingFavoritesDriven(username, cutoff) {
+  try {
+    const fav = db.prepare(`
+      SELECT (SELECT COALESCE(SUM(a.book_count), 0) FROM favorite_authors fa JOIN authors a ON a.id = fa.author_id WHERE fa.username = ?)
+           + (SELECT COALESCE(SUM(s.book_count), 0) FROM favorite_series fs JOIN series_catalog s ON s.id = fs.series_id WHERE fs.username = ?) AS volume
+    `).get(username, username).volume;
+    const windowBooks = db.prepare(`SELECT COUNT(*) AS c FROM books WHERE deleted = 0 AND SUBSTR(date, 1, 10) >= ?`).get(cutoff).c;
+    return Number(fav) * 4 < Number(windowBooks);
+  } catch {
+    return true;
+  }
+}
+
 /** FROM/WHERE shared by the list and the counter; positional params in order. */
 function followingSqlParts(username, cutoff, { lang = '', langs = null, newerThan = '' } = {}) {
   const extra = buildCatalogExtraFilters({ lang, langs });
@@ -7935,17 +7949,34 @@ function followingSqlParts(username, cutoff, { lang = '', langs = null, newerTha
     ...(newerThan ? [`SUBSTR(active_books.date, 1, 10) > ?`] : []),
     ...extra.map((f) => f.where)
   ];
-  const cte = `
+  if (followingFavoritesDriven(username, cutoff)) {
+    // Few favorites: start from their books (cheap when the favorites are small)
+    const cte = `
     WITH fav(book_id) AS (
       SELECT ba.book_id FROM favorite_authors fa JOIN book_authors ba ON ba.author_id = fa.author_id WHERE fa.username = ?
       UNION
       SELECT bs.book_id FROM favorite_series fs JOIN book_series bs ON bs.series_id = fs.series_id WHERE fs.username = ?
     )`;
-  const body = `
+    const body = `
     FROM fav
     JOIN active_books ON active_books.id = fav.book_id
     WHERE ${where.join(' AND ')}`;
-  const params = [username, username, cutoff, username, ...(newerThan ? [newerThan] : []), ...extra.flatMap((f) => f.params)];
+    const params = [username, username, cutoff, username, ...(newerThan ? [newerThan] : []), ...extra.flatMap((f) => f.params)];
+    return { cte, body, params };
+  }
+  /* Many favorites: start from the recent window instead. Its books were imported together, so they sit in
+     neighbouring pages of `books` (the date index narrows it), while the favorites' books are scattered over the
+     whole table — 55 favorite authors meant tens of thousands of random page reads (~minute on a cold 3 GB
+     Docker host). Membership in the favorites is then a cheap lookup by book id. */
+  const cte = '';
+  const body = `
+    FROM active_books
+    WHERE ${where.join(' AND ')}
+      AND (EXISTS (SELECT 1 FROM book_authors ba JOIN favorite_authors fa ON fa.author_id = ba.author_id
+                   WHERE ba.book_id = active_books.id AND fa.username = ?)
+        OR EXISTS (SELECT 1 FROM book_series bs JOIN favorite_series fs ON fs.series_id = bs.series_id
+                   WHERE bs.book_id = active_books.id AND fs.username = ?))`;
+  const params = [cutoff, username, ...(newerThan ? [newerThan] : []), ...extra.flatMap((f) => f.params), username, username];
   return { cte, body, params };
 }
 
@@ -8920,6 +8951,9 @@ export function toggleFavoriteSeries(username, seriesName) {
   return true;
 }
 
+const FAVORITE_COVER_CANDIDATES = 12;
+const FAVORITE_PREVIEW_CANDIDATES = 24;
+
 export function getFavoriteAuthors(username, limit = 20, sort = 'name', order = '') {
   const orderMap = {
     name: `COALESCE(a.display_name, a.name) COLLATE NOCASE ASC`,
@@ -8935,16 +8969,15 @@ export function getFavoriteAuthors(username, limit = 20, sort = 'name', order = 
         .replace('#ASC#', 'DESC').replace('#DESC#', 'ASC');
     }
   }
-  /* bookCount как коррелированный подзапрос: LEFT JOIN active_books заставлял SQLite
-     материализовать всю view (полный скан books, ~1.6 с на 600k) даже для двух избранных. */
+  /* bookCount = precomputed authors.book_count (refreshCatalogBookCounts / adjustCatalogCountsForBook): counting
+     the author's books through active_books read every book row of every favorite — 55 authors took 74 s on a
+     3 GB Docker host with a cold page cache. The cover is the best-rated of the first FAVORITE_COVER_CANDIDATES
+     books of the author (index order), not of all of them, for the same reason. */
   return db.prepare(`
     SELECT a.name, COALESCE(a.display_name, a.name) AS displayName,
-           (SELECT COUNT(*) FROM book_authors ba
-            JOIN active_books ab ON ab.id = ba.book_id
-            WHERE ba.author_id = a.id) AS bookCount,
-           (SELECT ab2.id FROM book_authors ba2
-            JOIN active_books ab2 ON ab2.id = ba2.book_id
-            WHERE ba2.author_id = a.id
+           COALESCE(a.book_count, 0) AS bookCount,
+           (SELECT ab2.id FROM (SELECT book_id FROM book_authors WHERE author_id = a.id LIMIT ${FAVORITE_COVER_CANDIDATES}) c
+            JOIN active_books ab2 ON ab2.id = c.book_id
             ORDER BY ab2.lib_rate DESC, ab2.title COLLATE NOCASE ASC
             LIMIT 1) AS coverBookId
     FROM favorite_authors fa
@@ -8972,14 +9005,11 @@ export function getFavoriteSeries(username, limit = 20, sort = 'name', order = '
   }
   const rows = db.prepare(`
     SELECT s.name, COALESCE(s.display_name, s.name) AS displayName,
-           (SELECT COUNT(*) FROM book_series bs
-            JOIN active_books ab ON ab.id = bs.book_id
-            WHERE bs.series_id = s.id) AS bookCount,
+           COALESCE(s.book_count, 0) AS bookCount,
            (SELECT GROUP_CONCAT(sb.id, '|') FROM (
               SELECT ab2.id
-              FROM book_series bs2
-              JOIN active_books ab2 ON ab2.id = bs2.book_id
-              WHERE bs2.series_id = s.id
+              FROM (SELECT book_id FROM book_series WHERE series_id = s.id LIMIT ${FAVORITE_PREVIEW_CANDIDATES}) c
+              JOIN active_books ab2 ON ab2.id = c.book_id
               ORDER BY ab2.lib_rate DESC, ab2.title COLLATE NOCASE ASC
               LIMIT 4
            ) sb) AS previewBookIds
