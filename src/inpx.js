@@ -9888,8 +9888,14 @@ const SERIES_INFO_GENRES_MAX = 12;
  * 23 of 70 next to 47 fan authors) qualifies, a publisher series («Библиотека приключений», «Мастера фантазии»)
  * does not.
  */
-function seriesFounderFirstBookId(rows, authors) {
+const PERIODIC_SERIES_NAME_RE = /журнал|газет|альманах|антолог|magazine|anthology/i;
+
+function seriesFounderFirstBookId(rows, authors, genres, displayName = '') {
   if (rows.length < 2 || !authors.length) return null;
+  // Magazines / newspapers / anthologies: an issue's «annotation» is its table of contents.
+  if (genres.some((g) => g.name === 'periodic') || PERIODIC_SERIES_NAME_RE.test(displayName)) return null;
+  // Magazines / anthologies list every contributor: more authors than books → not an author's series («Если [журнал]»).
+  if (authors.length > rows.length) return null;
   const firstId = firstSeriesVolumeId(rows);
   if (!firstId) return null;
   const top = authors[0].bookCount;
@@ -9982,7 +9988,7 @@ export function getSeriesInfo(seriesName, { langs = null } = {}) {
       .sort((a, b) => b.bookCount - a.bookCount || a.code.localeCompare(b.code)),
     yearFrom,
     yearTo,
-    firstBookId: seriesFounderFirstBookId(rows, authors)
+    firstBookId: seriesFounderFirstBookId(rows, authors, genres, getSeriesCatalogDisplayName(canonical) || canonical)
   };
   writeTimedCache(seriesInfoCache, cacheKey, info, FACET_SUMMARY_CACHE_TTL_MS, 300);
   return info;
