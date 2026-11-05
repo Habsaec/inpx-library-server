@@ -5,7 +5,7 @@ import { getFavoriteAuthors, getFavoriteSeries, getFollowingNewBooks, getFollowi
 
 before(() => { initDb(); });
 
-test('favorites lists use the catalog counters and a bounded cover pick; following works from either side', () => {
+test('favorites lists: catalog counters, portrait-only authors, first-volume series covers; following works from either query shape', () => {
   const user = 'fav-perf-user';
   db.pragma('foreign_keys = OFF');
   db.prepare("INSERT OR IGNORE INTO users(username, password_hash, role) VALUES(?, 'x', 'user')").run(user);
@@ -28,10 +28,10 @@ test('favorites lists use the catalog counters and a bounded cover pick; followi
     const authors = getFavoriteAuthors(user, 10, 'name', '');
     assert.equal(authors.length, 1);
     assert.equal(authors[0].bookCount, 3, 'taken from authors.book_count');
-    assert.equal(authors[0].coverBookId, 'pf3', 'best rated among the candidates');
+    assert.equal(authors[0].coverBookId, null, 'an author is shown by his portrait, never by a book cover');
     const series = getFavoriteSeries(user, 10, 'name', '');
     assert.equal(series[0].bookCount, 2);
-    assert.deepEqual(series[0].previewBookIds.sort(), ['pf1', 'pf2']);
+    assert.deepEqual(series[0].previewBookIds, ['pf1'], 'the first volume');
     // few favorites relative to the window → both query shapes must agree with each other
     const list = getFollowingNewBooks(user, { page: 1, pageSize: 10 });
     assert.equal(list.total, 3);

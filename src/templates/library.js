@@ -1110,17 +1110,12 @@ export function renderFavorites({
           const label = formatAuthorLabel(item.displayName || item.name) || item.displayName || item.name;
           const initial = String(label || '?').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase() || '?';
           const portraitSrc = `/api/authors/portrait?name=${encodeURIComponent(item.name)}`;
-          const coverFallback = item.coverBookId
-            ? apiBookPath(item.coverBookId, 'cover-thumb')
-            : '';
-          const onError = coverFallback
-            ? `if(this.dataset.fallbackCover&&this.src!==this.dataset.fallbackCover){this.src=this.dataset.fallbackCover;this.removeAttribute('data-fallback-cover');return;}const p=this.parentElement;this.remove();if(p)p.classList.add('is-fallback')`
-            : `const p=this.parentElement;this.remove();if(p)p.classList.add('is-fallback')`;
+          const onError = `const p=this.parentElement;this.remove();if(p)p.classList.add('is-fallback')`;
           return `
           <div class="table-row account-list-row favorites-row">
             <a class="account-list-row-main favorites-entity-link" href="/facet/authors/${encodeURIComponent(item.name)}">
               <span class="favorites-author-avatar" aria-hidden="true">
-                <img class="favorites-author-portrait" src="${escapeHtml(portraitSrc)}"${coverFallback ? ` data-fallback-cover="${escapeHtml(coverFallback)}"` : ''} alt="" loading="lazy" onerror="${onError}">
+                <img class="favorites-author-portrait" src="${escapeHtml(portraitSrc)}" alt="" loading="lazy" onerror="${onError}">
                 <span class="favorites-author-initial">${escapeHtml(initial)}</span>
               </span>
               <span class="favorites-entity-text">
@@ -1141,7 +1136,8 @@ export function renderFavorites({
       </div>
       <div class="table-list entity-list favorites-list">
         ${series.map((item) => {
-          const previews = Array.isArray(item.previewBookIds) ? item.previewBookIds : [];
+          const firstVolumeId = Array.isArray(item.previewBookIds) ? item.previewBookIds[0] : '';
+          const previews = firstVolumeId ? [firstVolumeId] : [];
           return `
           <div class="table-row account-list-row favorites-row">
             <a class="account-list-row-main shelf-row-info" href="/facet/series/${encodeURIComponent(item.name)}">

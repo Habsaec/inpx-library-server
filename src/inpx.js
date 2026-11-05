@@ -8951,9 +8951,6 @@ export function toggleFavoriteSeries(username, seriesName) {
   return true;
 }
 
-const FAVORITE_COVER_CANDIDATES = 12;
-const FAVORITE_PREVIEW_CANDIDATES = 24;
-
 export function getFavoriteAuthors(username, limit = 20, sort = 'name', order = '') {
   const orderMap = {
     name: `COALESCE(a.display_name, a.name) COLLATE NOCASE ASC`,
@@ -8971,15 +8968,12 @@ export function getFavoriteAuthors(username, limit = 20, sort = 'name', order = 
   }
   /* bookCount = precomputed authors.book_count (refreshCatalogBookCounts / adjustCatalogCountsForBook): counting
      the author's books through active_books read every book row of every favorite — 55 authors took 74 s on a
-     3 GB Docker host with a cold page cache. The cover is the best-rated of the first FAVORITE_COVER_CANDIDATES
-     books of the author (index order), not of all of them, for the same reason. */
+     3 GB Docker host with a cold page cache. The picture of an author is his portrait or a placeholder (clients
+     ask /api/authors/portrait), never a book cover, so `coverBookId` is kept in the payload only as null. */
   return db.prepare(`
     SELECT a.name, COALESCE(a.display_name, a.name) AS displayName,
            COALESCE(a.book_count, 0) AS bookCount,
-           (SELECT ab2.id FROM (SELECT book_id FROM book_authors WHERE author_id = a.id LIMIT ${FAVORITE_COVER_CANDIDATES}) c
-            JOIN active_books ab2 ON ab2.id = c.book_id
-            ORDER BY ab2.lib_rate DESC, ab2.title COLLATE NOCASE ASC
-            LIMIT 1) AS coverBookId
+           NULL AS coverBookId
     FROM favorite_authors fa
     JOIN authors a ON a.id = fa.author_id
     WHERE fa.username = ?
@@ -9006,21 +9000,25 @@ export function getFavoriteSeries(username, limit = 20, sort = 'name', order = '
   const rows = db.prepare(`
     SELECT s.name, COALESCE(s.display_name, s.name) AS displayName,
            COALESCE(s.book_count, 0) AS bookCount,
-           (SELECT GROUP_CONCAT(sb.id, '|') FROM (
-              SELECT ab2.id
-              FROM (SELECT book_id FROM book_series WHERE series_id = s.id LIMIT ${FAVORITE_PREVIEW_CANDIDATES}) c
-              JOIN active_books ab2 ON ab2.id = c.book_id
-              ORDER BY ab2.lib_rate DESC, ab2.title COLLATE NOCASE ASC
-              LIMIT 4
-           ) sb) AS previewBookIds
+           s.id AS seriesId
     FROM favorite_series fs
     JOIN series_catalog s ON s.id = fs.series_id
     WHERE fs.username = ?
     ORDER BY ${orderBy}
     LIMIT ?
   `).all(username, limit);
+  /* The cover of a series is its first volume (lowest number, unnumbered last): only book_series rows of the series
+     are ordered, then the first few are checked against active_books — never the books of the whole series. */
+  const firstVolumes = db.prepare(`
+    SELECT book_id FROM book_series WHERE series_id = ?
+    ORDER BY (series_no IS NULL OR TRIM(series_no) = ''), CAST(series_no AS REAL), book_id
+    LIMIT 8
+  `);
+  const isActive = db.prepare('SELECT 1 FROM active_books WHERE id = ?');
   for (const row of rows) {
-    row.previewBookIds = row.previewBookIds ? String(row.previewBookIds).split('|').filter(Boolean) : [];
+    const first = firstVolumes.all(row.seriesId).find((c) => isActive.get(c.book_id));
+    row.previewBookIds = first ? [first.book_id] : [];
+    delete row.seriesId;
   }
   return rows;
 }
