@@ -9889,11 +9889,15 @@ const SERIES_INFO_GENRES_MAX = 12;
  * does not.
  */
 const PERIODIC_SERIES_NAME_RE = /журнал|газет|альманах|антолог|magazine|anthology/i;
+/* Collection-type series («Повести», «Романы», «Рассказы», «Сборники», «Избранное» …): the first book's annotation
+   describes that book, not the series. Whole words only (lookarounds), so «Романовы» stays an ordinary series. */
+const COLLECTION_SERIES_NAME_RE = /(?<![а-яёa-z])(повесть|повести|повестей|роман|романы|романов|рассказ|рассказы|рассказов|сборник|сборники|сборников|избранное|избранные|сочинения|собрание|стихи|стихотворения|поэмы|произведения|новеллы|очерки|пьесы|novels|stories|collection|collected works)(?![а-яёa-z])/i;
 
 function seriesFounderFirstBookId(rows, authors, genres, displayName = '') {
   if (rows.length < 2 || !authors.length) return null;
   // Magazines / newspapers / anthologies: an issue's «annotation» is its table of contents.
   if (genres.some((g) => g.name === 'periodic') || PERIODIC_SERIES_NAME_RE.test(displayName)) return null;
+  if (COLLECTION_SERIES_NAME_RE.test(displayName)) return null;
   // Magazines / anthologies list every contributor: more authors than books → not an author's series («Если [журнал]»).
   if (authors.length > rows.length) return null;
   const firstId = firstSeriesVolumeId(rows);
