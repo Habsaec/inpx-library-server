@@ -162,7 +162,7 @@ const archiveStemLookupCache = new Map();
 /* ── Reset cached prepared statements when active_books VIEW is rebuilt ── */
 function resetInpxPreparedStatements() {
   _stmtGetBookById = null;
-  _browseTotalMemo = null;
+  _browseTotalMemo.clear();
   _authorsTotalMemo.clear();
   _recentCutoffMemo = null;
   _stmtGenresGroupedCount = null;
@@ -246,6 +246,7 @@ export function getRuntimeQueryCacheGeneration() {
 
 function clearRuntimeQueryCaches() {
   runtimeQueryCacheGeneration += 1;
+  _browseTotalMemo.clear();
   facetBooksCache.clear();
   facetDedupTotalCache.clear();
   facetSummaryCache.clear();
@@ -276,7 +277,7 @@ export function invalidateDuplicatesCache() {
   facetSummaryCache.clear();
   dupGroupsCache.clear();
   _dupSummaryCache = null;
-  _browseTotalMemo = null;
+  _browseTotalMemo.clear();
   _authorsTotalMemo.clear();
 }
 
@@ -4670,7 +4671,8 @@ function tryTypoCorrectedSearchBooks(args) {
   return null;
 }
 
-let _browseTotalMemo = null;
+/** Plain browse totals by view + filters (profile languages, letter, …): a COUNT over 600k rows is ~0.8 s per page. */
+const _browseTotalMemo = new Map();
 /** listAuthors без поиска: total по букве → { total, at } */
 const _authorsTotalMemo = new Map();
 
@@ -4716,7 +4718,15 @@ export function searchBooks({
   };
 
   if (!query.trim()) {
-    const browseBooksView = isActiveBooksProjectionFresh() ? 'catalog_active_books' : 'active_books';
+    const projectionFresh = isActiveBooksProjectionFresh();
+    const browseBooksView = projectionFresh ? 'catalog_active_books' : 'active_books';
+    /* With the projection the view `catalog_active_books` (active_book_ids JOIN books) made SQLite scan the id list,
+       look every book up and sort the whole catalog in a TEMP B-TREE for every page (~1 s, 2.8 s for `recent` on
+       620k books — the «slow catalog q=""» / event-loop stalls). CROSS JOIN fixes the order: `books` is walked in
+       the ORDER BY index order, each row probes the id list by primary key, and LIMIT stops the walk (0–50 ms). */
+    const browseFrom = projectionFresh
+      ? 'books b CROSS JOIN active_book_ids visible ON visible.book_id = b.id'
+      : 'active_books b';
     const whereParts = [];
     const whereParams = [];
     if (genreFilter) { whereParts.push(genreFilter.where.replace(/active_books\./g, 'b.')); whereParams.push(...genreFilter.params); }
@@ -4732,25 +4742,29 @@ export function searchBooks({
         ? applyOrder('COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, \'\'), b.imported_at) DESC, b.imported_at DESC, b.id DESC', order)
         : resolveBookAliasSort(sort, 'b', order);
 
-    /* Без фильтров total одинаков для всех страниц листания — не считать 600k строк на каждую. */
-    const memoTotal = !whereSql && mode === 'exact';
-    const { total } = memoTotal && _browseTotalMemo
-      && _browseTotalMemo.source === browseBooksView
-      && (Date.now() - _browseTotalMemo.at) < PAGE_CACHE_TTL_MS
-      ? _browseTotalMemo
+    /* Total is the same for every page of the same filters — count 600k rows once per TTL, not per page. */
+    const memoKey = mode === 'exact' ? `${browseBooksView}|${whereSql}|${JSON.stringify(gfParams)}` : '';
+    const memoHit = memoKey ? _browseTotalMemo.get(memoKey) : null;
+    const { total } = memoHit && (Date.now() - memoHit.at) < PAGE_CACHE_TTL_MS
+      ? memoHit
       : resolveSqlTotal(
-        `SELECT COUNT(*) AS count FROM ${browseBooksView} b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
+        !whereSql && projectionFresh
+          ? 'SELECT COUNT(*) AS count FROM active_book_ids'
+          : `SELECT COUNT(*) AS count FROM ${browseFrom} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
         gfParams,
-        `SELECT 1 FROM ${browseBooksView} b LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
+        `SELECT 1 FROM ${browseFrom} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
         gfParams
       );
-    if (memoTotal) _browseTotalMemo = { total, at: Date.now(), source: browseBooksView };
+    if (memoKey) {
+      if (_browseTotalMemo.size >= 64) _browseTotalMemo.delete(_browseTotalMemo.keys().next().value);
+      _browseTotalMemo.set(memoKey, { total, at: Date.now() });
+    }
 
     const items = db
       .prepare(
         `
       SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
-      FROM ${browseBooksView} b
+      FROM ${browseFrom}
       LEFT JOIN sources s ON s.id = b.source_id
       ${whereSql}
       ORDER BY ${listOrderBy}
