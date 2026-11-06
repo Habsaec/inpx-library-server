@@ -4763,17 +4763,28 @@ export function searchBooks({
     const tBrowse = Date.now();
     const memoKey = mode === 'exact' ? `${browseBooksView}|${whereSql}|${JSON.stringify(gfParams)}` : '';
     const memoHit = memoKey ? _browseTotalMemo.get(memoKey) : null;
-    const { total } = memoHit && (Date.now() - memoHit.at) < PAGE_CACHE_TTL_MS
+    const countSql = !whereSql && projectionFresh
+      ? 'SELECT COUNT(*) AS count FROM active_book_ids'
+      : `SELECT COUNT(*) AS count FROM ${browseFrom} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`;
+    /* An expired total is served as is and recounted on the query worker: catalog changes wipe the memo anyway, so an
+       old entry is only a little stale (read marks of «скрыть прочитанное»), while a sync recount cost 0.2–0.4 s. */
+    const memoStale = Boolean(memoHit) && (Date.now() - memoHit.at) >= PAGE_CACHE_TTL_MS;
+    if (memoStale && !_browseTotalInflight.has(memoKey)) {
+      const job = queryAsync(countSql, gfParams, { mode: 'get' })
+        .then((row) => { _browseTotalMemo.set(memoKey, { total: Number(row?.count) || 0, at: Date.now() }); })
+        .catch(() => {})
+        .finally(() => _browseTotalInflight.delete(memoKey));
+      _browseTotalInflight.set(memoKey, job);
+    }
+    const { total } = memoHit
       ? memoHit
       : resolveSqlTotal(
-        !whereSql && projectionFresh
-          ? 'SELECT COUNT(*) AS count FROM active_book_ids'
-          : `SELECT COUNT(*) AS count FROM ${browseFrom} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
+        countSql,
         gfParams,
         `SELECT 1 FROM ${browseFrom} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
         gfParams
       );
-    if (memoKey) {
+    if (memoKey && !memoHit) {
       if (_browseTotalMemo.size >= 64) _browseTotalMemo.delete(_browseTotalMemo.keys().next().value);
       _browseTotalMemo.set(memoKey, { total, at: Date.now() });
     }
@@ -4785,7 +4796,7 @@ export function searchBooks({
       SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
       FROM ${browseFrom}
       LEFT JOIN sources s ON s.id = b.source_id
-      ${whereSql}
+      ${langFilterIsBroad(lang, langs) ? whereSql.replace(/\bb\.lang\b/g, '+b.lang') : whereSql}
       ORDER BY ${listOrderBy}
       LIMIT ? OFFSET ?
     `
@@ -7302,6 +7313,21 @@ export function ensureLanguageTotals() {
   } catch {
     return Promise.resolve(false);
   }
+}
+
+/**
+ * True when the page languages hold ≥ 2% of the catalog. The browse page then walks the sort index and tests the
+ * language per row (`+b.lang`), LIMIT stopping the walk; otherwise SQLite may pick `idx_books_lang` and sort every
+ * book of the language in a TEMP B-TREE (1.1 s for `ru` on a 620k Flibusta catalog). A rare language keeps the index.
+ */
+function langFilterIsBroad(lang, langs) {
+  const clause = languageFilterClause('x', lang, langs);
+  if (!clause || clause.where === '0' || !languageTotalsReady()) return false;
+  const all = Number(db.prepare('SELECT COALESCE(SUM(book_count), 0) AS c FROM catalog_lang_counts WHERE kind = 0').get()?.c) || 0;
+  if (!all) return false;
+  let inLangs = 0;
+  for (const code of new Set(clause.params)) inLangs += Number(db.prepare('SELECT COALESCE(SUM(book_count), 0) AS c FROM catalog_lang_counts WHERE kind = 0 AND lang = ?').get(code)?.c) || 0;
+  return inLangs * 50 >= all;
 }
 
 /** Books of one language from the counters (null when they are not built yet). */

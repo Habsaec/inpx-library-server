@@ -467,6 +467,9 @@ export async function syncTelegramBotProfilePhoto({ force = false, token: tokenO
   return { ok: true };
 }
 
+let _tgErrorStreak = 0;
+let _lastTgErrorLogAt = 0;
+
 async function fetchUpdates(signal) {
   const params = new URLSearchParams({
     offset: String(_offset),
@@ -489,12 +492,22 @@ async function fetchUpdates(signal) {
       await sleep(5_000);
       return [];
     }
-    logSystemEvent('warn', 'telegram-bot', 'getUpdates ошибка', {
-      description: data.description || 'unknown',
-      error_code: data.error_code,
-    });
+    /* Telegram answers 502 / 5xx instantly while it is down: without a pause the loop asked ~30 times a second and
+       filled the log. Back off 2 s → 60 s, one log line per minute. */
+    _tgErrorStreak += 1;
+    const now = Date.now();
+    if (now - _lastTgErrorLogAt > 60_000) {
+      _lastTgErrorLogAt = now;
+      logSystemEvent('warn', 'telegram-bot', 'getUpdates ошибка', {
+        description: data.description || 'unknown',
+        error_code: data.error_code,
+        streak: _tgErrorStreak,
+      });
+    }
+    await sleep(Math.min(60_000, 2_000 * 2 ** Math.min(5, _tgErrorStreak - 1)));
     return [];
   }
+  _tgErrorStreak = 0;
   touchClusterHeartbeat();
   return data.result ?? [];
 }
