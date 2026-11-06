@@ -28,14 +28,15 @@
   <a href="#android-app">Android</a> ·
   <a href="#opds-and-koreader">OPDS and KOReader</a> ·
   <a href="#configuration">Configuration</a> ·
-  <a href="CHANGELOG.md">Changelog</a>
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="https://habsaec.github.io/inpx-library-server/en/">Website</a>
 </p>
 
 <p align="center">
   <a href="https://boosty.to/habsaec/donate"><img src="https://img.shields.io/badge/Support%20the%20project-f15f2c?style=for-the-badge&logo=boosty&logoColor=white" alt="Support the project on Boosty"></a>
 </p>
 
-Point the server at a folder of books — an INPX collection (the format of large library dumps such as Flibusta and Librusec), a [Calibre library](#calibre-libraries) or your own FB2 / EPUB files — and it builds a catalog with authors, series, genres and full-text search. Read in the browser or in the Android app: reading position, bookmarks and notes stay in sync. Runs on a NAS, a Raspberry Pi or a regular PC and is built for libraries of hundreds of thousands of books.
+Point the server at a folder of books — an INPX collection (the format of large library dumps), a [Calibre library](#calibre-libraries) or your own FB2 / EPUB files — and it builds a catalog with authors, series, genres and full-text search. Read in the browser or in the Android app: reading position, bookmarks and notes stay in sync. Runs on a NAS, a Raspberry Pi or a regular PC and is built for libraries of hundreds of thousands of books.
 
 ## What it looks like
 
@@ -186,7 +187,7 @@ sudo ./install.sh
 
 1. Sign in as **admin / admin** and change the password in your profile right away. To switch the interface to English, press **EN** in the top bar.
 2. **Admin → Book sources → Add source**: the path to a `.inpx` file, to a Calibre library or to a folder with books (in Docker, the path inside the container, e.g. `/library`).
-3. Wait for indexing. Progress is shown in the admin panel; the full Flibusta collection takes about 45 minutes.
+3. Wait for indexing. Progress is shown in the admin panel; a collection of hundreds of thousands of books takes about 45 minutes.
 4. Create users in **Admin → Users**, or turn on anonymous access there.
 5. To send books to e-readers, fill in **Admin → Mail**; for Telegram, **Admin → Telegram bot**.
 6. Backup: **Admin → Backups & updates → Download DB backup** (or copy `data/library.db`).
@@ -214,7 +215,7 @@ Keep your books in [Calibre](https://calibre-ebook.com)? Add the library folder 
 | **Personal library** | Reading · Want to read · Finished · My ratings · favorite authors and series · «New from favorites» · shelves and smart shelves · yearly goal and stats · import from Goodreads / LiveLib |
 | **Delivery** | FB2, FB2.ZIP, EPUB, MOBI, AZW3 and more via [fb2cng](https://github.com/rupor-github/fb2cng) · batch ZIP · send to an e-reader by e-mail (Kindle, PocketBook, Kobo) and to Telegram |
 | **Clients** | Android app · OPDS 1.x / 2 with reading progress · KOReader progress sync (KOSync) · Telegram bot with search |
-| **Sources** | INPX collections (ZIP / 7z, including PPMd), Calibre libraries and plain folders · several sources at once · duplicate cleanup · folder watching · covers, illustrations (JPEG XL, WebP), reviews and author portraits from Flibusta sidecar files |
+| **Sources** | INPX collections (ZIP / 7z, including PPMd), Calibre libraries and plain folders · several sources at once · duplicate cleanup · folder watching · covers, illustrations (JPEG XL, WebP), reviews and author portraits from sidecar files |
 | **Admin** | Users and permissions, anonymous access, OIDC / SSO · SMTP and Telegram · look and feel (logo, header, background, palette) · monitoring, log, backup, update from ZIP |
 
 The interface is available in English and Russian, with light, dark and automatic themes. Rebuilding the index or removing a source never loses users' bookmarks, positions or shelves.
@@ -277,7 +278,7 @@ Almost everything is configured in the admin panel. Environment variables set th
 
 - Indexing and heavy recounts run in background threads — the server keeps responding during an import.
 - On devices with ≤ 2 GB of RAM a lean profile is used; the database cache is set in **Admin → Dashboard → Maintenance → Database memory**.
-- Flibusta and Librusec «96 GB» builds (PPMd archives, WebP images) are supported. For older e-readers, turn on **Admin → Content → Books with WebP images** (recode to PNG).
+- INPX builds with PPMd archives and WebP images are supported. For older e-readers, turn on **Admin → Content → Books with WebP images** (recode to PNG).
 - Added a second copy of the same collection? Run **Admin → Duplicates → Auto-clean duplicates**.
 
 </details>

@@ -1,0 +1,53 @@
+/* Palette taken from the app (DESIGN.md): book-leather dark, parchment light, ink-gold accent. */
+:root {
+  --sl-font-system: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --sl-font: var(--sl-font-system);
+  --sl-font-heading: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
+}
+
+:root,
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #3a2f18;
+  --sl-color-accent: #a1671b;
+  --sl-color-accent-high: #e3c47a;
+  --sl-color-white: #f2ebe0;
+  --sl-color-gray-1: #e6dccb;
+  --sl-color-gray-2: #c9bba4;
+  --sl-color-gray-3: #a89884;
+  --sl-color-gray-4: #7a6c5b;
+  --sl-color-gray-5: #3a322a;
+  --sl-color-gray-6: #1f1a15;
+  --sl-color-gray-7: #1a1612;
+  --sl-color-black: #14110e;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #eadbb8;
+  --sl-color-accent: #8a6230;
+  --sl-color-accent-high: #5f3f12;
+  --sl-color-white: #1f1810;
+  --sl-color-gray-1: #2b2218;
+  --sl-color-gray-2: #43372a;
+  --sl-color-gray-3: #6b5a48;
+  --sl-color-gray-4: #8e7d68;
+  --sl-color-gray-5: #cdbfa8;
+  --sl-color-gray-6: #e6dac6;
+  --sl-color-gray-7: #f3ebe0;
+  --sl-color-black: #fff9f0;
+}
+
+h1, h2, h3, .site-title { font-family: var(--sl-font-heading); letter-spacing: 0; }
+
+.site-title img { height: 2rem; width: auto; }
+
+/* Landing */
+.hero img { filter: drop-shadow(0 12px 28px rgb(0 0 0 / 0.35)); max-height: 22rem; }
+.shot { border-radius: 0.75rem; border: 1px solid var(--sl-color-gray-5); box-shadow: 0 10px 30px rgb(0 0 0 / 0.18); }
+.shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1.25rem; margin-block: 1.5rem; }
+.shots figure { margin: 0; }
+.shots figcaption { margin-top: 0.5rem; font-size: var(--sl-text-sm); color: var(--sl-color-gray-3); text-align: center; }
+.shots img { width: 100%; height: auto; }
+.wide { margin-block: 2rem; }
+.wide img { width: 100%; height: auto; }
+.pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-block: 1rem; }
+.pill-row span { border: 1px solid var(--sl-color-gray-5); border-radius: 999px; padding: 0.2rem 0.8rem; font-size: var(--sl-text-sm); color: var(--sl-color-gray-2); }

@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "homepage": "https://habsaec.github.io/inpx-library-server/",
   "engines": {
     "node": ">=20.0.0"
   },
