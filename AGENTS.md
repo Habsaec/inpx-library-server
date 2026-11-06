@@ -143,7 +143,7 @@ Repository type:
 * single-package Node.js application
 * NOT a monorepo
 * NOT a workspace-based repository
-* exception: `site/` is the public website (Astro Starlight, ru + en, GitHub Pages via `.github/workflows/site.yml`) — a separate package with its own `package.json`, never part of the server or Docker image; run its npm commands from `site/`. Docs pages there are marketing/docs only (no feature-parity duty), but keep them in step with README install / config sections
+* exception: `site/` is the public website (Astro Starlight, en at the root + ru under `/ru/`, GitHub Pages via `.github/workflows/site.yml`) — a separate package with its own `package.json`, never part of the server or Docker image; run its npm commands from `site/`. Docs pages there are marketing/docs only (no feature-parity duty), but keep them in step with README install / config sections
 
 Main stack:
 

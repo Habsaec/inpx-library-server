@@ -1,0 +1,118 @@
+---
+title: Установка
+description: Установка INPX Library Server в Docker, на Synology, Windows, Linux и macOS.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+Нужна папка с книгами: INPX-коллекция (`.inpx` + архивы `.zip` / `.7z`), библиотека [Calibre](../calibre/) или обычная папка с FB2 / EPUB / MOBI / AZW3.
+
+<Tabs>
+<TabItem label="Docker">
+
+```bash
+docker run -d \
+  --name inpx-library \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v inpx-app:/app \
+  -v inpx-data:/app/data \
+  -v /path/to/library:/library:ro \
+  -e LIBRARY_ROOT=/library \
+  habsaec/inpx-library-server:latest
+```
+
+Откройте [http://localhost:3000](http://localhost:3000) и войдите как **admin / admin**.
+
+- `inpx-data` — база, настройки и кэш. Именно её нужно бэкапить.
+- `inpx-app` — код приложения. При запуске нового образа код в томе обновляется сам.
+- Другие папки с книгами монтируйте в `/sources/…` (`-v /path/to/epub:/sources/epub:ro`) и добавляйте как источники в админке.
+
+Обновление: `docker pull habsaec/inpx-library-server:latest`, затем пересоздайте контейнер той же командой. Образы собираются для **amd64** и **arm64**.
+
+### Docker Compose
+
+```yaml
+services:
+  library:
+    image: habsaec/inpx-library-server:latest
+    container_name: inpx-library
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - app-code:/app
+      - app-data:/app/data
+      - /path/to/library:/library:ro
+    environment:
+      - LIBRARY_ROOT=/library
+
+volumes:
+  app-code:
+  app-data:
+```
+
+```bash
+docker compose up -d
+```
+
+<Aside type="caution">
+`docker compose down -v` удаляет и тома с данными. Не используйте `-v`, если хотите сохранить библиотеку.
+</Aside>
+
+</TabItem>
+<TabItem label="Synology">
+
+В репозитории есть готовый [`docker-compose.yml`](https://github.com/Habsaec/inpx-library-server/blob/master/docker-compose.yml) для Synology: порт **3000**, данные в `/volume1/docker/inpx-library-data`.
+
+1. Создайте папку для данных: `mkdir -p /volume1/docker/inpx-library-data`.
+2. В `docker-compose.yml` раскомментируйте строку с томом книг и укажите путь, например `- /volume1/books/library:/library:ro`.
+3. **Container Manager → Project → Create**, выберите папку с `docker-compose.yml` → **Apply**.
+4. Откройте `http://<IP-NAS>:3000` → **admin / admin**.
+
+</TabItem>
+<TabItem label="Windows">
+
+1. Скачайте `inpx-library-server-<версия>.zip` из [последнего релиза](https://github.com/Habsaec/inpx-library-server/releases/latest) и распакуйте, например, в `D:\inpx-library-server`.
+2. Запустите **`install.cmd`**. Он скачает портативный Node.js 24 в папку `runtime`, поставит зависимости и конвертер fb2cng. Системный Node.js не нужен.
+3. Запустите **`start-server.cmd`** и откройте [http://localhost:3000](http://localhost:3000).
+
+Остановка — `stop-server.cmd`, перезапуск — `restart-server.cmd`. Путь к книгам проще всего указать в админке при добавлении источника.
+
+</TabItem>
+<TabItem label="Linux">
+
+Debian / Ubuntu / Raspberry Pi OS / OpenMediaVault:
+
+```bash
+git clone https://github.com/Habsaec/inpx-library-server.git
+cd inpx-library-server
+sudo ./install.sh    # Node.js 20, зависимости, конвертер; предложит systemd-сервис
+./start.sh
+```
+
+Если при установке включили сервис:
+
+```bash
+sudo systemctl status inpx-library
+sudo journalctl -u inpx-library -f
+```
+
+</TabItem>
+<TabItem label="macOS">
+
+Нужны Xcode Command Line Tools и Node.js 20+ (Homebrew или установщик с nodejs.org).
+
+```bash
+git clone https://github.com/Habsaec/inpx-library-server.git
+cd inpx-library-server
+sudo ./install.sh
+./start.sh
+```
+
+</TabItem>
+</Tabs>
+
+За HTTPS / обратным прокси (nginx, Caddy, Traefik) задайте `TRUST_PROXY=1` и `SESSION_SECURE_COOKIE=true`.
+
+Дальше — [первые шаги](../getting-started/).

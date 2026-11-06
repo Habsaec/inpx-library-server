@@ -1,27 +1,25 @@
 ---
-title: Разработчикам
-description: Запуск из исходников, архитектура и документация проекта.
+title: For developers
+description: Run from source, architecture and project documentation.
 ---
 
 ```bash
 npm install
-npm run dev      # перезапуск при изменениях
+npm run dev      # restarts on changes
 npm test
 ```
 
-Стек: Node.js (ESM), Express, SQLite (better-sqlite3), чистые JS / CSS без фреймворков.
+Stack: Node.js (ESM), Express, SQLite (better-sqlite3), vanilla JS / CSS without frameworks.
 
-## Документация в репозитории
+## Documentation in the repository
 
-Преимущественно на английском:
+- [`AGENTS.md`](https://github.com/Habsaec/inpx-library-server/blob/master/AGENTS.md) — API for Android and project rules;
+- [`docs/architecture`](https://github.com/Habsaec/inpx-library-server/tree/master/docs/architecture) — indexing, INPX, search, OPDS;
+- [`docs/decisions`](https://github.com/Habsaec/inpx-library-server/tree/master/docs/decisions) — decisions taken;
+- [`CHANGELOG.md`](https://github.com/Habsaec/inpx-library-server/blob/master/CHANGELOG.md) — change history.
 
-- [`AGENTS.md`](https://github.com/Habsaec/inpx-library-server/blob/master/AGENTS.md) — API для Android и правила проекта;
-- [`docs/architecture`](https://github.com/Habsaec/inpx-library-server/tree/master/docs/architecture) — индексация, INPX, поиск, OPDS;
-- [`docs/decisions`](https://github.com/Habsaec/inpx-library-server/tree/master/docs/decisions) — принятые решения;
-- [`CHANGELOG.md`](https://github.com/Habsaec/inpx-library-server/blob/master/CHANGELOG.md) — история изменений.
+API errors carry a stable `code` field — clients should rely on it. Issues and pull requests in English are welcome.
 
-Ошибки API содержат стабильное поле `code` — клиентам стоит опираться на него. Issues и pull request’ы приветствуются.
+## This website
 
-## Сайт
-
-Этот сайт лежит в папке `site/` ([Astro Starlight](https://starlight.astro.build)) и публикуется на GitHub Pages при каждом изменении в ней. Локально: `cd site && npm install && npm run dev`.
+The site lives in the `site/` folder ([Astro Starlight](https://starlight.astro.build)) and is published to GitHub Pages on every change there. Locally: `cd site && npm install && npm run dev`.

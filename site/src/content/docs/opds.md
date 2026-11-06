@@ -1,20 +1,20 @@
 ---
-title: OPDS и KOReader
-description: Подключение читалок через OPDS и синхронизация прогресса KOReader.
+title: OPDS and KOReader
+description: Connect e-reader apps through OPDS and sync KOReader progress.
 ---
 
 ## OPDS
 
-Адрес каталога — `http://<сервер>:3000/opds` (OPDS 2: `/opds/v2`). Вход — логин и пароль пользователя библиотеки. Работает с KOReader, FBReader, Moon+ Reader, Librera.
+The catalog address is `http://<server>:3000/opds` (OPDS 2: `/opds/v2`). Sign in with a library user's login and password. Works with KOReader, FBReader, Moon+ Reader, Librera.
 
-У начатых книг прогресс виден прямо в названии: ◔ ◑ ◕ ⬤.
+Books you have started show their progress in the title: ◔ ◑ ◕ ⬤.
 
-В разделе «Моя библиотека» (`/opds/user`) доступны личные ленты: избранные книги, полки и умные полки, избранные авторы и серии, «Хочу прочитать», «Новое у любимых» и «Рекомендации».
+Under «My library» (`/opds/user`) there are personal feeds: favorite books, shelves and smart shelves, favorite authors and series, Want to read, «New from favorites» and Recommended.
 
-## Синхронизация прогресса KOReader
+## KOReader progress sync
 
-1. В профиле, в блоке **«Синхронизация прогресса KOReader»**, создайте отдельный пароль для KOReader (пароль вашего аккаунта не используется).
-2. В KOReader: **Синхронизация прогресса → Свой сервер синхронизации**, адрес `http://<сервер>:3000/kosync`, ваш логин и созданный пароль.
-3. Скачайте книгу через OPDS — так сервер узнаёт её в KOReader.
+1. In your profile, in the **KOReader progress sync** block, create a separate password for KOReader (your account password is not used).
+2. In KOReader: **Progress sync → Custom sync server**, address `http://<server>:3000/kosync`, your login and the password you created.
+3. Download the book through OPDS — that is how the server recognizes it in KOReader.
 
-Позиция работает в обе стороны: прогресс из KOReader виден в «Читаю» на сайте и в приложении, а позиция из веб-читалки подхватывается в KOReader.
+Sync works both ways: KOReader progress shows up in «Reading» on the site and in the app, and a position from the web reader is picked up in KOReader.

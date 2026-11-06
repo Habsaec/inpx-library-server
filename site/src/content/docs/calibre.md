@@ -1,14 +1,14 @@
 ---
-title: Библиотеки Calibre
-description: Как подключить библиотеку Calibre как источник книг.
+title: Calibre libraries
+description: How to add a Calibre library as a book source.
 ---
 
-Храните книги в [Calibre](https://calibre-ebook.com)? Добавьте папку библиотеки (ту, где лежит `metadata.db`) как источник: админка распознает её и добавит как **библиотеку Calibre**.
+Keep your books in [Calibre](https://calibre-ebook.com)? Add the library folder (the one with `metadata.db`) as a source: the admin panel recognizes it and adds it as a **Calibre library**.
 
-- **Каталог строится из `metadata.db`**: названия и авторы, исправленные в Calibre, серии и номера, теги, оценки, языки, издатель, описание, ISBN и `cover.jpg`. Файлы книг при индексации не открываются, поэтому даже большая библиотека индексируется за минуты.
-- **Одна запись на книгу.** Читалка открывает первый из форматов EPUB → AZW3 → MOBI → FB2; остальные форматы книги (AZW3, PDF…) тоже доступны — в меню скачивания, при отправке на читалку и в OPDS — и отдаются как есть, без конвертации.
-- **PDF, DJVU, CBZ, CBR, TXT, RTF, DOCX** — в библиотеках Calibre и как отдельные файлы в обычных папках: скачивание, OPDS, отправка на читалку. «Читать» в браузере доступно для FB2, EPUB, MOBI / AZW3, CBZ (комиксы) и PDF; остальные форматы — только скачивание. Приложение для Android открывает PDF, CBZ и TXT в своей читалке, а для DJVU, CBR, RTF и DOCX предлагает **«Открыть в другом приложении»**. На адрес Kindle отправляются только EPUB, PDF, DOCX, TXT и RTF — остальное сервер отклоняет с понятным сообщением, а не отдаёт на отскок Amazon.
-- **Уже добавили библиотеку как обычную папку?** **Админка → Источники книг → «Перевести в Calibre»**: источник переиндексируется как Calibre, а позиции чтения, закладки, оценки и полки переедут на книги Calibre.
-- **Теги** по умолчанию становятся жанрами. Если теги в основном служебные («прочитать», «kobo»), переключите источник на «только поиск» или «игнорировать».
-- Переименование книги или автора в Calibre **не ломает** позиции, закладки и полки: книги определяются по UUID Calibre, а не по пути к файлу.
-- Сервер **только читает** библиотеку: он копирует `metadata.db` в `data/calibre` и работает с копией (примерно 1–3 КБ на книгу), поэтому Calibre может оставаться открытым, а папку можно монтировать только для чтения. При включённом слежении за папками изменение в Calibre подхватывается после паузы; иначе запустите инкрементальную индексацию или используйте расписание.
+- **The catalog comes from `metadata.db`** — the titles and authors you fixed in Calibre, series and series numbers, tags, ratings, languages, publisher, description, ISBN and `cover.jpg`. Book files are not opened during indexing, so even a large library indexes in minutes.
+- **One catalog entry per Calibre book.** The reader opens the first of EPUB → AZW3 → MOBI → FB2; every other format the book has in Calibre (AZW3, PDF…) is offered too — in the download menu, when sending to an e-reader and in OPDS — and served as is, without conversion.
+- **PDF, DJVU, CBZ, CBR, TXT, RTF, DOCX** — in Calibre libraries and as loose files in plain book folders: download, OPDS and send to an e-reader. «Read» in the browser is shown for FB2, EPUB, MOBI / AZW3, CBZ (comics) and PDF; the rest are download only. The Android app opens PDF, CBZ and TXT in its reader and offers **Open in another app** for DJVU, CBR, RTF and DOCX. A Kindle address only receives EPUB, PDF, DOCX, TXT and RTF — other formats are refused with a clear message instead of bouncing at Amazon.
+- **Already added the library as a plain folder?** **Admin → Book sources → Convert to Calibre**: it is reindexed as a Calibre library, and reading positions, bookmarks, ratings and shelves move to the Calibre books.
+- **Tags** become genres by default. If your tags are mostly workflow labels («to read», «kobo»), switch the source to «search only» or «ignore».
+- Renaming a book or an author in Calibre **does not break** reading positions, bookmarks or shelves: books are identified by Calibre's book UUID, not by the file path.
+- The server **only reads** the library: it copies `metadata.db` to its `data/calibre` folder and reads that copy (roughly 1–3 KB per book), so Calibre can stay open and the folder can be mounted read-only. With folder watching on, a change in Calibre is picked up after the quiet period; otherwise run an incremental index or use the schedule.

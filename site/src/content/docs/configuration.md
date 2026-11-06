@@ -1,42 +1,42 @@
 ---
-title: Настройка
-description: Переменные окружения, большие библиотеки и слабое железо.
+title: Configuration
+description: Environment variables, large libraries and low-end hardware.
 ---
 
-Почти всё настраивается в админке. Переменные окружения задают значения по умолчанию; полный список с комментариями — в [`.env.example`](https://github.com/Habsaec/inpx-library-server/blob/master/.env.example) (скопируйте в `.env`).
+Almost everything is configured in the admin panel. Environment variables set the defaults; the full list with comments is in [`.env.example`](https://github.com/Habsaec/inpx-library-server/blob/master/.env.example) (copy it to `.env`).
 
-## Основные переменные
+## Main environment variables
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3000` | Порт сервера |
-| `LIBRARY_ROOT` | `/library` | Папка с книгами по умолчанию |
-| `SESSION_SECURE_COOKIE` | `false` | `true` за HTTPS |
-| `TRUST_PROXY` | `false` | Прокси перед сервером: `1` — один nginx / Caddy, `loopback` или список подсетей |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | — | Почта для отправки на читалки (или в админке) |
-| `TELEGRAM_BOT_TOKEN` | — | Токен Telegram-бота (или в админке) |
-| `SCAN_INTERVAL_HOURS` | `0` | Пересканировать источники каждые N часов |
-| `FOLDER_WATCH` | `1` | Следить за папками и индексировать новые файлы |
-| `DOWNLOAD_MAX_CONCURRENT` | `4` | Сколько книг готовится к скачиванию одновременно |
-| `PERF_PROFILE` | авто | `embedded` для NAS / малой памяти |
-| `CLUSTER_WORKERS` | `0` | Число процессов (0 — один) |
+| `PORT` | `3000` | Server port |
+| `LIBRARY_ROOT` | `/library` | Default books folder |
+| `SESSION_SECURE_COOKIE` | `false` | `true` behind HTTPS |
+| `TRUST_PROXY` | `false` | Proxy in front of the server: `1` — a single nginx / Caddy, `loopback` or a list of subnets |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | — | Mail for sending to e-readers (or in the admin panel) |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token (or in the admin panel) |
+| `SCAN_INTERVAL_HOURS` | `0` | Rescan sources every N hours |
+| `FOLDER_WATCH` | `1` | Watch folders and index new files |
+| `DOWNLOAD_MAX_CONCURRENT` | `4` | How many books are prepared for download at once |
+| `PERF_PROFILE` | auto | `embedded` for a NAS / low memory |
+| `CLUSTER_WORKERS` | `0` | Number of processes (0 — one) |
 
-## Большие библиотеки и слабое железо
+## Large libraries and low-end hardware
 
-- Индексация и тяжёлые пересчёты идут в фоновых потоках — сервер отвечает и во время импорта.
-- На устройствах с ≤ 2 ГБ ОЗУ включается экономный профиль; кэш базы настраивается в **Админка → Панель → Обслуживание → Память базы данных**.
-- Поддерживаются INPX-сборки с архивами PPMd и картинками WebP. Для старых читалок включите **Админка → Контент → Книги с картинками WebP** (перекодирование в PNG).
-- Добавили вторую копию той же коллекции? **Админка → Дубликаты → Автоочистка**.
-- Пересборка индекса или удаление источника не теряют закладки, позиции и полки пользователей.
+- Indexing and heavy recounts run in background threads — the server keeps responding during an import.
+- On devices with ≤ 2 GB of RAM a lean profile is used; the database cache is set in **Admin → Dashboard → Maintenance → Database memory**.
+- INPX builds with PPMd archives and WebP images are supported. For older e-readers, turn on **Admin → Content → Books with WebP images** (recode to PNG).
+- Added a second copy of the same collection? Run **Admin → Duplicates → Auto-clean duplicates**.
+- Rebuilding the index or removing a source never loses users' bookmarks, positions or shelves.
 
-## Как это устроено
+## How it works
 
 ```text
-INPX-коллекции, Calibre, папки  →  индекс SQLite (поиск FTS5, обложки)
-                                      ├─ веб-интерфейс и читалка
-                                      ├─ OPDS / KOSync
-                                      ├─ Android-приложение
-                                      └─ Telegram-бот и e-mail
+INPX collections, Calibre, folders  →  SQLite index (FTS5 search, covers)
+                                          ├─ web interface and reader
+                                          ├─ OPDS / KOSync
+                                          ├─ Android app
+                                          └─ Telegram bot and e-mail
 ```
 
-Метаданные (серии, авторы, жанры) берутся из индекса и отдаются через `/api/*` — один контракт для веба, OPDS, Telegram и Android.
+Metadata (series, authors, genres) comes from the index and is served through `/api/*` — one contract for the web, OPDS, Telegram and Android.

@@ -1,12 +1,12 @@
 ---
-title: Если что-то не работает
-description: Типичные проблемы и их решения.
+title: Troubleshooting
+description: Common problems and how to fix them.
 ---
 
-- **Сервер не отвечает.** `curl -sS http://127.0.0.1:3000/health` должен вернуть `"ok":true`.
-- **Каталог пуст.** Добавлен ли источник и завершилась ли индексация? В Docker путь источника — внутри контейнера (`/library`, `/sources/…`).
-- **«Архивы не найдены» после импорта INPX.** Архивы `.zip` / `.7z` должны лежать рядом с `.inpx`; проверьте монтирование.
-- **В «Скачать» нет EPUB / MOBI.** Не установлен конвертер — запустите `install.cmd` / `install.sh` ещё раз.
-- **Ошибка `better-sqlite3` / `NODE_MODULE_VERSION`.** Запустите `install.cmd` / `install.sh` ещё раз.
-- **Забыли пароль администратора.** `reset-admin.cmd` (Windows) или `./reset-admin.sh`.
-- **Сервер «подвисает».** Ищите `[perf] event loop stalled` в `data/runtime.log`; время ответов по маршрутам — на `/health/perf`.
+- **The server doesn't respond.** `curl -sS http://127.0.0.1:3000/health` should return `"ok":true`.
+- **The catalog is empty.** Is the source added and has indexing finished? In Docker, the source path is inside the container (`/library`, `/sources/…`).
+- **«Archives not found» after an INPX import.** The `.zip` / `.7z` archives must sit next to the `.inpx`; check the mount.
+- **No EPUB / MOBI under «Download».** The converter is not installed — run `install.cmd` / `install.sh` again.
+- **`better-sqlite3` / `NODE_MODULE_VERSION` error.** Run `install.cmd` / `install.sh` again.
+- **Forgot the admin password.** `reset-admin.cmd` (Windows) or `./reset-admin.sh`.
+- **The server «freezes».** Look for `[perf] event loop stalled` in `data/runtime.log`; response times per route are at `/health/perf`.

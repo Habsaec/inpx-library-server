@@ -29,7 +29,7 @@
   <a href="#opds-and-koreader">OPDS and KOReader</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
-  <a href="https://habsaec.github.io/inpx-library-server/en/">Website</a>
+  <a href="https://habsaec.github.io/inpx-library-server/">Website</a>
 </p>
 
 <p align="center">

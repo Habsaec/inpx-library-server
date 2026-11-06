@@ -1,17 +1,17 @@
 ---
-title: Приложение для Android
-description: INPX Book Reader — Android-читалка для вашего сервера.
+title: Android app
+description: INPX Book Reader — an Android reader for your server.
 ---
 
-[**INPX Book Reader**](https://github.com/Habsaec/inpx-book-reader) — читалка для Android, которая работает с этим сервером: каталог, чтение офлайн, озвучка, режим E-Ink и общая с веб-читалкой синхронизация позиции. Интерфейс на русском и английском (следует языку телефона, переключается в приложении).
+[**INPX Book Reader**](https://github.com/Habsaec/inpx-book-reader) is an Android reader that works with this server: catalog, offline reading, read aloud, E-Ink mode and position sync shared with the web reader. Its interface is in English and Russian (follows the phone language, switchable in the app).
 
-## Подключение
+## Connecting
 
-1. Установите APK со страницы [релизов приложения](https://github.com/Habsaec/inpx-book-reader/releases/latest). Ссылка и QR-код есть и в боковой панели веб-интерфейса («Приложение»).
-2. В веб-интерфейсе откройте окно входа в приложение: сервер покажет **одноразовый QR-код** (действует 10 минут). Отсканируйте его в приложении — вводить адрес, логин и пароль не нужно.
+1. Install the APK from the [app releases](https://github.com/Habsaec/inpx-book-reader/releases/latest). The link and a QR code are also in the web interface sidebar («App»).
+2. Open the app sign-in window in the web interface: the server shows a **one-time QR code** (valid for 10 minutes). Scan it in the app — no need to type the address, login or password.
 
-## Что синхронизируется
+## What syncs
 
-Позиция чтения, закладки, заметки, «Читаю», «Хочу прочитать», оценки, полки и избранное хранятся на сервере и общие для веба и приложения. Позиция чтения синхронизируется без «прыжков»: если книга открыта на другом устройстве, приложение спросит, какую позицию взять.
+Reading position, bookmarks, notes, Reading, Want to read, ratings, shelves and favorites live on the server and are shared by the web and the app. Positions sync without «jumps»: if a book is open on another device, the app asks which position to take.
 
-Можно держать несколько аккаунтов и переключаться между ними в **Профиль → Сменить**: скачанные книги общие, а данные каждого аккаунта хранятся отдельно.
+You can keep several accounts and switch between them in **Profile → Switch**: downloaded books are shared, while each account's data is kept separately.

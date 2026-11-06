@@ -1,0 +1,122 @@
+---
+title: Домашняя библиотека электронных книг
+description: Домашняя библиотека для INPX-коллекций, Calibre и папок с книгами — каталог, поиск, читалка в браузере, OPDS и приложение для Android.
+template: splash
+hero:
+  title: INPX Library Server
+  tagline: Домашняя библиотека для INPX-коллекций, Calibre и обычных папок с книгами. Каталог, поиск, читалка в браузере, OPDS и Android-приложение — на NAS, Raspberry Pi или обычном ПК.
+  image:
+    file: ../../../assets/logo.webp
+    alt: Дракон-библиотекарь
+  actions:
+    - text: Установить
+      link: ./install/
+      icon: right-arrow
+    - text: Скачать релиз
+      link: https://github.com/Habsaec/inpx-library-server/releases/latest
+      icon: external
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/Habsaec/inpx-library-server
+      icon: github
+      variant: secondary
+    - text: Поддержать проект
+      link: https://boosty.to/habsaec/donate
+      icon: heart
+      variant: secondary
+      attrs:
+        class: donate
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import hero from '../../../assets/screens/hero.webp';
+import catalog from '../../../assets/screens/catalog.webp';
+import book from '../../../assets/screens/book.webp';
+import reader from '../../../assets/screens/reader.webp';
+import series from '../../../assets/screens/series.webp';
+import mobile from '../../../assets/screens/mobile.webp';
+import homeDark from '../../../assets/screens/home-dark.webp';
+
+<div class="wide">
+  <Image src={hero} alt="Главная страница библиотеки в браузере и в приложении для Android" class="shot" widths={[800, 1200, 1600]} sizes="(min-width: 60rem) 60rem, 100vw" />
+</div>
+
+## Что умеет
+
+<CardGrid>
+  <Card title="Каталог и поиск" icon="magnifier">
+    Полнотекстовый поиск с подсказками и исправлением опечаток, авторы, серии, жанры, языки, фильтры, новинки и рекомендации. Рассчитан на сотни тысяч книг.
+  </Card>
+  <Card title="Читалка в браузере" icon="open-book">
+    FB2 и EPUB: темы, шрифты, закладки, заметки цветом, озвучка. Позиция чтения синхронизируется с телефоном без «прыжков».
+  </Card>
+  <Card title="Личная библиотека" icon="star">
+    «Читаю», «Хочу прочитать», оценки, избранные авторы и серии, «Новое у любимых», полки и умные полки, годовая цель, импорт из Goodreads и LiveLib.
+  </Card>
+  <Card title="Доставка" icon="rocket">
+    FB2, FB2.ZIP, EPUB, MOBI, AZW3 и другие форматы, ZIP пачкой, отправка на Kindle, PocketBook, Kobo по e-mail и в Telegram.
+  </Card>
+  <Card title="Клиенты" icon="laptop">
+    Приложение для Android, OPDS 1.x / 2 с прогрессом чтения, синхронизация KOReader (KOSync), Telegram-бот с поиском.
+  </Card>
+  <Card title="Источники" icon="random">
+    INPX-коллекции (ZIP / 7z), библиотеки Calibre и обычные папки; несколько источников сразу, слежение за папками, чистка дубликатов.
+  </Card>
+</CardGrid>
+
+## Как это выглядит
+
+<div class="shots">
+  <figure>
+    <Image src={catalog} alt="Каталог: обложки, фильтры, сортировка" class="shot" widths={[500, 800]} sizes="(min-width: 50rem) 30rem, 100vw" />
+    <figcaption>Каталог — обложки или список, фильтры, сортировка</figcaption>
+  </figure>
+  <figure>
+    <Image src={book} alt="Страница книги: серия, оценка, скачивание и отправка" class="shot" widths={[500, 800]} sizes="(min-width: 50rem) 30rem, 100vw" />
+    <figcaption>Книга — серия, оценка, скачивание, отправка на читалку</figcaption>
+  </figure>
+  <figure>
+    <Image src={reader} alt="Читалка в браузере" class="shot" widths={[500, 800]} sizes="(min-width: 50rem) 30rem, 100vw" />
+    <figcaption>Читалка — FB2 / EPUB, темы, закладки, озвучка</figcaption>
+  </figure>
+  <figure>
+    <Image src={series} alt="Серия: прогресс и следующий том" class="shot" widths={[500, 800]} sizes="(min-width: 50rem) 30rem, 100vw" />
+    <figcaption>Серия — «прочитано N из M» и следующий том</figcaption>
+  </figure>
+</div>
+
+<div class="shots">
+  <figure>
+    <Image src={mobile} alt="Веб-интерфейс на телефоне" class="shot" widths={[600, 900]} sizes="(min-width: 50rem) 30rem, 100vw" />
+    <figcaption>На телефоне — главная, книга, читалка</figcaption>
+  </figure>
+  <figure>
+    <Image src={homeDark} alt="Тёмная тема" class="shot" widths={[600, 900]} sizes="(min-width: 50rem) 30rem, 100vw" />
+    <figcaption>Светлая, тёмная и автоматическая темы</figcaption>
+  </figure>
+</div>
+
+Скриншоты сделаны на вымышленной демо-библиотеке. Интерфейс доступен на русском и английском.
+
+## Быстрый старт
+
+```bash
+docker run -d \
+  --name inpx-library \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v inpx-app:/app \
+  -v inpx-data:/app/data \
+  -v /path/to/library:/library:ro \
+  -e LIBRARY_ROOT=/library \
+  habsaec/inpx-library-server:latest
+```
+
+Откройте [http://localhost:3000](http://localhost:3000) и войдите как **admin / admin** (пароль сразу смените в профиле). Подробнее — в разделе [«Установка»](./install/) для Docker, Windows, Linux, macOS и Synology.
+
+## Проект
+
+- **Сервер** — [inpx-library-server](https://github.com/Habsaec/inpx-library-server): индекс, веб, OPDS, API.
+- **Android-приложение** — [inpx-book-reader](https://github.com/Habsaec/inpx-book-reader): [скачать APK](https://github.com/Habsaec/inpx-book-reader/releases/latest).
+- Лицензия MIT. [Поддержать проект на Boosty](https://boosty.to/habsaec/donate).
