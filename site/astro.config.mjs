@@ -36,6 +36,8 @@ export default defineConfig({
       ],
       editLink: { baseUrl: 'https://github.com/Habsaec/inpx-library-server/edit/master/site/' },
       customCss: ['./src/styles/theme.css'],
+      // Header with theme / language / links visible on phones too.
+      components: { Header: './src/components/Header.astro' },
       // Our own src/content/docs/404.md is rendered by the docs route as /404 → 404.html.
       disable404Route: true,
       sidebar: [
