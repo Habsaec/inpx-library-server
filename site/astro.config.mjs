@@ -22,6 +22,7 @@ export default defineConfig({
       },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/Habsaec/inpx-library-server' },
+        { icon: 'heart', label: 'Поддержать проект на Boosty / Support on Boosty', href: 'https://boosty.to/habsaec/donate' },
       ],
       editLink: { baseUrl: 'https://github.com/Habsaec/inpx-library-server/edit/master/site/' },
       customCss: ['./src/styles/theme.css'],
