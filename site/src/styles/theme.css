@@ -51,3 +51,16 @@ h1, h2, h3, .site-title { font-family: var(--sl-font-heading); letter-spacing: 0
 .wide img { width: 100%; height: auto; }
 .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-block: 1rem; }
 .pill-row span { border: 1px solid var(--sl-color-gray-5); border-radius: 999px; padding: 0.2rem 0.8rem; font-size: var(--sl-text-sm); color: var(--sl-color-gray-2); }
+
+/* Hero buttons: one tidy row (wraps as whole buttons), donate stands out. */
+.hero .actions { gap: 0.75rem; }
+.hero .sl-link-button.secondary { border-color: var(--sl-color-gray-4); }
+.hero .sl-link-button.secondary:hover { border-color: var(--sl-color-accent); color: var(--sl-color-accent-high); }
+.hero .sl-link-button.donate {
+  --donate: #c0473a;
+  border-color: var(--donate);
+  background: color-mix(in srgb, var(--donate) 10%, transparent);
+}
+.hero .sl-link-button.donate svg { color: var(--donate); }
+.hero .sl-link-button.donate:hover { background: color-mix(in srgb, var(--donate) 18%, transparent); color: inherit; }
+:root[data-theme='dark'] .hero .sl-link-button.donate { --donate: #e0705f; }
