@@ -11,6 +11,7 @@ import { getReadingHistory } from '../inpx.js';
 import { formatAuthorLabel } from '../genre-map.js';
 import { invalidateUserPageCaches } from '../services/cache.js';
 import { getUserHomeLayout, setUserHomeLayout } from '../home-layout.js';
+import { getConfiguredDownloadFormats, isDownloadFormatEnabled } from '../download-formats.js';
 
 /** Per-account switches shared by the web UI and the Android app. */
 export function readUserPreferences(username) {
@@ -18,7 +19,10 @@ export function readUserPreferences(username) {
     hideRead: getUserHideRead(username),
     downloadFormat: getUserDownloadFormat(username),
     telegramDigest: getUserTelegramDigest(username),
-    homeLayout: getUserHomeLayout(username)
+    homeLayout: getUserHomeLayout(username),
+    // Additive: formats the server offers for FB2 books right now (admin-disabled ones and
+    // conversions without fb2cng left out) — the app warns when its «Формат скачивания» is not among them.
+    availableDownloadFormats: getConfiguredDownloadFormats().filter(isDownloadFormatEnabled)
   };
 }
 
