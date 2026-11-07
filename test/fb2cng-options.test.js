@@ -81,7 +81,19 @@ test('vignettes are written only when built-in; custom CSS becomes a quoted path
   assert.match(text, /^ {2}vignettes:\n {4}chapter:\n {6}title_top: builtin$/m);
   assert.match(text, /^ {2}stylesheet_path: "C:\/data\/css-1\.css"$/m);
   assert.ok(!/vignettes:[\s\S]*book:/.test(buildFb2cngConfigText(base, {})));
-  assert.ok(FB2CNG_OPTION_DEFS.filter((d) => d.group === 'vignettes').length === 8);
+  assert.ok(FB2CNG_OPTION_DEFS.filter((d) => d.type === 'vignette').length === 8);
+});
+
+test('vignette width is a CSS rule on top of a stylesheet, never a YAML key', async () => {
+  const { fb2cngExtraCss } = await import('../src/fb2cng-options.js');
+  assert.equal(fb2cngExtraCss({}), '');
+  assert.match(fb2cngExtraCss({ vg_width: '33' }), /img\.image-vignette \{ width: 33%; height: auto; \}/);
+  assert.match(fb2cngExtraCss({ vg_width: 'auto' }), /width: auto; max-width: 100%;/);
+  assert.equal(normalizeFb2cngOptions({ vg_width: '200' }).vg_width, 'full');
+  const text = buildFb2cngConfigText(base, { vg_width: '50' });
+  assert.ok(!/vg_width|image-vignette/.test(text));
+  // with a generated stylesheet the config points at it even without own CSS
+  assert.match(buildFb2cngConfigText(base, { vg_width: '50' }, { cssPath: 'C:/d/css-2.css' }), /^ {2}stylesheet_path: "C:\/d\/css-2\.css"$/m);
 });
 
 test('fbc asset names and version compare', () => {
@@ -107,4 +119,29 @@ test('uploaded vignette: type sniffed from bytes, stored by hash, written into t
   assert.equal(normalizeFb2cngOptions({ vg_book_top: token }).vg_book_top, token);
   const text = buildFb2cngConfigText(base, { vg_book_top: token });
   assert.match(text, new RegExp(`title_top: ".*${token.slice(5)}"`));
+});
+
+test('fonts: TTF / OTF only, @font-face per face, separate rules for text, headings and drop cap', async () => {
+  const { saveFontFile, fb2cngExtraCss, fb2cngUsedFonts } = await import('../src/fb2cng-options.js');
+  const ttf = Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.alloc(64, 7)]);
+  const otf = Buffer.concat([Buffer.from('OTTO', 'latin1'), Buffer.alloc(64, 9)]);
+  const tText = await saveFontFile(ttf, 'Text.ttf');
+  const tDrop = await saveFontFile(otf, 'Drop.otf');
+  assert.match(tText, /^font:[0-9a-f]{16}\.ttf$/);
+  assert.match(tDrop, /^font:[0-9a-f]{16}\.otf$/);
+  await assert.rejects(() => saveFontFile(Buffer.from('wOFF0000000000000000'), 'x.woff'), /BAD_TYPE/);
+  assert.equal(normalizeFb2cngOptions({ font_text_regular: '../x.ttf' }).font_text_regular, '');
+  const css = fb2cngExtraCss({
+    font_text_family: 'custom', font_text_regular: tText, font_text_size: '110',
+    font_head_family: 'sans-serif', font_head_size: '125',
+    font_drop_family: 'custom', font_drop_regular: tDrop, font_drop_size: '4'
+  });
+  assert.ok(css.includes(`@font-face { font-family: "INPX Text"; src: url("fonts/${tText.slice(5)}"); font-weight: normal; font-style: normal; }`));
+  assert.match(css, /^body \{ font-family: "INPX Text"; font-size: 110%; \}$/m);
+  assert.match(css, /\.chapter-title-header, [^{]*\{ font-family: sans-serif; \}/);
+  assert.match(css, /\.body-title, \.chapter-title, \.section-title, \.toc-title \{ font-size: 125%; \}/);
+  assert.match(css, /p\.has-dropcap \.dropcap \{ font-family: "INPX Dropcap"; font-weight: normal; font-size: 4em; \}/);
+  // files of a role that is not set to «own font» are not used
+  assert.deepEqual(fb2cngUsedFonts({ font_text_family: 'serif', font_text_regular: tText }), []);
+  assert.equal(fb2cngExtraCss({ font_text_family: 'custom' }), ''); // custom without a file = no rule
 });

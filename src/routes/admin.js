@@ -18,7 +18,7 @@ import { normalizeFb2WebpMode, setFb2WebpMode } from '../fb2-webp-images.js';
 import {
   parseFb2cngOptionsSetting, fb2cngOptionsFromForm, diffFb2cngOptions, validateFb2cngOptions,
   getFb2cngTemplateDefaults, getFb2cngVersion, resetFb2cngVersionCache, writeCurrentConfigForCheck,
-  saveVignetteImage, gcVignetteImages
+  saveVignetteImage, gcVignetteImages, ensureFb2cngBuiltinCss, saveFontFile, getFontLabel, FONT_MAX_BYTES
 } from '../fb2cng-options.js';
 import { buildConversionPreview, getPreviewFile } from '../fb2cng-preview.js';
 import {
@@ -2401,7 +2401,8 @@ export function registerAdminRoutes(app, deps) {
   });
 
   // Admin → Конвертация: fbc itself, conversion settings, preview.
-  app.get('/admin/conversion', requireAdminWeb, (req, res) => {
+  app.get('/admin/conversion', requireAdminWeb, async (req, res) => {
+    await ensureFb2cngBuiltinCss().catch(() => '');
     const version = getFb2cngVersion();
     const latest = getCachedLatestFbc();
     const disabledDownloadFormats = getSetting('disabled_download_formats');
@@ -2416,6 +2417,7 @@ export function registerAdminRoutes(app, deps) {
         csrfToken: req.csrfToken || ''
       }),
       cardHtml: renderAdminConversionCard({
+        fontLabel: getFontLabel,
         values: parseFb2cngOptionsSetting(getSetting('fb2cng_options')),
         templateDefaults: getFb2cngTemplateDefaults(),
         previewFormats: getFb2cngConvertibleFormats(),
@@ -2489,6 +2491,11 @@ export function registerAdminRoutes(app, deps) {
   app.get('/admin/conversion/preview/:token/*', requireAdminWeb, (req, res) => {
     const file = getPreviewFile(req.params.token, req.params[0]);
     if (!file) return res.status(404).type('text/plain').send('Not found');
+    if (/xhtml|html/.test(file.type)) {
+      const html = file.buffer.toString('utf8');
+      const margins = '<style>html{background:#fff}body{margin:1.2em 1.8em !important}</style>';
+      file.buffer = Buffer.from(/<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${margins}</head>`) : html, 'utf8');
+    }
     res.setHeader('Content-Type', file.type);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'no-store');
@@ -2501,6 +2508,19 @@ export function registerAdminRoutes(app, deps) {
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; sandbox allow-same-origin");
     }
     res.send(file.buffer);
+  });
+
+  // Font upload: the raw file as application/octet-stream (no base64), original name in X-File-Name.
+  app.post('/admin/conversion/font', requireAdminWeb, express.raw({ type: 'application/octet-stream', limit: FONT_MAX_BYTES }), async (req, res) => {
+    try {
+      let name = '';
+      try { name = decodeURIComponent(String(req.get('x-file-name') || '')); } catch { name = ''; }
+      const token = await saveFontFile(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), name);
+      res.json({ ok: true, token, label: getFontLabel(token) });
+    } catch (error) {
+      const code = String(error.message || '');
+      res.status(400).json({ ok: false, error: t(code === 'TOO_BIG' ? 'admin.conv.font.tooBig' : 'admin.conv.font.badType') });
+    }
   });
 
   app.post('/admin/conversion/fbc-check', requireAdminWeb, async (req, res) => {

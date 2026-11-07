@@ -17,7 +17,7 @@ import {
 import { buildDownloadBaseName } from './download-filename.js';
 import { getFb2WebpMode, convertFb2WebpBinariesToPng } from './fb2-webp-images.js';
 import { downloadLimiter } from './services/heavy-task-limiter.js';
-import { getFb2cngOptionsHash, resolveFb2cngConfigForRun, getFb2cngVersion } from './fb2cng-options.js';
+import { getFb2cngOptionsHash, resolveFb2cngConfigForRun, getFb2cngVersion, ensureFb2cngBuiltinCss } from './fb2cng-options.js';
 import { getFb2cngBinaryPath } from './fb2cng-binary.js';
 const MIME_TYPES = {
   fb2: 'application/octet-stream',
@@ -274,6 +274,8 @@ async function runConverter(args, bookInfo = {}, configOverride = '') {
   await fs.promises.access(fbcBin, fs.constants.R_OK);
   let configPath = '';
   let wantedConfig = '';
+  // vignette size etc. are added on top of fbc's own stylesheet, which is read from a sample conversion once
+  if (!configOverride && getFb2cngOptionsHash()) await ensureFb2cngBuiltinCss().catch(() => '');
   try {
     wantedConfig = configOverride || resolveFb2cngConfigForRun();
   } catch (err) {
@@ -289,9 +291,12 @@ async function runConverter(args, bookInfo = {}, configOverride = '') {
     }
   }
   const fullArgs = configPath ? ['-c', configPath, ...args] : args;
+  // fbc resolves stylesheet url("fonts/…") against its working directory (not the stylesheet's, as documented):
+  // a generated config sits next to its stylesheet and fonts/, so it runs from there
+  const cwd = configPath && configPath !== config.fb2cngConfigPath ? path.dirname(configPath) : config.conversionTempDir;
   await new Promise((resolve, reject) => {
     const child = spawn(fbcBin, fullArgs, {
-      cwd: config.conversionTempDir,
+      cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
     });

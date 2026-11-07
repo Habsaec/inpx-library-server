@@ -2382,10 +2382,10 @@ export function renderAdminCollectionsCard({ collections = [], matching = false,
 }
 
 /** Админка → Контент → «Конвертация» (fb2cng): настройки (`FB2CNG_OPTION_DEFS`) + управление самим fbc. */
-export function renderAdminConversionCard({ values = {}, templateDefaults = {}, fbc = {}, previewFormats = ['epub2', 'epub3'], customBase = false, csrfToken = '', error = '' }) {
-  const groups = ['text', 'templates', 'fix', 'images', 'css', 'vignettes', 'kindle', 'pdf', 'md'];
+export function renderAdminConversionCard({ values = {}, templateDefaults = {}, fbc = {}, previewFormats = ['epub2', 'epub3'], fontLabel = (v) => String(v).slice(5), customBase = false, csrfToken = '', error = '' }) {
+  const groups = ['text', 'templates', 'fix', 'images', 'fonts', 'css', 'vignettes', 'kindle', 'pdf', 'md'];
   const defs = FB2CNG_OPTION_DEFS.filter(isFb2cngOptionSupported);
-  const valueLabel = (def, o) => t(def.group === 'vignettes' ? `admin.conv.val.vignette.${o}` : `admin.conv.val.${def.key}.${o}`);
+  const valueLabel = (def, o) => t(`admin.conv.val.${def.key}.${o}`);
   const field = (def) => {
     const id = `fb2cng-${def.key}`;
     const name = `fb2cng_${def.key}`;
@@ -2394,6 +2394,16 @@ export function renderAdminConversionCard({ values = {}, templateDefaults = {}, 
     if (def.type === 'bool') {
       return `<label class="admin-checkbox-row" style="display:flex;align-items:center;gap:8px;margin:6px 0">
         <input type="checkbox" id="${id}" name="${name}" value="1" ${v ? 'checked' : ''}> <span>${label}</span></label>`;
+    }
+    if (def.type === 'font') {
+      return `<div class="admin-field-group"><label for="${id}">${label}</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="${id}" name="${name}" style="max-width:320px">
+            <option value="" ${v ? '' : 'selected'}>${escapeHtml(t('admin.conv.font.none'))}</option>
+            ${v ? `<option value="${escapeHtml(v)}" selected>${escapeHtml(fontLabel(v))}</option>` : ''}
+          </select>
+          <input type="file" accept=".ttf,.otf,font/ttf,font/otf" data-font-upload="${id}" style="max-width:260px">
+        </div></div>`;
     }
     if (def.type === 'vignette') {
       const opts = ['off', 'builtin', ...(String(v).startsWith('file:') ? [v] : [])];
@@ -2410,8 +2420,8 @@ export function renderAdminConversionCard({ values = {}, templateDefaults = {}, 
           `<option value="${escapeHtml(o)}" ${v === o ? 'selected' : ''}>${escapeHtml(valueLabel(def, o))}</option>`).join('')}</select></div>`;
     }
     if (def.type === 'text' || def.type === 'css') {
-      const shown = def.type === 'text' ? (v || templateDefaults[def.key] || '') : (v || '');
-      const rows = def.type === 'css' ? 10 : 7;
+      const shown = v || templateDefaults[def.key] || '';
+      const rows = def.type === 'css' ? 16 : 7;
       const hint = def.type === 'css' ? `<div class="muted" style="font-size:12px">${escapeHtml(t('admin.conv.cssHint'))}</div>` : '';
       return `<div class="admin-field-group"><label for="${id}">${label}</label>
         <textarea id="${id}" name="${name}" rows="${rows}" spellcheck="false" autocomplete="off" style="width:100%;max-width:760px;font-family:var(--font-mono, monospace);font-size:13px">${escapeHtml(shown)}</textarea>${hint}</div>`;
@@ -2460,7 +2470,15 @@ export function renderAdminConversionCard({ values = {}, templateDefaults = {}, 
           <div class="admin-subsection">
             <div class="admin-subsection-title">${escapeHtml(t(`admin.conv.group.${g}`))}</div>
             ${g === 'templates' ? `<p class="muted admin-compact-btn" style="margin:4px 0 8px">${escapeHtml(t('admin.conv.templatesHint'))}</p>` : ''}
-            ${defs.filter((d) => d.group === g).map(field).join('')}
+            ${g === 'fonts' ? `<p class="muted admin-compact-btn" style="margin:4px 0 8px">${escapeHtml(t('admin.conv.fontsHint'))}</p>
+              ${['text', 'head', 'drop'].map((role) => `
+                <div class="admin-font-role" data-font-role="${role}" style="margin:10px 0 14px">
+                  <div style="font-weight:600;margin-bottom:4px">${escapeHtml(t(`admin.conv.fonts.role.${role}`))}</div>
+                  ${defs.filter((d) => d.group === 'fonts' && d.role === role && d.type !== 'font').map(field).join('')}
+                  <div class="admin-font-files" data-font-files="${role}" ${values[`font_${role}_family`] === 'custom' ? '' : 'hidden'} style="padding-left:12px;border-left:2px solid var(--border)">
+                    ${defs.filter((d) => d.group === 'fonts' && d.role === role && d.type === 'font').map(field).join('')}
+                  </div>
+                </div>`).join('')}` : defs.filter((d) => d.group === g).map(field).join('')}
           </div>`).join('')}
         <div class="admin-actions-row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
           <button type="submit" class="button">${escapeHtml(t('admin.conv.save'))}</button>
@@ -2468,6 +2486,31 @@ export function renderAdminConversionCard({ values = {}, templateDefaults = {}, 
           <script>
           (function () {
             var m = document.querySelector('meta[name="csrf-token"]');
+            ['text', 'head', 'drop'].forEach(function (role) {
+              var fam = document.getElementById('fb2cng-font_' + role + '_family');
+              var files = document.querySelector('[data-font-files="' + role + '"]');
+              if (!fam || !files) return;
+              fam.addEventListener('change', function () { files.hidden = fam.value !== 'custom'; });
+            });
+            document.querySelectorAll('[data-font-upload]').forEach(function (inp) {
+              inp.addEventListener('change', function () {
+                var f = inp.files && inp.files[0];
+                if (!f) return;
+                var sel = document.getElementById(inp.dataset.fontUpload);
+                f.arrayBuffer().then(function (buf) {
+                  return fetch('/admin/conversion/font', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/octet-stream', 'x-csrf-token': m ? m.content : '', 'x-file-name': encodeURIComponent(f.name) },
+                    body: buf
+                  });
+                }).then(function (x) { return x.json(); }).then(function (j) {
+                  if (!j.ok) { alert(j.error || 'error'); inp.value = ''; return; }
+                  var o = document.createElement('option');
+                  o.value = j.token; o.textContent = j.label;
+                  sel.appendChild(o); sel.value = j.token;
+                }).catch(function (e) { alert(e.message); });
+              });
+            });
             document.querySelectorAll('[data-vg-upload]').forEach(function (inp) {
               inp.addEventListener('change', function () {
                 var f = inp.files && inp.files[0];

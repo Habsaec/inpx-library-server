@@ -18,6 +18,7 @@ import { config } from './config.js';
 import { getSetting } from './db.js';
 import { getFb2cngBinaryPath } from './fb2cng-binary.js';
 import { detectImageMimeFromBuffer } from './services/cover.js';
+import unzipper from 'unzipper';
 
 // Виньетка: 'off' | 'builtin' | 'file:<sha1-16>.<png|jpg|gif|webp>' (загруженная картинка в data/converter/vignettes/).
 const VIGNETTE_FILE_RE = /^file:[0-9a-f]{16}\.(png|jpg|gif|webp)$/;
@@ -61,6 +62,62 @@ export async function gcVignetteImages(options) {
       if (Date.now() - (await fs.promises.stat(p)).mtimeMs > 3600_000) await fs.promises.unlink(p);
     } catch { /* ignore */ }
   }
+  const keepFonts = new Set(Object.values(options || {}).filter((v) => typeof v === 'string' && FONT_FILE_RE.test(v)).map((v) => v.slice(5, 21)));
+  let fontNames = [];
+  try { fontNames = await fs.promises.readdir(getFontDir()); } catch { return; }
+  for (const name of fontNames) {
+    const m = /^([0-9a-f]{16})\.(ttf|otf|json)$/.exec(name);
+    if (!m || keepFonts.has(m[1])) continue;
+    try {
+      const p = path.join(getFontDir(), name);
+      if (Date.now() - (await fs.promises.stat(p)).mtimeMs > 3600_000) await fs.promises.unlink(p);
+    } catch { /* ignore */ }
+  }
+}
+
+// Шрифт: 'font:<sha1-16>.<ttf|otf>' (загруженный файл в data/converter/fonts/, рядом <name>.json с исходным именем).
+const FONT_FILE_RE = /^font:[0-9a-f]{16}\.(ttf|otf)$/;
+export const FONT_MAX_BYTES = 20 * 1024 * 1024;
+
+export function getFontDir() {
+  return path.join(config.dataDir, 'converter', 'fonts');
+}
+
+/** TrueType / OpenType by the first bytes (collections, WOFF and the rest are refused: PDF needs raw TTF / OTF). */
+function sniffFontExt(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return '';
+  const tag = buffer.subarray(0, 4);
+  if (tag.equals(Buffer.from([0, 1, 0, 0])) || tag.toString('latin1') === 'true') return 'ttf';
+  if (tag.toString('latin1') === 'OTTO') return 'otf';
+  return '';
+}
+
+/** Сохранить загруженный шрифт; возвращает токен 'font:<hash>.<ext>'. */
+export async function saveFontFile(buffer, originalName = '') {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('EMPTY');
+  if (buffer.length > FONT_MAX_BYTES) throw new Error('TOO_BIG');
+  const ext = sniffFontExt(buffer);
+  if (!ext) throw new Error('BAD_TYPE');
+  const hash = crypto.createHash('sha1').update(buffer).digest('hex').slice(0, 16);
+  const name = `${hash}.${ext}`;
+  const dir = getFontDir();
+  await fs.promises.mkdir(dir, { recursive: true });
+  const target = path.join(dir, name);
+  if (!fs.existsSync(target)) {
+    const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
+    await fs.promises.writeFile(tmp, buffer);
+    await fs.promises.rename(tmp, target);
+  }
+  const label = String(originalName || '').replace(/[\u0000-\u001f\u007f<>"]/g, '').slice(0, 120) || name;
+  await fs.promises.writeFile(path.join(dir, `${hash}.json`), JSON.stringify({ name: label }), 'utf8').catch(() => {});
+  return `font:${name}`;
+}
+
+/** Исходное имя файла загруженного шрифта (для подписи в форме). */
+export function getFontLabel(token) {
+  if (!FONT_FILE_RE.test(String(token))) return '';
+  const hash = String(token).slice(5, 21);
+  try { return JSON.parse(fs.readFileSync(path.join(getFontDir(), `${hash}.json`), 'utf8')).name || token.slice(5); } catch { return token.slice(5); }
 }
 
 /** fbc 1.9.5 `dumpconfig --default`: шаблон заголовка оглавления (в поставляемом fb2cng.yaml его нет). */
@@ -118,6 +175,24 @@ export const FB2CNG_OPTION_DEFS = [
   { key: 'tpl_toc_authors', path: 'document.toc_page.authors_template', type: 'text', def: '', group: 'templates', fallback: DEFAULT_AUTHORS_TEMPLATE },
   // Свой CSS целиком заменяет встроенный стиль fbc. Пишется в data/converter/css-<hash>.css.
   { key: 'custom_css', path: 'document.stylesheet_path', type: 'css', def: '', group: 'css' },
+  // Шрифты (только CSS поверх стиля fbc). family 'custom' = загруженные файлы; PDF не синтезирует жирный / курсив.
+  { key: 'font_text_family', path: '', type: 'enum', values: ['default', 'serif', 'sans-serif', 'monospace', 'custom'], def: 'default', group: 'fonts', role: 'text', cssOnly: true },
+  { key: 'font_text_size', path: '', type: 'enum', values: ['default', '80', '90', '100', '110', '120', '130', '150'], def: 'default', group: 'fonts', role: 'text', cssOnly: true },
+  { key: 'font_text_regular', path: '', type: 'font', def: '', group: 'fonts', role: 'text', face: 'regular', cssOnly: true },
+  { key: 'font_text_bold', path: '', type: 'font', def: '', group: 'fonts', role: 'text', face: 'bold', cssOnly: true },
+  { key: 'font_text_italic', path: '', type: 'font', def: '', group: 'fonts', role: 'text', face: 'italic', cssOnly: true },
+  { key: 'font_text_bolditalic', path: '', type: 'font', def: '', group: 'fonts', role: 'text', face: 'bolditalic', cssOnly: true },
+  { key: 'font_head_family', path: '', type: 'enum', values: ['default', 'serif', 'sans-serif', 'monospace', 'custom'], def: 'default', group: 'fonts', role: 'head', cssOnly: true },
+  { key: 'font_head_size', path: '', type: 'enum', values: ['default', '80', '90', '110', '125', '150'], def: 'default', group: 'fonts', role: 'head', cssOnly: true },
+  { key: 'font_head_regular', path: '', type: 'font', def: '', group: 'fonts', role: 'head', face: 'regular', cssOnly: true },
+  { key: 'font_head_bold', path: '', type: 'font', def: '', group: 'fonts', role: 'head', face: 'bold', cssOnly: true },
+  { key: 'font_head_italic', path: '', type: 'font', def: '', group: 'fonts', role: 'head', face: 'italic', cssOnly: true },
+  { key: 'font_head_bolditalic', path: '', type: 'font', def: '', group: 'fonts', role: 'head', face: 'bolditalic', cssOnly: true },
+  { key: 'font_drop_family', path: '', type: 'enum', values: ['default', 'serif', 'sans-serif', 'monospace', 'custom'], def: 'default', group: 'fonts', role: 'drop', cssOnly: true },
+  { key: 'font_drop_size', path: '', type: 'enum', values: ['default', '2.5', '3', '4', '5'], def: 'default', group: 'fonts', role: 'drop', cssOnly: true },
+  { key: 'font_drop_regular', path: '', type: 'font', def: '', group: 'fonts', role: 'drop', face: 'regular', cssOnly: true },
+  // fbc's own CSS stretches every vignette to the page width — fine for its thin strips, bad for an uploaded ornament.
+  { key: 'vg_width', path: '', type: 'enum', values: ['full', '75', '50', '33', 'auto'], def: 'full', group: 'vignettes', cssOnly: true },
   vignette('vg_book_top', 'book.title_top'),
   vignette('vg_book_bottom', 'book.title_bottom'),
   vignette('vg_chapter_top', 'chapter.title_top'),
@@ -205,6 +280,10 @@ function normalizeValue(def, raw) {
   if (def.type === 'enum') {
     const v = String(raw ?? '').trim();
     return def.values.includes(v) ? v : def.def;
+  }
+  if (def.type === 'font') {
+    const v = String(raw ?? '').trim();
+    return FONT_FILE_RE.test(v) ? v : '';
   }
   if (def.type === 'vignette') {
     const v = String(raw ?? '').trim();
@@ -384,6 +463,7 @@ export function getFb2cngTemplateDefaults() {
     if (def.type !== 'text') continue;
     out[def.key] = cleanTemplateText(readYamlText(base, def.path) ?? def.fallback ?? '');
   }
+  out.custom_css = cleanTemplateText(readBuiltinCssSync(), FB2CNG_CSS_MAX);
   return out;
 }
 
@@ -397,7 +477,7 @@ export function fb2cngOptionsFromForm(body, templateDefaults = null) {
   const full = normalizeFb2cngOptions(src);
   if (templateDefaults) {
     for (const def of FB2CNG_OPTION_DEFS) {
-      if (def.type === 'text' && full[def.key] === templateDefaults[def.key]) full[def.key] = '';
+      if ((def.type === 'text' || def.type === 'css') && templateDefaults[def.key] && full[def.key] === templateDefaults[def.key]) full[def.key] = '';
     }
   }
   return full;
@@ -418,6 +498,7 @@ export function buildFb2cngConfigText(baseText, options, files = {}) {
   const diff = diffFb2cngOptions(normalizeFb2cngOptions(options));
   for (const key of Object.keys(diff)) {
     const def = DEFS_BY_KEY.get(key);
+    if (def.cssOnly) continue;
     if (def.type === 'text') text = setYamlValue(text, def.path, { block: diff[key] });
     else if (def.type === 'css') text = setYamlValue(text, def.path, JSON.stringify(files.cssPath || 'custom.css'));
     else if (def.type === 'vignette') {
@@ -427,6 +508,7 @@ export function buildFb2cngConfigText(baseText, options, files = {}) {
     }
     else text = setYamlValue(text, def.path, yamlScalar(def, diff[key]));
   }
+  if (files.cssPath && !diff.custom_css) text = setYamlValue(text, 'document.stylesheet_path', JSON.stringify(files.cssPath));
   return text.endsWith('\n') ? text : `${text}\n`;
 }
 
@@ -438,13 +520,145 @@ function writeFileAtomicSync(target, content) {
 }
 
 /** Свой CSS → <dir>/css-<hash>.css; возвращает путь или ''. */
+const VG_WIDTH_CSS = { 75: 'width: 75%;', 50: 'width: 50%;', 33: 'width: 33%;', auto: 'width: auto; max-width: 100%;' };
+
+const FONT_FAMILY_NAMES = { text: 'INPX Text', head: 'INPX Headings', drop: 'INPX Dropcap' };
+const FONT_FACES = { regular: ['normal', 'normal'], bold: ['bold', 'normal'], italic: ['normal', 'italic'], bolditalic: ['bold', 'italic'] };
+// title text classes of the built-in stylesheet (several of them set font-weight: bold)
+const HEADING_SELECTORS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  ...['body-title-header', 'chapter-title-header', 'section-title-header', 'toc-title']
+    .flatMap((c) => [c, `${c}-emptyline`, `${c}-break`, `${c}-first`, `${c}-next`].map((x) => `.${x}`)),
+  '.section-subtitle'].join(', ');
+
+/** Font files used by the options: [{ token, file }]. */
+export function fb2cngUsedFonts(options) {
+  const o = normalizeFb2cngOptions(options);
+  const out = [];
+  for (const def of FB2CNG_OPTION_DEFS) {
+    if (def.type !== 'font' || !o[def.key] || o[`font_${def.role}_family`] !== 'custom') continue;
+    out.push({ token: o[def.key], file: o[def.key].slice(5) });
+  }
+  return out;
+}
+
+function fontRules(o) {
+  const parts = [];
+  const family = (role) => {
+    const f = o[`font_${role}_family`];
+    if (f === 'custom') return o[`font_${role}_regular`] ? `"${FONT_FAMILY_NAMES[role]}"` : '';
+    return f === 'default' ? '' : f;
+  };
+  for (const role of ['text', 'head', 'drop']) {
+    if (o[`font_${role}_family`] !== 'custom' || !o[`font_${role}_regular`]) continue;
+    for (const [face, [weight, style]] of Object.entries(FONT_FACES)) {
+      const token = o[`font_${role}_${face}`];
+      if (!token) continue;
+      parts.push(`@font-face { font-family: "${FONT_FAMILY_NAMES[role]}"; src: url("fonts/${token.slice(5)}"); font-weight: ${weight}; font-style: ${style}; }`);
+    }
+  }
+  // text: a bare `body` rule (for KFX it then becomes the document default font)
+  const textFamily = family('text');
+  const textSize = o.font_text_size !== 'default' ? `font-size: ${o.font_text_size}%;` : '';
+  if (textFamily || textSize) parts.push(`body { ${textFamily ? `font-family: ${textFamily}; ` : ''}${textSize} }`.replace(/\s+}/, ' }'));
+  // headings
+  const headFamily = family('head');
+  if (headFamily) parts.push(`${HEADING_SELECTORS} { font-family: ${headFamily}; }`);
+  // an uploaded heading font without a bold face: no faux bold (and PDF would print it regular anyway)
+  if (o.font_head_family === 'custom' && o.font_head_regular && !o.font_head_bold) parts.push(`${HEADING_SELECTORS} { font-weight: normal; }`);
+  if (o.font_head_size !== 'default') parts.push(`.body-title, .chapter-title, .section-title, .toc-title { font-size: ${o.font_head_size}%; }`);
+  // drop caps (same specificity as the built-in `p.has-dropcap .dropcap`, later in the file)
+  const dropFamily = family('drop');
+  const drop = [];
+  if (dropFamily) drop.push(`font-family: ${dropFamily};`);
+  if (o.font_drop_family === 'custom' && o.font_drop_regular) drop.push('font-weight: normal;');
+  if (o.font_drop_size !== 'default') drop.push(`font-size: ${o.font_drop_size}em;`);
+  if (drop.length) parts.push(`p.has-dropcap .dropcap { ${drop.join(' ')} }`);
+  return parts.length ? `/* INPX Library: fonts */\n${parts.join('\n')}\n` : '';
+}
+
+/** Rules we add on top of the stylesheet (fbc has no YAML option for them). */
+export function fb2cngExtraCss(options) {
+  const o = normalizeFb2cngOptions(options);
+  const w = VG_WIDTH_CSS[o.vg_width];
+  const vignettes = w ? `/* INPX Library: vignette size */\nimg.image-vignette { ${w} height: auto; }\n` : '';
+  return [fontRules(o), vignettes].filter(Boolean).join('\n');
+}
+
 function materializeCssSync(options, dir) {
-  const css = normalizeFb2cngOptions(options).custom_css;
-  if (!css) return '';
+  const o = normalizeFb2cngOptions(options);
+  const extra = fb2cngExtraCss(o);
+  // stylesheet_path REPLACES fbc's stylesheet: extra rules alone go on top of the built-in one, never instead of it
+  const base = o.custom_css || (extra ? readBuiltinCssSync() : '');
+  if (!base) return '';
+  const css = extra ? `${base}\n\n${extra}` : base;
   const name = `css-${crypto.createHash('sha1').update(css).digest('hex').slice(0, 16)}.css`;
   const target = path.join(dir, name);
   if (!fs.existsSync(target)) writeFileAtomicSync(target, `${css}\n`);
+  // fbc resolves url("fonts/…") relative to the stylesheet and rejects ../ and absolute paths
+  const fontsHere = path.join(dir, 'fonts');
+  if (path.resolve(fontsHere) !== path.resolve(getFontDir())) {
+    for (const { file } of fb2cngUsedFonts(o)) {
+      const src = path.join(getFontDir(), file);
+      const dst = path.join(fontsHere, file);
+      if (!fs.existsSync(dst) && fs.existsSync(src)) {
+        fs.mkdirSync(fontsHere, { recursive: true });
+        fs.copyFileSync(src, dst);
+      }
+    }
+  }
   return target;
+}
+
+/* ───────────── встроенный CSS fbc ───────────── */
+
+export function getBuiltinCssPath(version = getFb2cngVersion()) {
+  return path.join(config.dataDir, 'converter', `builtin-${version || '0'}.css`);
+}
+
+export function readBuiltinCssSync() {
+  try { return fs.readFileSync(getBuiltinCssPath(), 'utf8'); } catch { return ''; }
+}
+
+let builtinCssPending = null;
+
+/**
+ * fbc has no command that prints its stylesheet: convert the sample book once (per fbc version, no config)
+ * and keep the CSS of the result in data/converter/builtin-<version>.css. Returns the path or ''.
+ */
+export async function ensureFb2cngBuiltinCss() {
+  const target = getBuiltinCssPath();
+  if (fs.existsSync(target)) return target;
+  const bin = getFb2cngBinaryPath();
+  if (!bin || !getFb2cngVersion()) return '';
+  if (builtinCssPending) return builtinCssPending;
+  builtinCssPending = (async () => {
+    const dir = path.join(config.conversionTempDir, `cssdump-${crypto.randomBytes(6).toString('hex')}`);
+    try {
+      const outDir = path.join(dir, 'out');
+      await fs.promises.mkdir(outDir, { recursive: true });
+      const sample = path.join(dir, 'sample.fb2');
+      await fs.promises.writeFile(sample, SAMPLE_FB2, 'utf8');
+      const r = await runFbc(bin, ['convert', '--to', 'epub2', '--ow', '--nd', sample, outDir], dir, 30000);
+      if (r.code !== 0) return '';
+      const epub = (await fs.promises.readdir(outDir)).find((n) => n.toLowerCase().endsWith('.epub'));
+      if (!epub) return '';
+      const zip = await unzipper.Open.file(path.join(outDir, epub));
+      const parts = [];
+      for (const entry of zip.files) {
+        if (entry.type === 'File' && /\.css$/i.test(entry.path)) parts.push((await entry.buffer()).toString('utf8'));
+      }
+      if (!parts.length) return '';
+      await fs.promises.mkdir(path.dirname(target), { recursive: true });
+      writeFileAtomicSync(target, parts.join('\n\n'));
+      return target;
+    } catch {
+      return '';
+    } finally {
+      builtinCssPending = null;
+      await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  })();
+  return builtinCssPending;
 }
 
 /* ───────────── хэш и путь конфига для запуска ───────────── */
@@ -511,6 +725,7 @@ function runFbc(bin, args, cwd, timeoutMs = 15000) {
  */
 export async function validateFb2cngOptions(options, bin = getFb2cngBinaryPath()) {
   if (!bin) return { ok: true, skipped: true };
+  await ensureFb2cngBuiltinCss();
   const dir = path.join(config.conversionTempDir, `cfgcheck-${crypto.randomBytes(6).toString('hex')}`);
   await fs.promises.mkdir(dir, { recursive: true });
   try {
@@ -540,6 +755,7 @@ export async function validateFb2cngOptions(options, bin = getFb2cngBinaryPath()
  * @returns {Promise<{ path: string, cleanup: () => Promise<void> }>}
  */
 export async function writeCurrentConfigForCheck(optionsOverride = null) {
+  await ensureFb2cngBuiltinCss();
   const dir = path.join(config.conversionTempDir, `cfgcur-${crypto.randomBytes(6).toString('hex')}`);
   await fs.promises.mkdir(dir, { recursive: true });
   const options = optionsOverride || parseFb2cngOptionsSetting(getSetting('fb2cng_options'));
