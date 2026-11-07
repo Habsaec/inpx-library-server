@@ -1759,6 +1759,7 @@ function renderAdminSidebar(currentPath = '/admin', { user = null, csrfToken = '
           ${link('/admin/sources', t('admin.nav.sources'))}
           ${link('/admin/duplicates', t('admin.nav.duplicates'))}
           ${link('/admin/content', t('admin.nav.content'))}
+          ${link('/admin/conversion', t('admin.nav.conversion'))}
           <div class="sidenav-group-label">${escapeHtml(t('admin.nav.groupAccess'))}</div>
           ${link('/admin/users', t('admin.nav.users'))}
           ${link('/admin/smtp', t('admin.nav.smtp'))}

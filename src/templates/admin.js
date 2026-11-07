@@ -42,6 +42,7 @@ import {
 } from '../download-formats.js';
 import { DOWNLOAD_FILENAME_STYLES } from '../download-filename.js';
 import { FB2_WEBP_MODES } from '../fb2-webp-images.js';
+import { FB2CNG_OPTION_DEFS, isFb2cngOptionSupported } from '../fb2cng-options.js';
 import {
   TELEGRAM_DEFAULT_PROFILE_DESCRIPTION,
   TELEGRAM_DEFAULT_PROFILE_SHORT,
@@ -920,9 +921,6 @@ export function renderAdminContent({
   excludedLangSet = new Set(),
   genres = [],
   excludedGenreSet = new Set(),
-  disabledDownloadFormatSet = new Set(),
-  downloadFilenameStyle = 'translit-full',
-  fb2WebpMode = 'keep',
   showDeletedBooks = false,
   defaultLocale = 'auto',
   collectionsCardHtml = '',
@@ -931,16 +929,6 @@ export function renderAdminContent({
 }) {
   const langExcludedCount = languages.filter(l => excludedLangSet.has(l.code)).length;
   const genreExcludedCount = genres.filter(g => excludedGenreSet.has(g.code)).length;
-  const downloadFormatChips = getConfiguredDownloadFormats().map((code) => {
-    const checked = !disabledDownloadFormatSet.has(code);
-    const label = FORMAT_LABELS[code] || code.toUpperCase();
-    return `
-      <label class="admin-chip-toggle" title="${escapeHtml(code)}">
-        <input type="checkbox" name="enabled_download_format" value="${escapeHtml(code)}" ${checked ? 'checked' : ''}>
-        <span>${escapeHtml(label)}</span>
-      </label>`;
-  }).join('');
-
   const langRows = languages.map(lang => {
     const checked = !excludedLangSet.has(lang.code);
     const label = formatLanguageLabel(lang.code);
@@ -1075,23 +1063,12 @@ export function renderAdminContent({
         </div>
       </form>
     </div>
+    <p class="admin-compact-btn" style="margin:0 0 14px"><a href="/admin/conversion">${escapeHtml(t('admin.content.conversionLink'))}</a></p>
     <p class="muted" style="margin:0 0 14px">${escapeHtml(tp('admin.content.statsDesc', { langTotal: languages.length, langExcluded: langExcludedCount, genreTotal: genres.length, genreExcluded: genreExcludedCount }))}</p>
     <form method="POST" action="/admin/content">
       ${csrfHiddenField(csrfToken)}
       <div class="admin-card" style="margin-bottom:16px">
-        <div class="admin-card-title" style="display:flex;align-items:center;gap:12px">
-          ${escapeHtml(t('admin.content.downloadSection'))}
-          <label style="font-size:13px;font-weight:400;display:flex;align-items:center;gap:4px">
-            <input type="checkbox" id="download-format-toggle-all" title="${escapeHtml(t('admin.content.toggleAll'))}">
-            <span class="muted">${escapeHtml(t('admin.content.toggleAll'))}</span>
-          </label>
-        </div>
-        <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.downloadHint'))}</p>
-        ${config.fb2cngPath ? '' : `<p class="muted admin-compact-btn" style="margin:0 0 12px;">${escapeHtml(t('admin.content.downloadFb2cngHint'))}</p>`}
-        <div class="admin-chip-group">${downloadFormatChips}</div>
-      </div>
-      <div class="admin-card" style="margin-bottom:16px">
-        <div class="admin-card-title">${escapeHtml(t('admin.content.deliveryTitle'))}</div>
+        <div class="admin-card-title">${escapeHtml(t('admin.content.visibilityTitle'))}</div>
         <div class="admin-subsection">
           <div class="admin-subsection-title">${escapeHtml(t('admin.content.deletedSection'))}</div>
           <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.deletedHint'))}</p>
@@ -1102,30 +1079,6 @@ export function renderAdminContent({
               <span class="muted" style="display:block;margin-top:4px;font-size:13px">${escapeHtml(t('admin.content.deletedToggleHint'))}</span>
             </span>
           </label>
-        </div>
-        <div class="admin-subsection">
-          <div class="admin-subsection-title">${escapeHtml(t('admin.content.filenameSection'))}</div>
-          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.filenameHint'))}</p>
-          <div class="admin-field-group">
-            <label for="download-filename-style">${escapeHtml(t('admin.content.filenameLabel'))}</label>
-            <select id="download-filename-style" name="download_filename_style" style="max-width:420px">
-              ${DOWNLOAD_FILENAME_STYLES.map((style) => `
-                <option value="${escapeHtml(style)}" ${downloadFilenameStyle === style ? 'selected' : ''}>${escapeHtml(t(`admin.content.filename.${style}`))}</option>
-              `).join('')}
-            </select>
-          </div>
-        </div>
-        <div class="admin-subsection">
-          <div class="admin-subsection-title">${escapeHtml(t('admin.content.webpSection'))}</div>
-          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.webpHint'))}</p>
-          <div class="admin-field-group">
-            <label for="fb2-webp-images">${escapeHtml(t('admin.content.webpLabel'))}</label>
-            <select id="fb2-webp-images" name="fb2_webp_images" style="max-width:420px">
-              ${FB2_WEBP_MODES.map((mode) => `
-                <option value="${escapeHtml(mode)}" ${fb2WebpMode === mode ? 'selected' : ''}>${escapeHtml(t(`admin.content.webp.${mode}`))}</option>
-              `).join('')}
-            </select>
-          </div>
         </div>
       </div>
       <div class="admin-card" style="margin-bottom:16px">
@@ -1171,8 +1124,17 @@ export function renderAdminContent({
           <input type="search" class="admin-list-filter" data-admin-filter="#admin-genre-list" placeholder="${escapeHtml(t('admin.content.filterPlaceholder'))}" aria-label="${escapeHtml(t('admin.content.filterPlaceholder'))}" autocomplete="off">
         </div>
         <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.genreHint'))}</p>
-        <div class="acg-list" id="admin-genre-list">
-          ${genreGroupsHtml.join('')}
+        <div id="admin-genre-list">
+        <div class="acg" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
+            <span style="flex:1 1 auto;font-weight:600;font-size:15px">${escapeHtml(tp('admin.content.genreListTitle', { total: genres.length }))}</span>
+            <span style="flex:none;font-size:13px;color:var(--muted)">${genreExcludedCount > 0 ? '−' + genreExcludedCount + ' ' + escapeHtml(t('admin.content.hidden')) : ''}</span>
+            <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>
+          </div>
+          <div class="acg-body acg-list" style="border-top:1px solid var(--border);padding:8px">
+            ${genreGroupsHtml.join('')}
+          </div>
+        </div>
         </div>
       </div>
       <div class="admin-appearance-save">
@@ -1182,22 +1144,6 @@ export function renderAdminContent({
     </form>
     ${collectionsCardHtml}
     <script>
-      document.getElementById('download-format-toggle-all')?.addEventListener('change', function() {
-        document.querySelectorAll('input[name="enabled_download_format"]').forEach(cb => { cb.checked = this.checked; });
-      });
-      document.querySelectorAll('input[name="enabled_download_format"]').forEach(cb => {
-        cb.addEventListener('change', updateGlobalDownloadFormatToggle);
-      });
-      function updateGlobalDownloadFormatToggle() {
-        const all = document.querySelectorAll('input[name="enabled_download_format"]');
-        const checked = [...all].filter(c => c.checked).length;
-        const globalToggle = document.getElementById('download-format-toggle-all');
-        if (globalToggle) {
-          globalToggle.checked = checked === all.length;
-          globalToggle.indeterminate = checked > 0 && checked < all.length;
-        }
-      }
-      updateGlobalDownloadFormatToggle();
       document.getElementById('lang-toggle-all')?.addEventListener('change', function() {
         document.querySelectorAll('input[name="enabled_lang"]').forEach(cb => { cb.checked = this.checked; });
       });
@@ -2396,6 +2342,13 @@ export function renderAdminCollectionsCard({ collections = [], matching = false,
       <div class="admin-card-title">${escapeHtml(t('admin.collections.title'))}</div>
       <p class="muted admin-compact-btn" style="margin:4px 0 12px">${escapeHtml(t('admin.collections.hint'))}</p>
       ${error ? renderAlert('error', error) : ''}
+      <div class="acg" ${error ? 'data-open="1"' : ''} style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface)" onclick="var p=this.parentElement;p.dataset.open=p.dataset.open==='1'?'':'1'">
+            <span style="flex:1 1 auto;font-weight:600;font-size:15px">${escapeHtml(tp('admin.collections.listTitle', { total: collections.length }))}</span>
+            <span style="flex:none;font-size:13px;color:var(--muted)">${matching ? escapeHtml(t('admin.collections.matching')) : escapeHtml(tp('admin.collections.enabledCount', { count: collections.filter((c) => c.enabled).length }))}</span>
+            <span class="acg-arrow" style="flex:none;font-size:11px;color:var(--muted);transition:transform .15s">&#9654;</span>
+          </div>
+        <div class="acg-body" style="border-top:1px solid var(--border);padding:12px 14px">
       ${collections.length ? `<table class="admin-table">
         <thead><tr>
           <th>${escapeHtml(t('admin.collections.thTitle'))}</th>
@@ -2423,5 +2376,289 @@ export function renderAdminCollectionsCard({ collections = [], matching = false,
           <button type="submit" class="button-primary">${escapeHtml(t('admin.collections.import'))}</button>
         </div>
       </form>
+        </div>
+      </div>
     </div>`;
+}
+
+/** Админка → Контент → «Конвертация» (fb2cng): настройки (`FB2CNG_OPTION_DEFS`) + управление самим fbc. */
+export function renderAdminConversionCard({ values = {}, templateDefaults = {}, fbc = {}, previewFormats = ['epub2', 'epub3'], customBase = false, csrfToken = '', error = '' }) {
+  const groups = ['text', 'templates', 'fix', 'images', 'css', 'vignettes', 'kindle', 'pdf', 'md'];
+  const defs = FB2CNG_OPTION_DEFS.filter(isFb2cngOptionSupported);
+  const valueLabel = (def, o) => t(def.group === 'vignettes' ? `admin.conv.val.vignette.${o}` : `admin.conv.val.${def.key}.${o}`);
+  const field = (def) => {
+    const id = `fb2cng-${def.key}`;
+    const name = `fb2cng_${def.key}`;
+    const label = escapeHtml(t(`admin.conv.opt.${def.key}`));
+    const v = values[def.key];
+    if (def.type === 'bool') {
+      return `<label class="admin-checkbox-row" style="display:flex;align-items:center;gap:8px;margin:6px 0">
+        <input type="checkbox" id="${id}" name="${name}" value="1" ${v ? 'checked' : ''}> <span>${label}</span></label>`;
+    }
+    if (def.type === 'vignette') {
+      const opts = ['off', 'builtin', ...(String(v).startsWith('file:') ? [v] : [])];
+      return `<div class="admin-field-group"><label for="${id}">${label}</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="${id}" name="${name}" style="max-width:320px">${opts.map((o) =>
+            `<option value="${escapeHtml(o)}" ${v === o ? 'selected' : ''}>${escapeHtml(o.startsWith('file:') ? tp('admin.conv.vg.file', { name: o.slice(5) }) : t(`admin.conv.val.vignette.${o}`))}</option>`).join('')}</select>
+          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-vg-upload="${id}" style="max-width:260px">
+        </div></div>`;
+    }
+    if (def.type === 'enum') {
+      return `<div class="admin-field-group"><label for="${id}">${label}</label>
+        <select id="${id}" name="${name}" style="max-width:420px">${def.values.map((o) =>
+          `<option value="${escapeHtml(o)}" ${v === o ? 'selected' : ''}>${escapeHtml(valueLabel(def, o))}</option>`).join('')}</select></div>`;
+    }
+    if (def.type === 'text' || def.type === 'css') {
+      const shown = def.type === 'text' ? (v || templateDefaults[def.key] || '') : (v || '');
+      const rows = def.type === 'css' ? 10 : 7;
+      const hint = def.type === 'css' ? `<div class="muted" style="font-size:12px">${escapeHtml(t('admin.conv.cssHint'))}</div>` : '';
+      return `<div class="admin-field-group"><label for="${id}">${label}</label>
+        <textarea id="${id}" name="${name}" rows="${rows}" spellcheck="false" autocomplete="off" style="width:100%;max-width:760px;font-family:var(--font-mono, monospace);font-size:13px">${escapeHtml(shown)}</textarea>${hint}</div>`;
+    }
+    const step = def.type === 'float' ? '0.05' : '1';
+    return `<div class="admin-field-group"><label for="${id}">${label}</label>
+      <input type="number" id="${id}" name="${name}" value="${escapeHtml(String(v))}" min="${def.min}" max="${def.max}" step="${step}" style="max-width:160px"></div>`;
+  };
+  const sourceLabel = { env: 'admin.conv.fbc.srcEnv', admin: 'admin.conv.fbc.srcAdmin', bundled: 'admin.conv.fbc.srcBundled' }[fbc.source] || 'admin.conv.fbc.srcBundled';
+  const latest = fbc.latest || null;
+  const hasUpdate = Boolean(latest && fbc.version && fbc.compare > 0);
+  const form = (action, label, extra = '') => `
+    <form method="post" action="${action}" style="display:inline" ${extra}>
+      ${csrfHiddenField(csrfToken)}
+      <button type="submit" class="button admin-compact-btn">${escapeHtml(label)}</button>
+    </form>`;
+  const fbcBox = `
+    <div class="admin-card" id="fbc" style="margin-top:16px">
+      <div class="admin-card-title">${escapeHtml(t('admin.conv.fbc.title'))}</div>
+      <p class="admin-compact-btn" style="margin:4px 0">
+        ${escapeHtml(fbc.version ? tp('admin.conv.fbc.installed', { version: fbc.version }) : t('admin.conv.fbc.unknown'))}
+        <span class="muted"> · ${escapeHtml(t(sourceLabel))}</span>
+      </p>
+      ${latest ? `<p class="admin-compact-btn" style="margin:4px 0">${escapeHtml(tp(hasUpdate || !fbc.version ? 'admin.conv.fbc.available' : 'admin.conv.fbc.upToDate', { version: latest.version, date: String(latest.publishedAt || '').slice(0, 10) || '—' }))}</p>` : ''}
+      ${fbc.source === 'env' ? `<p class="muted admin-compact-btn">${escapeHtml(t('admin.conv.fbc.envLocked'))}</p>` : ''}
+      ${fbc.updateSupported === false ? `<p class="muted admin-compact-btn">${escapeHtml(t('admin.conv.fbc.unsupported'))}</p>` : ''}
+      <div class="admin-actions-row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+        ${fbc.updateSupported === false ? '' : form('/admin/conversion/fbc-check', t('admin.conv.fbc.check'))}
+        ${fbc.source !== 'env' && fbc.updateSupported !== false && latest && (hasUpdate || !fbc.version)
+          ? form('/admin/conversion/fbc-update', tp('admin.conv.fbc.update', { version: latest.version }), `data-confirm="${escapeHtml(tp('admin.conv.fbc.updateConfirm', { version: latest.version }))}"`)
+          : ''}
+        ${fbc.source === 'admin' ? form('/admin/conversion/fbc-reset', t('admin.conv.fbc.reset'), `data-confirm="${escapeHtml(t('admin.conv.fbc.resetConfirm'))}"`) : ''}
+      </div>
+      <p class="muted admin-compact-btn" style="margin:8px 0 0">${escapeHtml(t('admin.conv.fbc.hint'))}</p>
+    </div>`;
+  return `
+    ${error ? renderAlert('error', error) : ''}
+    ${fbcBox}
+    <div class="admin-card" id="conversion" style="margin-top:16px">
+      <div class="admin-card-title">${escapeHtml(t('admin.conv.settingsTitle'))}</div>
+      <p class="muted admin-compact-btn" style="margin:4px 0 12px">${escapeHtml(t('admin.conv.hint'))}</p>
+      ${customBase ? `<p class="muted admin-compact-btn">${escapeHtml(t('admin.conv.customBase'))}</p>` : ''}
+      <form method="post" action="/admin/conversion">
+        ${csrfHiddenField(csrfToken)}
+        ${groups.filter((g) => defs.some((d) => d.group === g)).map((g) => `
+          <div class="admin-subsection">
+            <div class="admin-subsection-title">${escapeHtml(t(`admin.conv.group.${g}`))}</div>
+            ${g === 'templates' ? `<p class="muted admin-compact-btn" style="margin:4px 0 8px">${escapeHtml(t('admin.conv.templatesHint'))}</p>` : ''}
+            ${defs.filter((d) => d.group === g).map(field).join('')}
+          </div>`).join('')}
+        <div class="admin-actions-row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
+          <button type="submit" class="button">${escapeHtml(t('admin.conv.save'))}</button>
+          <button type="submit" name="reset" value="1" class="button">${escapeHtml(t('admin.conv.reset'))}</button>
+          <script>
+          (function () {
+            var m = document.querySelector('meta[name="csrf-token"]');
+            document.querySelectorAll('[data-vg-upload]').forEach(function (inp) {
+              inp.addEventListener('change', function () {
+                var f = inp.files && inp.files[0];
+                if (!f) return;
+                var sel = document.getElementById(inp.dataset.vgUpload);
+                var r = new FileReader();
+                r.onload = function () {
+                  fetch('/admin/conversion/vignette', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-csrf-token': m ? m.content : '' },
+                    body: JSON.stringify({ data: String(r.result).split(',')[1] || '' })
+                  }).then(function (x) { return x.json(); }).then(function (j) {
+                    if (!j.ok) { alert(j.error || 'error'); inp.value = ''; return; }
+                    var o = document.createElement('option');
+                    o.value = j.token; o.textContent = j.label;
+                    sel.appendChild(o); sel.value = j.token;
+                  }).catch(function (e) { alert(e.message); });
+                };
+                r.readAsDataURL(f);
+              });
+            });
+          })();
+          </script>
+        </div>
+      </form>
+    </div>
+    <div class="admin-card" id="conv-preview" style="margin-top:16px">
+        <div class="admin-card-title">${escapeHtml(t('admin.conv.pv.title'))}</div>
+        <p class="muted admin-compact-btn" style="margin:4px 0 8px">${escapeHtml(t('admin.conv.pv.hint'))}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="text" id="conv-pv-book" placeholder="${escapeHtml(t('admin.conv.pv.bookPlaceholder'))}" style="min-width:260px;flex:1 1 260px;max-width:480px" autocomplete="off">
+          <select id="conv-pv-format">${previewFormats.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(FORMAT_LABELS[f] || f.toUpperCase())}</option>`).join('')}</select>
+          <button type="button" class="button" id="conv-pv-run">${escapeHtml(t('admin.conv.pv.run'))}</button>
+          <span class="muted" id="conv-pv-status" aria-live="polite"></span>
+        </div>
+        <div id="conv-pv-out" hidden style="margin-top:12px">
+          <div id="conv-pv-meta" class="admin-compact-btn" style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap"></div>
+          <div id="conv-pv-note" class="admin-compact-btn" style="margin:8px 0" hidden data-kindle="${escapeHtml(t('admin.conv.pv.kindleNote'))}" data-download="${escapeHtml(t('admin.conv.pv.download'))}"></div>
+          <div style="margin:8px 0"><select id="conv-pv-page" style="max-width:100%"></select></div>
+          <iframe id="conv-pv-frame" sandbox="allow-same-origin" title="${escapeHtml(t('admin.conv.pv.title'))}" style="width:100%;max-width:760px;height:560px;border:1px solid var(--border);border-radius:var(--radius);background:#fff"></iframe>
+        </div>
+        <script>
+        (function () {
+          var run = document.getElementById('conv-pv-run');
+          if (!run) return;
+          var st = document.getElementById('conv-pv-status');
+          var out = document.getElementById('conv-pv-out');
+          var meta = document.getElementById('conv-pv-meta');
+          var pageSel = document.getElementById('conv-pv-page');
+          var frame = document.getElementById('conv-pv-frame');
+          var form = document.querySelector('#conversion form[action="/admin/conversion"]');
+          var csrf = document.querySelector('meta[name="csrf-token"]');
+          pageSel.addEventListener('change', function () { frame.src = pageSel.value; });
+          function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+          run.addEventListener('click', function () {
+            var fields = {};
+            new FormData(form).forEach(function (v, k) { if (typeof v === 'string') fields[k] = v; });
+            run.disabled = true; st.textContent = '…';
+            fetch('/admin/conversion/preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf ? csrf.content : '' },
+              body: JSON.stringify({ fields: fields, book: document.getElementById('conv-pv-book').value, format: document.getElementById('conv-pv-format').value })
+            }).then(function (r) { return r.json(); }).then(function (j) {
+              run.disabled = false;
+              if (!j.ok) { st.textContent = j.error || 'error'; out.hidden = true; return; }
+              st.textContent = '';
+              var h = '';
+              if (j.meta.cover) h += '<img src="' + esc(j.meta.cover) + '" alt="" style="height:120px;border-radius:4px">';
+              h += '<div><strong>' + esc(j.meta.title) + '</strong>';
+              if ((j.meta.authors || []).length) h += '<br>' + esc(j.meta.authors.join(', '));
+              if (j.meta.series) h += '<br>' + esc(j.meta.series) + (j.meta.seriesIndex ? ' #' + esc(j.meta.seriesIndex) : '');
+              h += '<br><span class="muted">' + esc(j.source) + ' · ' + Math.round(j.meta.size / 1024) + ' KB';
+              if (j.kind === 'epub') h += ' · ' + j.pages.length;
+              h += '</span></div>';
+              meta.innerHTML = h;
+              var note = document.getElementById('conv-pv-note');
+              if (j.kind === 'kindle' && j.download) {
+                note.hidden = false;
+                note.innerHTML = esc(note.dataset.kindle) + ' <a href="' + esc(j.download.href) + '" download>' + esc(note.dataset.download) + ' (' + esc(j.download.ext.toUpperCase()) + ', ' + Math.round(j.download.size / 1024) + ' KB)</a>';
+              } else { note.hidden = true; note.textContent = ''; }
+              pageSel.innerHTML = '';
+              j.pages.forEach(function (p, i) {
+                var o = document.createElement('option'); o.value = p.href; o.textContent = (i + 1) + '. ' + p.title; pageSel.appendChild(o);
+              });
+              pageSel.hidden = j.pages.length < 2;
+              if (j.kind === 'pdf') frame.removeAttribute('sandbox'); else frame.setAttribute('sandbox', 'allow-same-origin');
+              out.hidden = false;
+              var first = (j.kind === 'epub' || j.kind === 'kindle') && j.pages.length > 1 ? 1 : 0;
+              pageSel.selectedIndex = first; frame.src = j.pages[first].href;
+            }).catch(function (e) { run.disabled = false; st.textContent = e.message; });
+          });
+        })();
+        </script>
+    </div>`;
+}
+
+/** Админка → «Конвертация»: отдельная страница с карточкой fbc / настроек / предпросмотра. */
+export function renderAdminConversion({ user, stats, indexStatus, deliveryHtml = '', cardHtml = '', flash = '', csrfToken = '' }) {
+  const content = `
+    ${flash ? renderAlert('success', flash) : ''}
+    <p class="muted" style="margin:0 0 14px">${escapeHtml(t('admin.conv.pageIntro'))}</p>
+    ${deliveryHtml}
+    ${cardHtml}`;
+  return pageShell({
+    title: t('admin.conv.pageTitle'),
+    content,
+    user,
+    stats,
+    indexStatus,
+    breadcrumbs: [{ label: t('admin.badge'), href: '/admin' }, { label: t('admin.conv.pageTitle') }],
+    mode: 'admin',
+    currentPath: '/admin/conversion',
+    csrfToken
+  });
+}
+
+/** «Конвертация» → «Скачивание»: какие форматы предлагать, как называть файлы, что делать с WebP в FB2. */
+export function renderAdminDeliveryCard({ disabledDownloadFormatSet = new Set(), downloadFilenameStyle = 'translit-full', fb2WebpMode = 'keep', csrfToken = '' }) {
+  const downloadFormatChips = getConfiguredDownloadFormats().map((code) => {
+    const checked = !disabledDownloadFormatSet.has(code);
+    const label = FORMAT_LABELS[code] || code.toUpperCase();
+    return `
+      <label class="admin-chip-toggle" title="${escapeHtml(code)}">
+        <input type="checkbox" name="enabled_download_format" value="${escapeHtml(code)}" ${checked ? 'checked' : ''}>
+        <span>${escapeHtml(label)}</span>
+      </label>`;
+  }).join('');
+
+  return `
+    <form method="POST" action="/admin/conversion/delivery" data-track-dirty>
+      ${csrfHiddenField(csrfToken)}
+      <div class="admin-card" id="delivery">
+        <div class="admin-card-title">${escapeHtml(t('admin.conv.deliveryTitle'))}</div>
+        <p class="muted admin-compact-btn" style="margin:4px 0 12px">${escapeHtml(t('admin.conv.deliveryHint'))}</p>
+        <div class="admin-subsection">
+          <div class="admin-subsection-title" style="display:flex;align-items:center;gap:12px">
+            ${escapeHtml(t('admin.content.downloadSection'))}
+            <label style="font-size:13px;font-weight:400;display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="download-format-toggle-all" title="${escapeHtml(t('admin.content.toggleAll'))}">
+              <span class="muted">${escapeHtml(t('admin.content.toggleAll'))}</span>
+            </label>
+          </div>
+          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.downloadHint'))}</p>
+          ${config.fb2cngPath ? '' : `<p class="muted admin-compact-btn" style="margin:0 0 12px;">${escapeHtml(t('admin.content.downloadFb2cngHint'))}</p>`}
+          <div class="admin-chip-group">${downloadFormatChips}</div>
+        </div>
+        <div class="admin-subsection">
+          <div class="admin-subsection-title">${escapeHtml(t('admin.content.filenameSection'))}</div>
+          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.filenameHint'))}</p>
+          <div class="admin-field-group">
+            <label for="download-filename-style">${escapeHtml(t('admin.content.filenameLabel'))}</label>
+            <select id="download-filename-style" name="download_filename_style" style="max-width:420px">
+              ${DOWNLOAD_FILENAME_STYLES.map((style) => `
+                <option value="${escapeHtml(style)}" ${downloadFilenameStyle === style ? 'selected' : ''}>${escapeHtml(t(`admin.content.filename.${style}`))}</option>
+              `).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="admin-subsection">
+          <div class="admin-subsection-title">${escapeHtml(t('admin.content.webpSection'))}</div>
+          <p class="muted admin-compact-btn" style="margin:4px 0 12px;">${escapeHtml(t('admin.content.webpHint'))}</p>
+          <div class="admin-field-group">
+            <label for="fb2-webp-images">${escapeHtml(t('admin.content.webpLabel'))}</label>
+            <select id="fb2-webp-images" name="fb2_webp_images" style="max-width:420px">
+              ${FB2_WEBP_MODES.map((mode) => `
+                <option value="${escapeHtml(mode)}" ${fb2WebpMode === mode ? 'selected' : ''}>${escapeHtml(t(`admin.content.webp.${mode}`))}</option>
+              `).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="admin-actions-row" style="margin-top:12px">
+          <button type="submit" class="button-primary">${escapeHtml(t('admin.save'))}</button>
+        </div>
+      </div>
+    </form>
+    <script>
+      document.getElementById('download-format-toggle-all')?.addEventListener('change', function() {
+        document.querySelectorAll('input[name="enabled_download_format"]').forEach(cb => { cb.checked = this.checked; });
+      });
+      document.querySelectorAll('input[name="enabled_download_format"]').forEach(cb => {
+        cb.addEventListener('change', updateGlobalDownloadFormatToggle);
+      });
+      function updateGlobalDownloadFormatToggle() {
+        const all = document.querySelectorAll('input[name="enabled_download_format"]');
+        const checked = [...all].filter(c => c.checked).length;
+        const globalToggle = document.getElementById('download-format-toggle-all');
+        if (globalToggle) {
+          globalToggle.checked = checked === all.length;
+          globalToggle.indeterminate = checked > 0 && checked < all.length;
+        }
+      }
+      updateGlobalDownloadFormatToggle();
+    </script>`;
 }

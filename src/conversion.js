@@ -17,6 +17,8 @@ import {
 import { buildDownloadBaseName } from './download-filename.js';
 import { getFb2WebpMode, convertFb2WebpBinariesToPng } from './fb2-webp-images.js';
 import { downloadLimiter } from './services/heavy-task-limiter.js';
+import { getFb2cngOptionsHash, resolveFb2cngConfigForRun, getFb2cngVersion } from './fb2cng-options.js';
+import { getFb2cngBinaryPath } from './fb2cng-binary.js';
 const MIME_TYPES = {
   fb2: 'application/octet-stream',
   fb2zip: 'application/zip',
@@ -24,6 +26,8 @@ const MIME_TYPES = {
   epub2: 'application/epub+zip',
   epub3: 'application/epub+zip',
   kepub: 'application/epub+zip',
+  kepub3: 'application/epub+zip',
+  md: 'text/markdown; charset=utf-8',
   kfx: 'application/octet-stream',
   azw8: 'application/octet-stream',
   azw3: 'application/x-mobipocket-ebook',
@@ -48,6 +52,7 @@ const FILE_EXTENSIONS = {
   epub2: 'epub',
   epub3: 'epub',
   kepub: 'kepub.epub',
+  kepub3: 'kepub.epub',
   kfx: 'kfx',
   azw8: 'azw8',
   azw3: 'azw3',
@@ -219,6 +224,11 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+/** Форматы, которые делает fb2cng (на них действуют настройки конвертации). */
+function isFb2cngFormat(format) {
+  return format !== 'fb2' && format !== FB2_ZIP_FORMAT;
+}
+
 function getBookCacheKey(book, format) {
   return crypto.createHash('sha1')
     .update(
@@ -231,7 +241,9 @@ function getBookCacheKey(book, format) {
         String(book.date ?? ''),
         String(book.importedAt ?? ''),
         'sidecar-images-v1',
-        ...(getFb2WebpMode() === 'png' ? ['webp-png'] : [])
+        ...(getFb2WebpMode() === 'png' ? ['webp-png'] : []),
+        ...(isFb2cngFormat(format) && getFb2cngOptionsHash() ? [`opts-${getFb2cngOptionsHash()}`] : []),
+        ...(isFb2cngFormat(format) ? [`fbc-${getFb2cngVersion() || '0'}`] : [])
       ].join(':')
     )
     .digest('hex');
@@ -257,20 +269,28 @@ function getFormatCachePath(book, format) {
 const CONVERTER_TIMEOUT_MS = 120_000;
 const CONVERTER_OUTPUT_MAX = 10 * 1024 * 1024; // 10 MB per stream — intentional resource limit
 
-async function runConverter(args, bookInfo = {}) {
-  await fs.promises.access(config.fb2cngPath, fs.constants.R_OK);
+async function runConverter(args, bookInfo = {}, configOverride = '') {
+  const fbcBin = getFb2cngBinaryPath();
+  await fs.promises.access(fbcBin, fs.constants.R_OK);
   let configPath = '';
-  if (config.fb2cngConfigPath) {
+  let wantedConfig = '';
+  try {
+    wantedConfig = configOverride || resolveFb2cngConfigForRun();
+  } catch (err) {
+    console.warn('[conversion] fb2cng options config failed, using base config:', err.message);
+    wantedConfig = config.fb2cngConfigPath || '';
+  }
+  if (wantedConfig) {
     try {
-      await fs.promises.access(config.fb2cngConfigPath, fs.constants.R_OK);
-      configPath = config.fb2cngConfigPath;
+      await fs.promises.access(wantedConfig, fs.constants.R_OK);
+      configPath = wantedConfig;
     } catch {
-      console.warn(`[conversion] fb2cng config missing at runtime: ${config.fb2cngConfigPath} — running without -c`);
+      console.warn(`[conversion] fb2cng config missing at runtime: ${wantedConfig} — running without -c`);
     }
   }
   const fullArgs = configPath ? ['-c', configPath, ...args] : args;
   await new Promise((resolve, reject) => {
-    const child = spawn(config.fb2cngPath, fullArgs, {
+    const child = spawn(fbcBin, fullArgs, {
       cwd: config.conversionTempDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
@@ -323,7 +343,7 @@ async function convertFb2Book(book, format) {
   } catch {
   }
 
-  const lockKey = `${book.id}:${format}`;
+  const lockKey = `${book.id}:${format}:${getFb2cngOptionsHash()}`;
   const existingLock = conversionLocks.get(lockKey);
   if (existingLock) {
     // Re-check cache after waiting — the previous holder may have succeeded
@@ -371,6 +391,34 @@ async function convertFb2Book(book, format) {
     return await work;
   } finally {
     conversionLocks.delete(lockKey);
+  }
+}
+
+/**
+ * Предпросмотр настроек в админке: конвертация одной книги (или готового FB2) с произвольным конфигом, без кэша.
+ * @param {{ book?: object, buffer?: Buffer, format: string, configPath: string }} p
+ * @returns {Promise<Buffer>} содержимое результата (EPUB)
+ */
+export async function convertForPreview({ book = null, buffer = null, format, configPath }) {
+  ensureDir(config.conversionTempDir);
+  await acquireConverterSlot();
+  try {
+    const sessionDir = await fs.promises.mkdtemp(path.join(config.conversionTempDir, 'job-'));
+    try {
+      const sourcePath = path.join(sessionDir, 'source.fb2');
+      const outputDir = path.join(sessionDir, 'out');
+      ensureDir(outputDir);
+      const raw = book ? await applyFb2WebpMode(await readBookBufferForDelivery(book)) : buffer;
+      await fs.promises.writeFile(sourcePath, raw);
+      await runConverter(['convert', '--to', format, '--ow', '--nd', ...(format === 'kfx' || format === 'azw8' ? ['--ebook'] : []), sourcePath, outputDir], book || { id: 'preview' }, configPath);
+      const files = (await fs.promises.readdir(outputDir, { withFileTypes: true })).filter((i) => i.isFile()).map((i) => i.name);
+      if (!files.length) throw new Error(`fb2cng did not produce a ${format} file`);
+      return await fs.promises.readFile(path.join(outputDir, files[0]));
+    } finally {
+      await fs.promises.rm(sessionDir, { recursive: true, force: true });
+    }
+  } finally {
+    releaseConverterSlot();
   }
 }
 

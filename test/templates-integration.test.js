@@ -189,9 +189,22 @@ test('renderAdminSmtp returns SMTP config page', async () => {
   assert.ok(html.includes('action="/admin/settings/password-reset"'));
 });
 
-test('renderAdminContent includes download filename template select', async () => {
-  const { renderAdminContent } = await import('../src/templates/admin.js');
-  const html = renderAdminContent({
+test('conversion page «Downloads» card has formats, file name template and WebP; Content no longer does', async () => {
+  const { renderAdminDeliveryCard, renderAdminContent } = await import('../src/templates/admin.js');
+  const html = renderAdminDeliveryCard({
+    disabledDownloadFormatSet: new Set(['fb2zip']),
+    downloadFilenameStyle: 'title',
+    fb2WebpMode: 'png',
+    csrfToken: 'tok'
+  });
+  assert.ok(html.includes('action="/admin/conversion/delivery"'));
+  assert.ok(html.includes('name="download_filename_style"'));
+  assert.ok(html.includes('value="title" selected'));
+  assert.ok(html.includes('value="translit-full"'));
+  assert.ok(html.includes('value="png" selected'));
+  assert.match(html, /name="enabled_download_format" value="fb2"\s+checked/);
+  assert.match(html, /name="enabled_download_format" value="fb2zip"\s+>/);
+  const content = renderAdminContent({
     user: { username: 'admin', role: 'admin' },
     stats: { totalBooks: 0, totalAuthors: 0, totalSeries: 0, totalGenres: 0, totalLanguages: 1 },
     indexStatus: {},
@@ -199,13 +212,12 @@ test('renderAdminContent includes download filename template select', async () =
     excludedLangSet: new Set(),
     genres: [],
     excludedGenreSet: new Set(),
-    disabledDownloadFormatSet: new Set(),
-    downloadFilenameStyle: 'title',
     csrfToken: 'tok'
   });
-  assert.ok(html.includes('name="download_filename_style"'));
-  assert.ok(html.includes('value="title" selected'));
-  assert.ok(html.includes('value="translit-full"'));
+  assert.ok(!content.includes('name="download_filename_style"'));
+  assert.ok(!content.includes('name="enabled_download_format"'));
+  assert.ok(!content.includes('name="fb2_webp_images"'));
+  assert.ok(content.includes('href="/admin/conversion"'));
 });
 
 test('renderAdminSmtp includes password recovery settings', async () => {

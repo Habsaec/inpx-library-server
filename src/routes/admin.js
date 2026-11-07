@@ -12,9 +12,19 @@ function normalizeNewBooksAnnounceTemplate(template = '') {
     .trim()
     .slice(0, 4096);
 }
-import { getConfiguredDownloadFormats, setDisabledDownloadFormats } from '../download-formats.js';
+import { getConfiguredDownloadFormats, getFb2cngConvertibleFormats, setDisabledDownloadFormats } from '../download-formats.js';
 import { normalizeDownloadFilenameStyle, setDownloadFilenameStyle } from '../download-filename.js';
 import { normalizeFb2WebpMode, setFb2WebpMode } from '../fb2-webp-images.js';
+import {
+  parseFb2cngOptionsSetting, fb2cngOptionsFromForm, diffFb2cngOptions, validateFb2cngOptions,
+  getFb2cngTemplateDefaults, getFb2cngVersion, resetFb2cngVersionCache, writeCurrentConfigForCheck,
+  saveVignetteImage, gcVignetteImages
+} from '../fb2cng-options.js';
+import { buildConversionPreview, getPreviewFile } from '../fb2cng-preview.js';
+import {
+  getFb2cngBinaryPath, isFbcInstalledFromAdmin, fbcAssetName, checkLatestFbc, getCachedLatestFbc,
+  installLatestFbc, resetInstalledFbc, compareVersions
+} from '../fb2cng-binary.js';
 import { runWithLocaleLang, resolveLocale, t, tp, countLabel, translateKnownErrorMessage, setDefaultLocale } from '../i18n.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireAdminWeb, requireAdminApi, invalidateSessionUserCache } from '../middleware/auth.js';
@@ -87,7 +97,7 @@ import {
   hasBackupPassword, setBackupPassword, clearBackupPassword, getBackupEncryption
 } from '../services/portable-backup-store.js';
 import { listCollections, isCollectionsMatchRunning } from '../collections.js';
-import { renderAdminCollectionsCard } from '../templates/admin.js';
+import { renderAdminCollectionsCard, renderAdminConversionCard, renderAdminConversion, renderAdminDeliveryCard } from '../templates/admin.js';
 
 function lastFormFieldValue(value) {
   return Array.isArray(value) ? value[value.length - 1] : value;
@@ -2374,17 +2384,10 @@ export function registerAdminRoutes(app, deps) {
     const excludedGenreSet = new Set(
       excludedGenres ? excludedGenres.split(',').map(s => s.trim()).filter(Boolean) : []
     );
-    const disabledDownloadFormats = getSetting('disabled_download_formats');
-    const disabledDownloadFormatSet = new Set(
-      disabledDownloadFormats ? disabledDownloadFormats.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
-    );
     res.send(renderAdminContent({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
       languages: allLangs, excludedLangSet,
       genres: allGenres, excludedGenreSet,
-      disabledDownloadFormatSet,
-      downloadFilenameStyle: normalizeDownloadFilenameStyle(getSetting('download_filename_style')),
-      fb2WebpMode: normalizeFb2WebpMode(getSetting('fb2_webp_images')),
       showDeletedBooks: getSetting('show_deleted_books') === '1',
       defaultLocale: getSetting('default_locale') || 'auto',
       collectionsCardHtml: renderAdminCollectionsCard({
@@ -2397,7 +2400,151 @@ export function registerAdminRoutes(app, deps) {
     }));
   });
 
-  app.post('/admin/content', requireAdminWeb, async (req, res) => {
+  // Admin → Конвертация: fbc itself, conversion settings, preview.
+  app.get('/admin/conversion', requireAdminWeb, (req, res) => {
+    const version = getFb2cngVersion();
+    const latest = getCachedLatestFbc();
+    const disabledDownloadFormats = getSetting('disabled_download_formats');
+    res.send(renderAdminConversion({
+      user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
+      deliveryHtml: renderAdminDeliveryCard({
+        disabledDownloadFormatSet: new Set(
+          disabledDownloadFormats ? disabledDownloadFormats.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
+        ),
+        downloadFilenameStyle: normalizeDownloadFilenameStyle(getSetting('download_filename_style')),
+        fb2WebpMode: normalizeFb2WebpMode(getSetting('fb2_webp_images')),
+        csrfToken: req.csrfToken || ''
+      }),
+      cardHtml: renderAdminConversionCard({
+        values: parseFb2cngOptionsSetting(getSetting('fb2cng_options')),
+        templateDefaults: getFb2cngTemplateDefaults(),
+        previewFormats: getFb2cngConvertibleFormats(),
+        fbc: {
+          version,
+          source: process.env.FB2CNG_PATH ? 'env' : (isFbcInstalledFromAdmin() ? 'admin' : 'bundled'),
+          latest,
+          compare: latest && version ? compareVersions(latest.version, version) : 0,
+          updateSupported: Boolean(fbcAssetName())
+        },
+        customBase: Boolean(process.env.FB2CNG_CONFIG_PATH),
+        csrfToken: req.csrfToken || '',
+        error: String(req.query.conversionError || '').slice(0, 300)
+      }),
+      flash: String(req.query.flash || ''),
+      csrfToken: req.csrfToken || ''
+    }));
+  });
+
+  app.post('/admin/conversion', requireAdminWeb, async (req, res) => {
+    const back = (q) => res.redirect(`/admin/conversion?${q}`);
+    if (req.body.reset === '1') {
+      setSetting('fb2cng_options', '');
+      gcVignetteImages({}).catch(() => {});
+      logSystemEvent('info', 'admin', 'fb2cng options reset', { admin: req.user.username });
+      return back('flash=' + encodeURIComponent(t('admin.conv.saved')));
+    }
+    const diff = diffFb2cngOptions(fb2cngOptionsFromForm(req.body, getFb2cngTemplateDefaults()));
+    const check = await validateFb2cngOptions(diff);
+    if (!check.ok) return back('conversionError=' + encodeURIComponent(check.error || 'fbc rejected the configuration'));
+    setSetting('fb2cng_options', Object.keys(diff).length ? JSON.stringify(diff) : '');
+    gcVignetteImages(diff).catch(() => {});
+    logSystemEvent('info', 'admin', 'fb2cng options updated', {
+      admin: req.user.username,
+      options: Object.keys(diff).join(',').slice(0, 500)
+    });
+    back('flash=' + encodeURIComponent(t('admin.conv.saved')));
+  });
+
+  // fbc itself: look for a newer release, install it (SHA-256 checked), go back to the bundled one.
+  // Vignette image upload (base64 in JSON): stored under a content hash; the form then saves the returned token.
+  app.post('/admin/conversion/vignette', requireAdminWeb, async (req, res) => {
+    try {
+      const raw = String(req.body?.data || '');
+      if (raw.length > 1_500_000 || !/^[A-Za-z0-9+/=\s]*$/.test(raw)) return res.status(400).json({ ok: false, error: t('admin.conv.vg.badImage') });
+      const token = await saveVignetteImage(Buffer.from(raw, 'base64'));
+      res.json({ ok: true, token, label: tp('admin.conv.vg.file', { name: token.slice(5) }) });
+    } catch (error) {
+      const code = String(error.message || '');
+      const key = code === 'TOO_BIG' ? 'admin.conv.vg.tooBig' : 'admin.conv.vg.badImage';
+      res.status(400).json({ ok: false, error: t(key) });
+    }
+  });
+
+  // Preview: convert a catalog book (or the built-in sample) with the form's current, possibly unsaved settings.
+  app.post('/admin/conversion/preview', requireAdminWeb, async (req, res) => {
+    try {
+      const result = await buildConversionPreview({
+        fields: req.body?.fields && typeof req.body.fields === 'object' ? req.body.fields : {},
+        book: String(req.body?.book || '').slice(0, 300),
+        format: String(req.body?.format || 'epub2')
+      });
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      const code = String(error.message || '');
+      const known = { BOOK_NOT_FOUND: 'admin.conv.pv.notFound', NOT_FB2: 'admin.conv.pv.notFb2', TOO_LARGE: 'admin.conv.pv.tooLarge', BAD_EPUB: 'admin.conv.pv.badEpub', BAD_FORMAT: 'admin.conv.pv.badFormat' };
+      res.status(400).json({ ok: false, error: known[code] ? t(known[code]) : code.slice(0, 400) });
+    }
+  });
+
+  app.get('/admin/conversion/preview/:token/*', requireAdminWeb, (req, res) => {
+    const file = getPreviewFile(req.params.token, req.params[0]);
+    if (!file) return res.status(404).type('text/plain').send('Not found');
+    res.setHeader('Content-Type', file.type);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
+    if (file.type.startsWith('application/pdf')) {
+      // the browser's own PDF viewer needs a frame without sandbox; the file is fbc's own output
+      res.setHeader('Content-Disposition', 'inline; filename="preview.pdf"');
+    } else if (file.type === 'application/octet-stream') {
+      res.setHeader('Content-Disposition', `attachment; filename="${String(req.params[0]).split('/').pop().replace(/[^A-Za-z0-9._-]/g, '_')}"`);
+    } else {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; sandbox allow-same-origin");
+    }
+    res.send(file.buffer);
+  });
+
+  app.post('/admin/conversion/fbc-check', requireAdminWeb, async (req, res) => {
+    try {
+      const info = await checkLatestFbc({ force: true });
+      res.redirect('/admin/conversion?flash=' + encodeURIComponent(tp('admin.conv.fbc.checked', { version: info.version })));
+    } catch (error) {
+      res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(String(error.message || error).slice(0, 300)));
+    }
+  });
+
+  app.post('/admin/conversion/fbc-update', requireAdminWeb, async (req, res) => {
+    if (process.env.FB2CNG_PATH) {
+      return res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(t('admin.conv.fbc.envLocked')));
+    }
+    let cur = null;
+    try {
+      const previous = getFb2cngVersion();
+      cur = await writeCurrentConfigForCheck();
+      const result = await installLatestFbc({ validateConfigPath: cur.path, previousVersion: previous });
+      resetFb2cngVersionCache();
+      logSystemEvent('info', 'admin', 'fbc updated', { admin: req.user.username, from: previous || '-', to: result.version });
+      res.redirect('/admin/conversion?flash=' + encodeURIComponent(tp('admin.conv.fbc.updated', { version: result.version })));
+    } catch (error) {
+      logSystemEvent('warn', 'admin', 'fbc update failed', { admin: req.user.username, message: String(error.message || error).slice(0, 300) });
+      res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(String(error.message || error).slice(0, 300)));
+    } finally {
+      if (cur) await cur.cleanup().catch(() => {});
+    }
+  });
+
+  app.post('/admin/conversion/fbc-reset', requireAdminWeb, async (req, res) => {
+    try {
+      await resetInstalledFbc();
+      resetFb2cngVersionCache();
+      logSystemEvent('info', 'admin', 'fbc reset to bundled', { admin: req.user.username, bin: getFb2cngBinaryPath() });
+      res.redirect('/admin/conversion?flash=' + encodeURIComponent(t('admin.conv.fbc.resetDone')));
+    } catch (error) {
+      res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(String(error.message || error).slice(0, 300)));
+    }
+  });
+
+  // Admin → Конвертация → «Скачивание»: offered formats, file names, WebP in FB2 (moved here from «Контент»).
+  app.post('/admin/conversion/delivery', requireAdminWeb, (req, res) => {
     const allFmt = getConfiguredDownloadFormats();
     const rawFmt = req.body.enabled_download_format || [];
     const enabledFmt = new Set(Array.isArray(rawFmt) ? rawFmt : [rawFmt]);
@@ -2410,20 +2557,21 @@ export function registerAdminRoutes(app, deps) {
     const fb2WebpMode = normalizeFb2WebpMode(req.body.fb2_webp_images);
     setSetting('fb2_webp_images', fb2WebpMode);
     setFb2WebpMode(fb2WebpMode);
+    clearPageDataCache();
+    logSystemEvent('info', 'admin', 'download settings updated', {
+      admin: req.user.username,
+      disabledFormats: disabledFmt.join(','),
+      downloadFilenameStyle: filenameStyle,
+      fb2WebpMode
+    });
+    res.redirect('/admin/conversion?flash=' + encodeURIComponent(t('admin.conv.deliverySaved')));
+  });
 
+  app.post('/admin/content', requireAdminWeb, async (req, res) => {
     // Пока идёт индексация, не трогаем excluded_* и не делаем DROP/CREATE VIEW:
     // SQLite может заблокировать или оставить active_books в полусогласованном состоянии.
     if (getIndexStatus().active) {
-      clearPageDataCache();
-      logSystemEvent('info', 'admin', 'download formats updated during indexing', {
-        admin: req.user.username,
-        disabledFormats: disabledFmt.join(','),
-        downloadFilenameStyle: filenameStyle,
-        fb2WebpMode
-      });
-      return res.redirect('/admin/content?flash=' + encodeURIComponent(
-        t('admin.content.savedFormatsDuringIndexing')
-      ));
+      return res.redirect('/admin/content?flash=' + encodeURIComponent(t('admin.content.busyIndexing')));
     }
     // Сохраняем предыдущие значения, чтобы откатить, если rebuildActiveBooksView() упадёт.
     const prevExcludedLangs = getSetting('excluded_languages') || '';
@@ -2457,10 +2605,7 @@ export function registerAdminRoutes(app, deps) {
         admin: req.user.username,
         excludedLangs: excludedLang.join(','),
         excludedGenres: excludedGenre.join(','),
-        showDeletedBooks: getSetting('show_deleted_books') === '1',
-        disabledFormats: disabledFmt.join(','),
-        downloadFilenameStyle: filenameStyle,
-        fb2WebpMode
+        showDeletedBooks: getSetting('show_deleted_books') === '1'
       });
       res.redirect('/admin/content?flash=' + encodeURIComponent(t('admin.content.saved')));
     } catch (error) {

@@ -6467,7 +6467,7 @@ html[data-theme="light"] .page-jump::after {
   display: none;
 }
 
-.acg[data-open="1"] .acg-arrow {
+.acg[data-open="1"]>div>.acg-arrow {
   transform: rotate(90deg);
 }
 

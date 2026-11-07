@@ -128,7 +128,7 @@ test('sendBookCardToChat sends the bot card with a button for every format', asy
     assert.equal(card.body.chat_id, '555');
     assert.match(card.body.text, /Telegram Book/);
     const buttons = card.body.reply_markup.inline_keyboard.flat();
-    assert.deepEqual(buttons.map((b) => b.text), ['📥 FB2', '📥 FB2.ZIP', '📥 EPUB', '📥 EPUB3', '📥 KEPUB', '📥 KFX', '📥 AZW8']);
+    assert.deepEqual(buttons.map((b) => b.text), ['📥 FB2', '📥 FB2.ZIP', '📥 EPUB', '📥 EPUB3', '📥 KEPUB', '📥 KEPUB3', '📥 KFX', '📥 AZW8', '📥 PDF', '📥 TXT', '📥 Markdown']);
     assert.ok(buttons.every((b) => /^dl:\d+$/.test(b.callback_data)));
     assert.ok(card.body.reply_markup.inline_keyboard.every((row) => row.length <= 3));
   } finally {

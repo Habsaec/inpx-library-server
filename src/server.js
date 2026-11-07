@@ -661,13 +661,13 @@ function runRepairMetadata() {
 const urlencoded100kb = express.urlencoded({ extended: false, limit: '100kb' });
 // Admin → Content → «Подборки»: a JSON list up to 1 MB, percent-encoded Cyrillic is ~3× bigger.
 const urlencodedCollectionImport = express.urlencoded({ extended: false, limit: '4mb' });
-app.use((req, res, next) => (req.method === 'POST' && req.path === '/admin/collections/import'
+app.use((req, res, next) => (req.method === 'POST' && (req.path === '/admin/collections/import' || req.path === '/admin/conversion')
   ? urlencodedCollectionImport(req, res, next)
   : urlencoded100kb(req, res, next)));
 const json100kb = express.json({ limit: '100kb' });
 const jsonUsersImport = express.json({ limit: '2mb' });
 app.use((req, res, next) => {
-  if (req.method === 'POST' && (req.path === '/api/operations/users-import' || req.path === '/api/import/reading')) {
+  if (req.method === 'POST' && (req.path === '/api/operations/users-import' || req.path === '/api/import/reading' || req.path === '/admin/conversion/vignette' || req.path === '/admin/conversion/preview')) {
     return jsonUsersImport(req, res, next);
   }
   return json100kb(req, res, next);

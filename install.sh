@@ -146,7 +146,7 @@ install_macos() {
   if [ -x "$APP_DIR/converter/fbc" ]; then
     ok "Конвертер fbc уже установлен."
   else
-    FB2CNG_VERSION="v1.3.8"
+    FB2CNG_VERSION="v1.9.5"
     ARCH="$(uname -m)"
     case "$ARCH" in
       arm64)           FB2CNG_ZIP="fbc-darwin-arm64.zip" ;;
@@ -336,7 +336,7 @@ step "FB2-конвертер (опционально)"
 if [ -x "$APP_DIR/converter/fbc" ]; then
   ok "Конвертер fbc уже установлен."
 else
-  FB2CNG_VERSION="v1.3.8"
+  FB2CNG_VERSION="v1.9.5"
   ARCH="$(uname -m)"
   case "$ARCH" in
     x86_64|amd64)  FB2CNG_ARCH="amd64" ;;

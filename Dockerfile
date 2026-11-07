@@ -16,7 +16,7 @@ RUN node scripts/build-assets.js
 # --- Runtime stage: только slim-образ, без build-tools ---
 FROM node:20-bookworm-slim
 
-ARG FB2CNG_VERSION=v1.3.8
+ARG FB2CNG_VERSION=v1.9.5
 ARG TARGETARCH
 
 RUN apt-get update \
