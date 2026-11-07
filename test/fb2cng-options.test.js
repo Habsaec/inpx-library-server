@@ -145,3 +145,17 @@ test('fonts: TTF / OTF only, @font-face per face, separate rules for text, headi
   assert.deepEqual(fb2cngUsedFonts({ font_text_family: 'serif', font_text_regular: tText }), []);
   assert.equal(fb2cngExtraCss({ font_text_family: 'custom' }), ''); // custom without a file = no rule
 });
+
+test('corrections: drop cap level with the first line, vignettes centred (PDF: margins in pt)', async () => {
+  const { fb2cngFixCss, fb2cngExtraCss, imagePixelWidth } = await import('../src/fb2cng-options.js');
+  assert.equal(fb2cngFixCss({}), '');
+  assert.match(fb2cngFixCss({ dropcaps: true }), /p\.has-dropcap \.dropcap \{ line-height: 0\.8; \}/);
+  assert.match(fb2cngFixCss({ vg_chapter_top: 'builtin' }), /img\.image-vignette \{ display: block; margin-left: auto; margin-right: auto; \}/);
+  // 1264 px at 300 dpi = 303.36 pt page, minus 2 × 24 pt = 255.36 pt column; 50 % → 63.8 pt on each side
+  const css = fb2cngExtraCss({ vg_width: '50', vg_chapter_top: 'builtin' });
+  assert.match(css, /@media fbc-pdf \{\n {2}img\.image-vignette \{ width: 100%; margin-left: 63\.8pt; margin-right: 63\.8pt; \}\n\}/);
+  assert.ok(!/fbc-pdf/.test(fb2cngExtraCss({ vg_width: 'full', vg_chapter_top: 'builtin' })));
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  assert.equal(imagePixelWidth(png), 1);
+  assert.equal(imagePixelWidth(Buffer.from('not an image at all, really not')), 0);
+});

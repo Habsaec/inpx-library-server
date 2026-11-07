@@ -580,15 +580,100 @@ function fontRules(o) {
 export function fb2cngExtraCss(options) {
   const o = normalizeFb2cngOptions(options);
   const w = VG_WIDTH_CSS[o.vg_width];
-  const vignettes = w ? `/* INPX Library: vignette size */\nimg.image-vignette { ${w} height: auto; }\n` : '';
+  const vignettes = w ? `/* INPX Library: vignette size */\nimg.image-vignette { ${w} height: auto; }\n${pdfVignetteCss(o)}` : '';
   return [fontRules(o), vignettes].filter(Boolean).join('\n');
+}
+
+/** Pixel width of a PNG / GIF / JPEG / WebP file (0 when unknown); reads only the header. */
+export function imagePixelWidth(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 30) return 0;
+  if (buf[0] === 0x89 && buf.toString('latin1', 1, 4) === 'PNG') return buf.readUInt32BE(16);
+  if (buf.toString('latin1', 0, 3) === 'GIF') return buf.readUInt16LE(6);
+  if (buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
+    const chunk = buf.toString('latin1', 12, 16);
+    if (chunk === 'VP8 ') return buf.readUInt16LE(26) & 0x3fff;
+    if (chunk === 'VP8L') return 1 + (((buf[22] & 0x3f) << 8) | buf[21]);
+    if (chunk === 'VP8X') return 1 + buf.readUIntLE(24, 3);
+    return 0;
+  }
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i += 1; continue; }
+      const marker = buf[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return buf.readUInt16BE(i + 7);
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+  return 0;
+}
+
+/** Text column width of fbc's PDF page in pt: screen width / dpi, minus its fixed 24 pt side margins. */
+function pdfContentWidthPt(o) {
+  return (o.screen_width / (o.screen_dpi || 300)) * 72 - 48;
+}
+
+/**
+ * fbc's PDF engine places a vignette with an explicit width at the left edge: it ignores text-align,
+ * `margin: auto` and the parent's alignment, and resolves percentage margins against something tiny.
+ * Absolute side margins work, so for PDF the vignette takes the full column minus margins computed here.
+ * It does not apply per-position selectors to image blocks either, so «original size» uses the widest
+ * uploaded vignette for every position.
+ */
+function pdfVignetteCss(o) {
+  const column = pdfContentWidthPt(o);
+  if (!(column > 0)) return '';
+  let width = 0;
+  if (['75', '50', '33'].includes(o.vg_width)) width = column * (Number(o.vg_width) / 100);
+  else if (o.vg_width === 'auto') {
+    const dpi = o.screen_dpi || 300;
+    for (const def of FB2CNG_OPTION_DEFS) {
+      const v = o[def.key];
+      if (def.type !== 'vignette' || !VIGNETTE_FILE_RE.test(String(v))) continue;
+      let px = 0;
+      try { px = imagePixelWidth(fs.readFileSync(path.join(getVignetteDir(), v.slice(5)))); } catch { px = 0; }
+      width = Math.max(width, (px / dpi) * 72);
+    }
+    if (!width) return '';
+  } else {
+    return '';
+  }
+  const margin = Math.max(0, (column - Math.min(width, column)) / 2).toFixed(1);
+  return `@media fbc-pdf {\n  img.image-vignette { width: 100%; margin-left: ${margin}pt; margin-right: ${margin}pt; }\n}\n`;
+}
+
+/**
+ * Corrections of fbc's own stylesheet, applied only when the feature is on:
+ * - drop cap: `line-height: 1` leaves the big letter's cap top below the first line; 0.8 puts it level with
+ *   the first line and makes the letter span two lines (EPUB / KEPUB / KFX / PDF alike);
+ * - vignettes: fbc's PDF engine ignores `text-align: center` for a block image (it stuck to one side),
+ *   auto side margins centre it everywhere.
+ * Bump FB2CNG_CSS_FIX_VERSION when they change: it is part of the options hash (configs, conversion cache).
+ */
+export const FB2CNG_CSS_FIX_VERSION = 2;
+
+export function fb2cngFixCss(options) {
+  const o = normalizeFb2cngOptions(options);
+  const parts = [];
+  if (o.dropcaps) parts.push('p.has-dropcap .dropcap { line-height: 0.8; }');
+  if (FB2CNG_OPTION_DEFS.some((d) => d.type === 'vignette' && o[d.key] !== 'off')) {
+    parts.push('img.image-vignette { display: block; margin-left: auto; margin-right: auto; }');
+  }
+  return parts.length ? `/* INPX Library: corrections */\n${parts.join('\n')}\n` : '';
 }
 
 function materializeCssSync(options, dir) {
   const o = normalizeFb2cngOptions(options);
   const extra = fb2cngExtraCss(o);
-  // stylesheet_path REPLACES fbc's stylesheet: extra rules alone go on top of the built-in one, never instead of it
-  const base = o.custom_css || (extra ? readBuiltinCssSync() : '');
+  const fixes = fb2cngFixCss(o);
+  // stylesheet_path REPLACES fbc's stylesheet: our rules go on top of the built-in one, never instead of it.
+  // Own CSS comes after the corrections (the admin's rules win), the chosen options (fonts, vignette width) last.
+  let base = '';
+  if (o.custom_css) base = fixes ? `${fixes}\n${o.custom_css}` : o.custom_css;
+  else if (extra || fixes) {
+    const builtin = readBuiltinCssSync();
+    base = builtin ? (fixes ? `${builtin}\n\n${fixes}` : builtin) : '';
+  }
   if (!base) return '';
   const css = extra ? `${base}\n\n${extra}` : base;
   const name = `css-${crypto.createHash('sha1').update(css).digest('hex').slice(0, 16)}.css`;
@@ -672,7 +757,7 @@ export function getFb2cngOptionsHash() {
   if (memo.raw === raw && memo.version === version) return memo.hash;
   const diff = diffFb2cngOptions(parseFb2cngOptionsSetting(raw));
   const hash = Object.keys(diff).length
-    ? crypto.createHash('sha1').update(JSON.stringify(diff)).digest('hex').slice(0, 12)
+    ? crypto.createHash('sha1').update(`css${FB2CNG_CSS_FIX_VERSION}:${JSON.stringify(diff)}`).digest('hex').slice(0, 12)
     : '';
   memo = { raw, version, hash, optionsDiff: diff };
   return hash;
