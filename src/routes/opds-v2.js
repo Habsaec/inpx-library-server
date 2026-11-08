@@ -110,6 +110,13 @@ export function registerOpdsV2Routes(app, deps) {
       type: 'application/opds+json',
       properties: { numberOfItems: s.bookCount }
     }));
+    for (const shelf of listSmartShelves(username)) {
+      entries.push({
+        href: `/opds/v2/user/smart-shelves/${shelf.id}`,
+        title: shelf.name,
+        type: 'application/opds+json'
+      });
+    }
     res.type(OPDS_JSON);
     res.send(renderOpds2NavigationFeed(baseUrl(req), { title: t('opds.user.shelves'), selfPath: '/opds/v2/user/shelves', entries }));
   });

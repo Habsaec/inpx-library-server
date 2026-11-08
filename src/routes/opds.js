@@ -154,6 +154,15 @@ export function registerOpdsRoutes(app, deps) {
       href: `/opds/user/shelves/${shelf.id}`,
       content: countLabel('book', shelf.bookCount)
     }));
+    // Как на сайте и в приложении: умные полки — в том же списке (иначе при одних умных полках лента пустая).
+    for (const shelf of listSmartShelves(username)) {
+      entries.push({
+        id: `smart-shelf-${shelf.id}`,
+        title: shelf.name,
+        href: `/opds/user/smart-shelves/${shelf.id}`,
+        acquisition: true
+      });
+    }
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-shelves', title: t('opds.user.shelves'), selfPath: '/opds/user/shelves', entries }));
   });
