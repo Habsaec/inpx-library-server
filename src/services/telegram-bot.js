@@ -26,6 +26,8 @@ import {
 } from '../inpx.js';
 import { getRecommendedLibraryView } from './recommendations.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
+import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
+import { getUserHomeLayout, orderShelves } from '../home-layout.js';
 import { resolveDownload } from '../conversion.js';
 import { getDetailsFull, resolveBestCoverDetails } from '../routes/library.js';
 import {
@@ -367,7 +369,7 @@ function buildBotHelpMessage() {
       if (example) {
         lines.push(`<code>/${command} ${esc(example)}</code> — ${description}`);
       } else {
-        lines.push(`<code>/${command}</code> — ${description}`);
+        lines.push(`/${command} — ${description}`);
       }
     }
     lines.push('');
@@ -699,8 +701,8 @@ async function handleTelegramLink(chatId, telegramUserId, token) {
       chatId,
       `✅ <b>Аккаунт привязан</b>\n\n` +
         `Вы вошли как <b>${esc(result.username)}</b>.\n` +
-        `Доступны: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/following</code> · <code>/recommended</code>\n\n` +
-        `Справка: <code>/help</code> · Статус: <code>/me</code>`,
+        `Доступны: /shelves · /favorites · /want · /following · /recommended\n\n` +
+        `Справка: /help · Статус: /me`,
     );
     logSystemEvent('info', 'telegram-bot', 'telegram account linked', {
       username: result.username,
@@ -738,12 +740,12 @@ async function handleTelegramMe(chatId, telegramUserId) {
       `Telegram ID: <code>${esc(linked.telegramId)}</code>\n` +
       (linked.telegramLinkedAt ? `Привязан: ${esc(linked.telegramLinkedAt)}\n` : '') +
       '\n<b>Ваше на сайте:</b>\n' +
-      '<code>/shelves</code> — полки\n' +
-      '<code>/favorites</code> — избранное (книги, авторы, серии)\n' +
-      '<code>/want</code> — хочу прочитать\n' +
-      '<code>/following</code> — новое у любимых авторов и серий\n' +
-      '<code>/recommended</code> — рекомендации\n\n' +
-      'Отвязать: <code>/unlink</code>',
+      '/shelves — полки\n' +
+      '/favorites — избранное (книги, авторы, серии)\n' +
+      '/want — хочу прочитать\n' +
+      '/following — новое у любимых авторов и серий\n' +
+      '/recommended — рекомендации\n\n' +
+      'Отвязать: /unlink',
   );
 }
 
@@ -1060,7 +1062,11 @@ async function sendTextListResults(chatId, items, page, total, header, renderIte
 }
 
 async function doShelvesList(chatId, username, page = 1, { fresh = false } = {}) {
-  const shelves = getUserShelves(username);
+  // Как на сайте: обычные и умные полки — одним списком в порядке пользователя.
+  const shelves = orderShelves([
+    ...getUserShelves(username).map((s) => ({ id: s.id, kind: 'shelf', title: s.name, shelf: s })),
+    ...listSmartShelves(username).map((s) => ({ id: s.id, kind: 'smart', title: s.name, shelf: s })),
+  ], getUserHomeLayout(username).shelfOrder);
   if (!shelves.length) {
     await sendText(chatId, '📚 У вас пока нет полок. Создайте их на сайте.');
     return;
@@ -1075,15 +1081,39 @@ async function doShelvesList(chatId, username, page = 1, { fresh = false } = {})
     page,
     total,
     '📚 <b>Мои полки</b>',
-    async (item) => {
-      const key = regNavKey({ kind: 'shelf', username, shelfId: item.id, shelfName: item.name });
-      const count = Number(item.bookCount) || 0;
-      const res = await sendText(chatId, `📚 <b>${esc(item.name)}</b> — ${count} кн.`, {
+    async (ref) => {
+      if (ref.kind === 'smart') {
+        const key = regNavKey({ kind: 'smart-shelf', username, shelfId: ref.id, shelfName: ref.title });
+        const res = await sendText(chatId, `🔎 <b>${esc(ref.title)}</b> — умная полка`, {
+          reply_markup: { inline_keyboard: [[{ text: '📖 Книги полки', callback_data: `fa:${key}` }]] },
+        });
+        return { messageId: res?.result?.message_id };
+      }
+      const key = regNavKey({ kind: 'shelf', username, shelfId: ref.id, shelfName: ref.title });
+      const count = Number(ref.shelf.bookCount) || 0;
+      const res = await sendText(chatId, `📚 <b>${esc(ref.title)}</b> — ${count} кн.`, {
         reply_markup: { inline_keyboard: [[{ text: '📖 Книги полки', callback_data: `fa:${key}` }]] },
       });
       return { messageId: res?.result?.message_id };
     },
   );
+}
+
+async function doSmartShelfBooks(chatId, username, shelfId, shelfName, page = 1) {
+  const shelf = getSmartShelf(shelfId, username);
+  if (!shelf) {
+    await sendText(chatId, '❌ Полка не найдена.');
+    return;
+  }
+  const result = getSmartShelfBooks(shelf, { page, pageSize: PAGE_SIZE, langs: effectiveContentLangs(username) });
+  const total = Number(result.total) || 0;
+  if (!total) {
+    await sendText(chatId, `🔎 Умная полка «${esc(shelfName)}» пока пуста.`);
+    return;
+  }
+  const items = result.items.map((row) => getBookById(row.id)).filter(Boolean);
+  setSearchState(chatId, { kind: 'smart-shelf-books', username, shelfId, shelfName, page, total });
+  await sendBookResults(chatId, items, page, total, `🔎 <b>${esc(shelfName)}</b> — ${total} кн.`);
 }
 
 async function doShelfBooks(chatId, username, shelfId, shelfName, page = 1) {
@@ -1307,7 +1337,7 @@ async function doSmartSearch(chatId, query, { fresh = true } = {}) {
       await sendText(chatId, msg, { reply_markup: { inline_keyboard: rows } });
       return;
     }
-    await sendText(chatId, `${msg}\nПопробуйте <code>/author</code> или <code>/series</code>.`);
+    await sendText(chatId, `${msg}\nПопробуйте /author или /series.`);
     return;
   }
 
@@ -1520,6 +1550,9 @@ async function openNavEntry(chatId, entry, page = 1) {
     case 'shelf':
       await doShelfBooks(chatId, entry.username, entry.shelfId, entry.shelfName, page);
       break;
+    case 'smart-shelf':
+      await doSmartShelfBooks(chatId, entry.username, entry.shelfId, entry.shelfName, page);
+      break;
     case 'fav-section':
       await doFavoritesSection(chatId, entry.username, entry.section, page);
       break;
@@ -1544,6 +1577,7 @@ async function restoreSearchState(chatId, state) {
   else if (state.kind === 'series-books') await doSeriesBooks(chatId, state.seriesName, state.page);
   else if (state.kind === 'shelves-list') await doShelvesList(chatId, state.username, state.page);
   else if (state.kind === 'shelf-books') await doShelfBooks(chatId, state.username, state.shelfId, state.shelfName, state.page);
+  else if (state.kind === 'smart-shelf-books') await doSmartShelfBooks(chatId, state.username, state.shelfId, state.shelfName, state.page);
   else if (state.kind === 'favorites-list') await doFavoritesList(chatId, state.username, state.page);
   else if (state.kind === 'favorites-books') await doFavoritesSection(chatId, state.username, 'books', state.page);
   else if (state.kind === 'favorites-authors') await doFavoritesSection(chatId, state.username, 'authors', state.page);
@@ -1567,6 +1601,7 @@ async function continueListedSearch(chatId, page) {
   else if (state.kind === 'series-books') await doSeriesBooks(chatId, state.seriesName, page);
   else if (state.kind === 'shelves-list') await doShelvesList(chatId, state.username, page);
   else if (state.kind === 'shelf-books') await doShelfBooks(chatId, state.username, state.shelfId, state.shelfName, page);
+  else if (state.kind === 'smart-shelf-books') await doSmartShelfBooks(chatId, state.username, state.shelfId, state.shelfName, page);
   else if (state.kind === 'favorites-list') await doFavoritesList(chatId, state.username, page);
   else if (state.kind === 'favorites-books') await doFavoritesSection(chatId, state.username, 'books', page);
   else if (state.kind === 'favorites-authors') await doFavoritesSection(chatId, state.username, 'authors', page);
@@ -1765,8 +1800,8 @@ async function handleUpdate(upd) {
           chatId,
           resolveWelcomeMessage() +
             `\n\n👤 Вы вошли как <b>${esc(linked.username)}</b>.\n` +
-            'Поиск: <code>/search</code> · <code>/author</code> · <code>/series</code>\n' +
-            'Личное: <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/following</code> · <code>/recommended</code>',
+            'Поиск: /search · /author · /series\n' +
+            'Личное: /shelves · /favorites · /want · /following · /recommended',
         );
         return;
       }

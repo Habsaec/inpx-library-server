@@ -60,9 +60,9 @@ export const TELEGRAM_DEFAULT_PROFILE_SHORT =
 export const TELEGRAM_DEFAULT_WELCOME =
   '📚 <b>Библиотека книг</b>\n\n' +
   'Напишите запрос — откроются разделы Книги / Авторы / Серии.\n\n' +
-  '<b>Поиск:</b> просто текст · <code>/search</code> · <code>/author</code> · <code>/series</code>\n' +
-  '<b>Личное:</b> <code>/shelves</code> · <code>/favorites</code> · <code>/want</code> · <code>/following</code> · <code>/recommended</code> <i>(после привязки)</i>\n\n' +
-  '<code>/help</code> — полная справка';
+  '<b>Поиск:</b> просто текст · /search · /author · /series\n' +
+  '<b>Личное:</b> /shelves · /favorites · /want · /following · /recommended <i>(после привязки)</i>\n\n' +
+  '/help — полная справка';
 
 /** Анонс в чаты после индексации, если появились новые книги. Плейсхолдеры: {{count}}, {{url}}, {{link}} */
 export const TELEGRAM_DEFAULT_NEW_BOOKS_ANNOUNCE =
