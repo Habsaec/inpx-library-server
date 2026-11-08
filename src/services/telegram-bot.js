@@ -51,6 +51,8 @@ import {
   TELEGRAM_DEFAULT_PROFILE_SHORT,
   TELEGRAM_DEFAULT_WELCOME,
   TELEGRAM_DEFAULT_NEW_BOOKS_ANNOUNCE,
+  TELEGRAM_DEFAULT_WELCOME_BUTTONS,
+  TELEGRAM_DEFAULT_ANNOUNCE_BUTTONS,
   renderNewBooksAnnounceMessage,
 } from '../telegram-bot-defaults.js';
 
@@ -608,7 +610,7 @@ async function dispatchNewBooksAnnounce({ count, template = '', test = false, to
 
   const tmpl = String(template || '').trim() || resolveNewBooksAnnounceTemplate();
   const text = renderNewBooksAnnounceMessage(tmpl, n, resolveAnnounceBaseUrl(), esc);
-  const announceMarkup = botButtonsMarkup(tg.announceButtons, resolveAnnounceBaseUrl());
+  const announceMarkup = botButtonsMarkup(tg.announceButtons || TELEGRAM_DEFAULT_ANNOUNCE_BUTTONS, resolveAnnounceBaseUrl());
   await releaseTelegramPollingSlot();
   let sent = 0;
   const errors = [];
@@ -886,7 +888,7 @@ function buildAuthorOverviewItems(grouped) {
 }
 
 function welcomeButtonsOpts() {
-  const markup = botButtonsMarkup(getTelegramSettings().welcomeButtons, resolveAnnounceBaseUrl());
+  const markup = botButtonsMarkup(getTelegramSettings().welcomeButtons || TELEGRAM_DEFAULT_WELCOME_BUTTONS, resolveAnnounceBaseUrl());
   return markup ? { reply_markup: markup } : {};
 }
 

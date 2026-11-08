@@ -48,6 +48,8 @@ import {
   TELEGRAM_DEFAULT_PROFILE_SHORT,
   TELEGRAM_DEFAULT_WELCOME,
   TELEGRAM_DEFAULT_NEW_BOOKS_ANNOUNCE,
+  TELEGRAM_DEFAULT_WELCOME_BUTTONS,
+  TELEGRAM_DEFAULT_ANNOUNCE_BUTTONS,
 } from '../telegram-bot-defaults.js';
 import { buildGlassPanelBackground, adjustLightTextForGlassOpacity, DEFAULT_GLASS_LIGHT, DEFAULT_GLASS_DARK, MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX, MIN_HEADING_SCALE, MAX_HEADING_SCALE, MIN_RADIUS_SCALE, MAX_RADIUS_SCALE, THEME_PRESETS } from '../services/theme-engine.js';
 import { COVER_TITLE_FONTS, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK, MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_TEXT, DEFAULT_MANUSCRIPT_FONT } from '../services/ui-customization.js';
@@ -1703,7 +1705,7 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
         </div>
         <div class="admin-field-group">
           <label>${escapeHtml(t('admin.telegram.welcomeButtons'))}</label>
-          <textarea name="welcomeButtons" rows="5" placeholder="${escapeHtml(t('admin.telegram.buttonsPlaceholder'))}">${escapeHtml(tg.welcomeButtons || '')}</textarea>
+          <textarea name="welcomeButtons" rows="5" placeholder="${escapeHtml(t('admin.telegram.buttonsPlaceholder'))}">${escapeHtml(tg.welcomeButtons || TELEGRAM_DEFAULT_WELCOME_BUTTONS)}</textarea>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.buttonsHint'))}</span>
         </div>
       </div>
@@ -1718,7 +1720,7 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
           <textarea name="newBooksAnnounceTemplate" rows="6">${escapeHtml(newBooksAnnounceTemplate)}</textarea>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.newBooksAnnounceTemplateHint'))}</span>
           <label style="margin-top:10px;">${escapeHtml(t('admin.telegram.announceButtons'))}</label>
-          <textarea name="announceButtons" rows="4" placeholder="${escapeHtml(t('admin.telegram.buttonsPlaceholder'))}">${escapeHtml(tg.announceButtons || '')}</textarea>
+          <textarea name="announceButtons" rows="4" placeholder="${escapeHtml(t('admin.telegram.buttonsPlaceholder'))}">${escapeHtml(tg.announceButtons || TELEGRAM_DEFAULT_ANNOUNCE_BUTTONS)}</textarea>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.buttonsHint'))}</span>
           <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap;">
             <label style="font-size:13px;color:var(--muted);">${escapeHtml(t('admin.telegram.newBooksAnnounceTestCount'))}</label>

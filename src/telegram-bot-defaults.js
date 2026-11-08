@@ -107,3 +107,14 @@ export function validateNewBooksAnnounceTemplate(template = '') {
   }
   return { ok: warnings.length === 0, warnings };
 }
+
+/** Кнопки под приветствием /start по умолчанию (формат — src/telegram-bot-buttons.js). */
+export const TELEGRAM_DEFAULT_WELCOME_BUTTONS =
+  '📚 Полки | /shelves\n' +
+  '⭐ Избранное | /favorites\n' +
+  '📖 Хочу прочитать | /want\n\n' +
+  '🔥 Новое у любимых | /following\n' +
+  '✨ Рекомендации | /recommended';
+
+/** Кнопки под анонсом новинок по умолчанию. */
+export const TELEGRAM_DEFAULT_ANNOUNCE_BUTTONS = '🆕 Открыть новинки | site:/library/recent';
