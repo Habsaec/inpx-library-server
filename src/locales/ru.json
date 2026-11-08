@@ -929,5 +929,9 @@
   "readerJs.fullscreenExit": "Выйти из полноэкранного (F)",
   "readerJs.fullscreenEnter": "Во весь экран (F)",
   "admin.duplicates.description": "Поиск дубликатов по названию и авторам. Может занять некоторое время на больших библиотеках.",
-  "admin.duplicates.startSearch": "Найти дубликаты"
+  "admin.duplicates.startSearch": "Найти дубликаты",
+  "admin.telegram.welcomeButtons": "Кнопки под приветствием",
+  "admin.telegram.announceButtons": "Кнопки под анонсом",
+  "admin.telegram.buttonsPlaceholder": "📚 Полки | /shelves\n⭐ Избранное | /favorites\n\n🆕 Новинки | site:/library/recent",
+  "admin.telegram.buttonsHint": "Одна кнопка на строку: «Текст | действие». Пустая строка начинает новый ряд (до 3 кнопок в ряду, до 8 рядов). Действие: /shelves /favorites /want /following /recommended /help /me — как команда бота; https://… — внешняя ссылка; site:/страница — страница этой библиотеки (нужен публичный URL сайта)."
 }

@@ -916,5 +916,9 @@
   "readerJs.fullscreenExit": "Exit fullscreen (F)",
   "readerJs.fullscreenEnter": "Fullscreen (F)",
   "admin.duplicates.description": "Search for duplicates by title and authors. May take some time on large libraries.",
-  "admin.duplicates.startSearch": "Find duplicates"
+  "admin.duplicates.startSearch": "Find duplicates",
+  "admin.telegram.welcomeButtons": "Buttons under the welcome message",
+  "admin.telegram.announceButtons": "Buttons under the announcement",
+  "admin.telegram.buttonsPlaceholder": "📚 Shelves | /shelves\n⭐ Favorites | /favorites\n\n🆕 New books | site:/library/recent",
+  "admin.telegram.buttonsHint": "One button per line: \"Text | action\". A blank line starts a new row (up to 3 buttons per row, 8 rows). Action: /shelves /favorites /want /following /recommended /help /me — runs the bot command; https://… — external link; site:/page — a page of this library (needs the public site URL)."
 }

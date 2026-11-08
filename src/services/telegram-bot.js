@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import cluster from 'node:cluster';
 import { config } from '../config.js';
 import { getSharp } from './sharp-loader.js';
-import { getMeta, setMeta, resolveTelegramRuntimeConfig, resolveTelegramApiBase, getTelegramSettings, getUserByTelegramId, completeTelegramLink, unlinkTelegramByTelegramId, getUserShelves, getShelfBooks, getShelfById, isTelegramBotAllowedForUser, registerTelegramChat, removeTelegramChat, listTelegramAnnounceChats, getPublicBaseUrlSetting, syncTelegramChatsFromLinkedUsers } from '../db.js';
+import { getMeta, setMeta, resolveTelegramRuntimeConfig, resolveTelegramApiBase, getTelegramSettings, getUserByTelegramId, completeTelegramLink, unlinkTelegramByTelegramId, getUserShelves, getShelfBooks, getShelfById, createShelf, addBookToShelf, isTelegramBotAllowedForUser, registerTelegramChat, removeTelegramChat, listTelegramAnnounceChats, getPublicBaseUrlSetting, syncTelegramChatsFromLinkedUsers } from '../db.js';
 import {
   searchCatalog,
   searchOverview,
@@ -23,12 +23,18 @@ import {
   getFollowingNewBooks,
   markFollowingSeen,
   findDidYouMeanSuggestions,
+  getAllBookIdsByFacet,
+  toggleBookmark,
+  toggleFavoriteAuthor,
+  toggleFavoriteSeries,
 } from '../inpx.js';
-import { getRecommendedLibraryView } from './recommendations.js';
+import { getRecommendedLibraryView, invalidateRecommendationsCache } from './recommendations.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
+import { invalidateUserPageCaches } from './cache.js';
 import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
 import { getUserHomeLayout, orderShelves } from '../home-layout.js';
 import { resolveDownload } from '../conversion.js';
+import { botButtonsMarkup } from '../telegram-bot-buttons.js';
 import { getDetailsFull, resolveBestCoverDetails } from '../routes/library.js';
 import {
   getCachedCoverThumb,
@@ -117,6 +123,9 @@ const _chatSessions = new TtlMap(CHAT_SESSION_TTL_MS, 2000);
 const _dlCache = new TtlMap(CALLBACK_CACHE_TTL_MS, 10000);
 const _facetCache = new TtlMap(CALLBACK_CACHE_TTL_MS, 10000);
 const _authorGroupedCache = new TtlMap(CALLBACK_CACHE_TTL_MS, 500);
+/** chatId → цель «На полку», пока бот ждёт название новой полки. */
+const _pendingShelfName = new TtlMap(5 * 60_000, 500);
+const SHELF_ADD_MAX = 2000;
 let _dlSeq = 0;
 
 let _token = '';
@@ -562,7 +571,7 @@ function isTelegramChatGoneError(description = '') {
     || text.includes('bot was kicked');
 }
 
-async function sendTelegramHtmlWithToken(token, chatId, text) {
+async function sendTelegramHtmlWithToken(token, chatId, text, replyMarkup = null) {
   const res = await fetch(`${resolveTelegramApiBase()}/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -571,6 +580,7 @@ async function sendTelegramHtmlWithToken(token, chatId, text) {
       text,
       parse_mode: 'HTML',
       disable_web_page_preview: false,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
   });
   return res.json();
@@ -598,13 +608,14 @@ async function dispatchNewBooksAnnounce({ count, template = '', test = false, to
 
   const tmpl = String(template || '').trim() || resolveNewBooksAnnounceTemplate();
   const text = renderNewBooksAnnounceMessage(tmpl, n, resolveAnnounceBaseUrl(), esc);
+  const announceMarkup = botButtonsMarkup(tg.announceButtons, resolveAnnounceBaseUrl());
   await releaseTelegramPollingSlot();
   let sent = 0;
   const errors = [];
   for (let i = 0; i < chats.length; i++) {
     const chat = chats[i];
     try {
-      const result = await sendTelegramHtmlWithToken(token, chat.chatId, text);
+      const result = await sendTelegramHtmlWithToken(token, chat.chatId, text, announceMarkup);
       if (result?.ok) {
         sent += 1;
       } else {
@@ -782,6 +793,67 @@ function regNavKey(entry) {
   return key;
 }
 
+/** Кнопка «На полку» (книга / серия / автор) — только для привязанного аккаунта в личном чате (chat id = user id). */
+function shelfAddButton(chatId, type, value, label) {
+  if (!resolveLinkedUser(chatId)) return [];
+  const favKey = regNavKey({ kind: 'fav-target', type, value, label });
+  const shelfKey = regNavKey({ kind: 'shelf-target', type, value, label });
+  return [
+    { text: '⭐ В избранное', callback_data: `fv:${favKey}` },
+    { text: '📚 На полку', callback_data: `sa:${shelfKey}` },
+  ];
+}
+
+function rowWithShelf(first, extra) {
+  return extra?.length ? [[first], extra] : [[first]];
+}
+
+/** Переключает избранное (книга → закладка, автор, серия) и возвращает текст-итог. */
+function toggleFavoriteTarget(username, target) {
+  let on;
+  if (target.type === 'book') on = toggleBookmark(username, target.value);
+  else if (target.type === 'series') on = toggleFavoriteSeries(username, target.value);
+  else on = toggleFavoriteAuthor(username, target.value);
+  if (on === null || on === undefined) return '❌ Не найдено.';
+  invalidateUserPageCaches(username);
+  invalidateRecommendationsCache(username);
+  return on ? `⭐ «${target.label}» — в избранном` : `«${target.label}» убрано из избранного`;
+}
+
+function shelfTargetBookIds(target) {
+  if (target.type === 'book') return [String(target.value)];
+  const facet = target.type === 'series' ? 'series' : 'authors';
+  return getAllBookIdsByFacet(facet, target.value).slice(0, SHELF_ADD_MAX).map(String);
+}
+
+function addTargetToShelf(username, shelfId, target) {
+  let added = 0;
+  const ids = shelfTargetBookIds(target);
+  for (const id of ids) added += Number(addBookToShelf(shelfId, id)) || 0;
+  return { added, total: ids.length };
+}
+
+async function openShelfPicker(chatId, username, target) {
+  const shelves = getUserShelves(username).slice(0, 30);
+  const rows = shelves.map((s) => {
+    const key = regNavKey({ kind: 'shelf-pick', shelfId: s.id, shelfName: s.name, target });
+    return [{ text: `📚 ${s.name}`.slice(0, 60), callback_data: `sp:${key}` }];
+  });
+  const newKey = regNavKey({ kind: 'shelf-new', target });
+  rows.push([{ text: '➕ Новая полка', callback_data: `sn:${newKey}` }]);
+  const what = target.type === 'book' ? 'книгу' : target.type === 'series' ? 'серию' : 'книги автора';
+  await sendText(chatId, `📚 На какую полку положить ${what} «${esc(target.label)}»?`, { reply_markup: { inline_keyboard: rows } });
+}
+
+async function reportShelfAdd(chatId, shelfName, target, r) {
+  const msg = r.total === 0
+    ? '❌ Книги не найдены.'
+    : `✅ «${esc(target.label)}» → полка «${esc(shelfName)}»: добавлено ${r.added} из ${r.total} кн.` +
+      (r.added < r.total ? ' (остальные уже были на полке)' : '') +
+      '\nПолка видна в OPDS: Моя библиотека → Мои полки.';
+  await sendText(chatId, msg);
+}
+
 function cacheAuthorGrouped(authorName, grouped) {
   _authorGroupedCache.set(authorName, grouped);
 }
@@ -811,6 +883,11 @@ function buildAuthorOverviewItems(grouped) {
     items.push({ type: 'standalone', bookCount: grouped.standaloneBooks.length });
   }
   return items;
+}
+
+function welcomeButtonsOpts() {
+  const markup = botButtonsMarkup(getTelegramSettings().welcomeButtons, resolveAnnounceBaseUrl());
+  return markup ? { reply_markup: markup } : {};
 }
 
 function resolveWelcomeMessage() {
@@ -863,7 +940,7 @@ function fmtBook(book) {
 }
 
 /** Кнопки скачивания сразу под карточкой книги. */
-function bookMarkup(book, { allFormats = false } = {}) {
+function bookMarkup(book, { allFormats = false, shelfBtn = [] } = {}) {
   const available = book.downloadFormats?.length
     ? book.downloadFormats
     : [{ format: book.ext || 'fb2', label: (book.ext || 'fb2').toUpperCase() }];
@@ -872,9 +949,10 @@ function bookMarkup(book, { allFormats = false } = {}) {
     callback_data: `dl:${regDlKey(book.id, f.format)}`,
   }));
   // Поиск в боте — одна строка до 4 кнопок; полная карточка — по 3 в ряд, чтобы поместились все форматы.
-  if (!allFormats) return { inline_keyboard: [buttons] };
+  if (!allFormats) return { inline_keyboard: shelfBtn.length ? [buttons, shelfBtn] : [buttons] };
   const rows = [];
   for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
+  if (shelfBtn.length) rows.push(shelfBtn);
   return { inline_keyboard: rows };
 }
 
@@ -972,7 +1050,7 @@ async function loadBookPresentation(book) {
 async function sendBookCard(chatId, book, { allFormats = false } = {}) {
   const pres = await withPresentationLimit(() => loadBookPresentation(book));
   const caption = bookCaption(book, pres.annotation, pres.annotationIsHtml);
-  const markup = bookMarkup(book, { allFormats });
+  const markup = bookMarkup(book, { allFormats, shelfBtn: shelfAddButton(chatId, 'book', book.id, book.title || 'книга') });
   if (pres.cover?.data?.length) {
     const res = await sendPhoto(chatId, pres.cover.data, pres.cover.contentType, caption, markup);
     if (res?.ok) return res.result?.message_id;
@@ -1195,13 +1273,13 @@ async function doFavoritesSection(chatId, username, section, page = 1, { fresh =
       if (isAuthors) {
         const key = regNavKey({ kind: 'author', author: item.name });
         const res = await sendText(chatId, `👤 <b>${esc(displayName)}</b>`, {
-          reply_markup: { inline_keyboard: [[{ text: '📚 Серии автора', callback_data: `fa:${key}` }]] },
+          reply_markup: { inline_keyboard: rowWithShelf({ text: '📚 Серии автора', callback_data: `fa:${key}` }, shelfAddButton(chatId, 'author', item.name, displayName)) },
         });
         return { messageId: res?.result?.message_id };
       }
       const key = regNavKey({ kind: 'series', series: item.name });
       const res = await sendText(chatId, `📚 <b>${esc(displayName)}</b>`, {
-        reply_markup: { inline_keyboard: [[{ text: '📖 Книги серии', callback_data: `fa:${key}` }]] },
+        reply_markup: { inline_keyboard: rowWithShelf({ text: '📖 Книги серии', callback_data: `fa:${key}` }, shelfAddButton(chatId, 'series', item.name, displayName)) },
       });
       return { messageId: res?.result?.message_id };
     },
@@ -1399,7 +1477,7 @@ async function doAuthorSearch(chatId, query, page = 1, { fresh = false } = {}) {
       const name = item.displayName || item.name;
       const key = regNavKey({ kind: 'author', author: item.name });
       const res = await sendText(chatId, `👤 <b>${esc(name)}</b> — ${item.bookCount} кн.`, {
-        reply_markup: { inline_keyboard: [[{ text: '📚 Серии', callback_data: `fa:${key}` }]] },
+        reply_markup: { inline_keyboard: rowWithShelf({ text: '📚 Серии', callback_data: `fa:${key}` }, shelfAddButton(chatId, 'author', item.name, name)) },
       });
       return { messageId: res?.result?.message_id };
     },
@@ -1509,7 +1587,7 @@ async function doSeriesSearch(chatId, query, page = 1, { fresh = false } = {}) {
       const name = item.displayName || item.name;
       const key = regNavKey({ kind: 'series', series: item.name });
       const res = await sendText(chatId, `📚 <b>${esc(name)}</b> — ${item.bookCount} кн.`, {
-        reply_markup: { inline_keyboard: [[{ text: '📖 Книги', callback_data: `fa:${key}` }]] },
+        reply_markup: { inline_keyboard: rowWithShelf({ text: '📖 Книги', callback_data: `fa:${key}` }, shelfAddButton(chatId, 'series', item.name, name)) },
       });
       return { messageId: res?.result?.message_id };
     },
@@ -1745,6 +1823,59 @@ async function handleUpdate(upd) {
         }
         pushNavSnapshot(chatId);
         await openNavEntry(chatId, entry, 1);
+      } else if (data.startsWith('bc:')) {
+        await answerCb(cq.id);
+        const name = data.slice(3);
+        if (name === 'help') {
+          await sendText(chatId, buildBotHelpMessage());
+        } else if (name === 'me') {
+          await handleTelegramMe(chatId, cq.from?.id);
+        } else {
+          const personal = parsePersonalCommand('/' + name);
+          const linked = resolveLinkedUser(cq.from?.id);
+          if (!personal) {
+            // неизвестная команда из старой кнопки
+          } else if (!linked) {
+            await sendText(chatId, 'ℹ️ Эта команда доступна после привязки аккаунта.\nПрофиль на сайте → Настройки → Telegram → «Привязать».');
+          } else {
+            await dispatchPersonalCommand(chatId, linked.username, personal);
+          }
+        }
+      } else if (data.startsWith('fv:')) {
+        const linked = resolveLinkedUser(cq.from?.id);
+        const entry = _facetCache.get(data.slice(3));
+        if (!linked) {
+          await answerCb(cq.id, 'Привяжите аккаунт: Профиль → Telegram.');
+        } else if (!entry || entry.kind !== 'fav-target') {
+          await answerCb(cq.id, 'Ссылка устарела. Повторите поиск.');
+        } else {
+          await answerCb(cq.id, toggleFavoriteTarget(linked.username, entry).slice(0, 190));
+        }
+      } else if (data.startsWith('sa:') || data.startsWith('sp:') || data.startsWith('sn:')) {
+        const linked = resolveLinkedUser(cq.from?.id);
+        const entry = _facetCache.get(data.slice(3));
+        if (!linked) {
+          await answerCb(cq.id, 'Привяжите аккаунт: Профиль → Telegram.');
+          return;
+        }
+        if (!entry) {
+          await answerCb(cq.id, 'Ссылка устарела. Повторите поиск.');
+          return;
+        }
+        await answerCb(cq.id);
+        if (entry.kind === 'shelf-target') {
+          await openShelfPicker(chatId, linked.username, entry);
+        } else if (entry.kind === 'shelf-pick') {
+          const shelf = getShelfById(entry.shelfId, linked.username);
+          if (!shelf) {
+            await sendText(chatId, '❌ Полка не найдена.');
+            return;
+          }
+          await reportShelfAdd(chatId, shelf.name, entry.target, addTargetToShelf(linked.username, shelf.id, entry.target));
+        } else if (entry.kind === 'shelf-new') {
+          _pendingShelfName.set(String(chatId), { username: linked.username, target: entry.target });
+          await sendText(chatId, '✏️ Пришлите название новой полки одним сообщением (отмена — /cancel).');
+        }
       } else if (data === 'sm:b' || data === 'sm:a' || data === 'sm:s') {
         await answerCb(cq.id);
         const state = getSearchState(chatId);
@@ -1802,10 +1933,11 @@ async function handleUpdate(upd) {
             `\n\n👤 Вы вошли как <b>${esc(linked.username)}</b>.\n` +
             'Поиск: /search · /author · /series\n' +
             'Личное: /shelves · /favorites · /want · /following · /recommended',
+          welcomeButtonsOpts(),
         );
         return;
       }
-      await sendText(chatId, resolveWelcomeMessage());
+      await sendText(chatId, resolveWelcomeMessage(), welcomeButtonsOpts());
       return;
     }
 
@@ -1822,6 +1954,25 @@ async function handleUpdate(upd) {
     if (text === '/help') {
       await sendText(chatId, buildBotHelpMessage());
       return;
+    }
+
+    const pendingShelf = _pendingShelfName.get(String(chatId));
+    if (pendingShelf) {
+      _pendingShelfName.delete(String(chatId));
+      if (text === '/cancel' || text.startsWith('/cancel ')) {
+        await sendText(chatId, 'Отменено.');
+        return;
+      }
+      if (!text.startsWith('/')) {
+        try {
+          const shelfName = text.slice(0, 100);
+          const shelfId = Number(createShelf(pendingShelf.username, shelfName));
+          await reportShelfAdd(chatId, shelfName, pendingShelf.target, addTargetToShelf(pendingShelf.username, shelfId, pendingShelf.target));
+        } catch (err) {
+          await sendText(chatId, `❌ ${esc(err.message)}`);
+        }
+        return;
+      }
     }
 
     const personalCmd = parsePersonalCommand(text);

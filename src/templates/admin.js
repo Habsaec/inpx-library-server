@@ -1701,6 +1701,11 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
           <textarea name="welcomeMessage" rows="8">${escapeHtml(welcomeMessage)}</textarea>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.welcomeMessageHint'))}</span>
         </div>
+        <div class="admin-field-group">
+          <label>${escapeHtml(t('admin.telegram.welcomeButtons'))}</label>
+          <textarea name="welcomeButtons" rows="5" placeholder="${escapeHtml(t('admin.telegram.buttonsPlaceholder'))}">${escapeHtml(tg.welcomeButtons || '')}</textarea>
+          <span class="admin-field-hint">${escapeHtml(t('admin.telegram.buttonsHint'))}</span>
+        </div>
       </div>
       <div class="admin-card admin-card--form">
         <div class="admin-card-title">${escapeHtml(t('admin.telegram.newBooksAnnounce'))}</div>
@@ -1712,6 +1717,9 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
           </label>
           <textarea name="newBooksAnnounceTemplate" rows="6">${escapeHtml(newBooksAnnounceTemplate)}</textarea>
           <span class="admin-field-hint">${escapeHtml(t('admin.telegram.newBooksAnnounceTemplateHint'))}</span>
+          <label style="margin-top:10px;">${escapeHtml(t('admin.telegram.announceButtons'))}</label>
+          <textarea name="announceButtons" rows="4" placeholder="${escapeHtml(t('admin.telegram.buttonsPlaceholder'))}">${escapeHtml(tg.announceButtons || '')}</textarea>
+          <span class="admin-field-hint">${escapeHtml(t('admin.telegram.buttonsHint'))}</span>
           <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap;">
             <label style="font-size:13px;color:var(--muted);">${escapeHtml(t('admin.telegram.newBooksAnnounceTestCount'))}</label>
             <input type="number" name="newBooksAnnounceTestCount" value="3" min="1" max="99999" style="width:90px;">

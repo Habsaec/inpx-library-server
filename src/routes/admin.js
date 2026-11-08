@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import express from 'express';
 import { config, parseTelegramApiBase } from '../config.js';
 import { validateNewBooksAnnounceTemplate } from '../telegram-bot-defaults.js';
+import { parseBotButtons } from '../telegram-bot-buttons.js';
 
 function normalizeNewBooksAnnounceTemplate(template = '') {
   return String(template || '')
@@ -1133,6 +1134,8 @@ export function registerAdminRoutes(app, deps) {
     const profileDescription = String(req.body.profileDescription ?? '').trim().slice(0, 512);
     const profileShortDescription = String(req.body.profileShortDescription ?? '').trim().slice(0, 120);
     const newBooksAnnounceTemplate = String(req.body.newBooksAnnounceTemplate ?? '').trim().slice(0, 4096);
+    const welcomeButtons = String(req.body.welcomeButtons ?? '').trim().slice(0, 2000);
+    const announceButtons = String(req.body.announceButtons ?? '').trim().slice(0, 2000);
     const enabled = req.body.enabled === '1';
     const newBooksAnnounceEnabled = req.body.newBooksAnnounceEnabled === '1';
     const isTest = req.body.test === '1';
@@ -1141,6 +1144,11 @@ export function registerAdminRoutes(app, deps) {
     const apiUrl = parseTelegramApiBase(apiUrlRaw);
     if (apiUrlRaw && !apiUrl) {
       return res.redirect('/admin/telegram?flash=' + encodeURIComponent(t('admin.telegram.flashApiUrlInvalid')));
+    }
+
+    const buttonErrors = [...parseBotButtons(welcomeButtons).errors.map((e) => `Приветствие, ${e}`), ...parseBotButtons(announceButtons).errors.map((e) => `Анонс, ${e}`)];
+    if (!req.body.test && buttonErrors.length) {
+      return res.redirect('/admin/telegram?flash=' + encodeURIComponent('Кнопки не сохранены: ' + buttonErrors.join(' · ')));
     }
 
     const token = resolveTelegramTokenForAdmin(rawToken);
@@ -1165,6 +1173,8 @@ export function registerAdminRoutes(app, deps) {
       allowedUsers,
       accessMode,
       welcomeMessage,
+      welcomeButtons,
+      announceButtons,
       profileDescription,
       profileShortDescription,
       newBooksAnnounceEnabled,

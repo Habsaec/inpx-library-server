@@ -3563,7 +3563,7 @@ export function deleteShelf(shelfId, username) {
 let _stmtAddBookToShelf = null;
 export function addBookToShelf(shelfId, bookId) {
   _stmtAddBookToShelf ??= db.prepare('INSERT OR IGNORE INTO shelf_books(shelf_id, book_id) VALUES(?, ?)');
-  _stmtAddBookToShelf.run(shelfId, bookId);
+  return _stmtAddBookToShelf.run(shelfId, bookId).changes;
 }
 
 let _stmtRemoveBookFromShelf = null;
@@ -4035,6 +4035,8 @@ export function getTelegramSettings() {
     allowedUsers: getSetting('telegram_allowed_users'),
     accessMode: TELEGRAM_ACCESS_MODES.has(accessModeRaw) ? accessModeRaw : 'whitelist_or_linked',
     welcomeMessage: getSetting('telegram_welcome_message') || '',
+    welcomeButtons: getSetting('telegram_welcome_buttons') || '',
+    announceButtons: getSetting('telegram_announce_buttons') || '',
     profileDescription: getSetting('telegram_profile_description') || '',
     profileShortDescription: getSetting('telegram_profile_short_description') || '',
     newBooksAnnounceEnabled: getSetting('telegram_new_books_announce_enabled') === '1',
@@ -4053,6 +4055,8 @@ export function setTelegramSettings({
   accessMode,
   enabled,
   welcomeMessage,
+  welcomeButtons,
+  announceButtons,
   profileDescription,
   profileShortDescription,
   newBooksAnnounceEnabled,
@@ -4074,6 +4078,12 @@ export function setTelegramSettings({
   }
   if (welcomeMessage !== undefined) {
     setSetting('telegram_welcome_message', String(welcomeMessage ?? ''));
+  }
+  if (welcomeButtons !== undefined) {
+    setSetting('telegram_welcome_buttons', String(welcomeButtons ?? '').slice(0, 2000));
+  }
+  if (announceButtons !== undefined) {
+    setSetting('telegram_announce_buttons', String(announceButtons ?? '').slice(0, 2000));
   }
   if (profileDescription !== undefined) {
     setSetting('telegram_profile_description', String(profileDescription ?? ''));
