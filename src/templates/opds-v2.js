@@ -2,7 +2,8 @@
  * OPDS 2.0 (JSON) template functions.
  * Spec: https://drafts.opds.io/opds-2.0
  */
-import { siteTitleForDisplay, t, FORMAT_LABELS, downloadBookPath, apiBookPath } from './shared.js';
+import { siteTitleForDisplay, t, tp, FORMAT_LABELS, downloadBookPath, apiBookPath } from './shared.js';
+import { opdsBookRelated } from './opds.js';
 // OPDS keeps the stored (Russian) genre names, like the genre navigation in routes/opds-v2.js.
 import { formatGenreLabel } from '../genre-map.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
@@ -150,11 +151,14 @@ export function renderOpds2BookDetail(baseUrl, book) {
     return JSON.stringify({ metadata: { title: t('book.notFound') }, links: baseLinks(baseUrl, '/opds/v2') });
   }
   const pub = formatPublication(book);
+  const related = opdsBookRelated(book);
   return JSON.stringify({
     metadata: pub.metadata,
     links: [
       { rel: 'self', href: `/opds/v2/book/${encodeURIComponent(book.id)}`, type: 'application/opds+json' },
-      ...pub.links
+      ...pub.links,
+      ...related.authors.map((a) => ({ rel: 'related', href: `/opds/v2/authors?prefix=${encodeURIComponent('=' + a.name)}`, type: 'application/opds+json', title: tp('opds.relatedAuthor', { name: a.label }) })),
+      ...related.series.map((s) => ({ rel: 'related', href: `/opds/v2/series?prefix=${encodeURIComponent('=' + s.name)}`, type: 'application/opds+json', title: tp('opds.relatedSeries', { name: s.label }) })),
     ],
     images: pub.images
   });

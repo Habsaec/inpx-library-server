@@ -22,7 +22,13 @@ import {
   warmOpdsTitleQuery,
   getLibraryView,
   getFollowingNewBooks,
+  resolveAuthorName,
 } from '../inpx.js';
+
+/** «=Name» of an author feed: book payloads carry the raw INPX spelling (`Кубатиев,Алан,Кайсанбекович`), the catalog the key. */
+function opdsAuthorKey(name) {
+  return resolveAuthorName(name) || name;
+}
 import { getUserShelves, getShelfById, getShelfBooks } from '../db.js';
 import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
 import { getRecommendedLibraryView } from '../services/recommendations.js';
@@ -226,7 +232,7 @@ export function registerOpdsV2Routes(app, deps) {
     const base = baseUrl(req);
 
     if (series && prefix.startsWith('=')) {
-      const authorName = prefix.slice(1);
+      const authorName = opdsAuthorKey(prefix.slice(1));
       const items = getAuthorSeriesBooksOpds(authorName, series, genre);
       await attachFlibustaAnnotationsFromShards(items);
       res.type(OPDS_JSON);
@@ -239,7 +245,7 @@ export function registerOpdsV2Routes(app, deps) {
     }
 
     if (prefix.startsWith('=')) {
-      const authorName = prefix.slice(1);
+      const authorName = opdsAuthorKey(prefix.slice(1));
       const allBooks = getAuthorBooksOpds(authorName, genre);
       // Group by series like inpx-web
       const seriesMap = new Map();

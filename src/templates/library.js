@@ -2157,7 +2157,7 @@ ${renderFaviconLinks()}
         <div class="rs-group">
           <div class="rs-label">${escapeHtml(t('reader.fontSize'))}</div>
           <div class="rs-slider">
-            <input type="range" id="rs-font-size" name="readerFontSize" min="12" max="32" step="1" aria-label="${escapeHtml(t('reader.fontSize'))}">
+            <input type="range" id="rs-font-size" name="readerFontSize" min="12" max="48" step="1" aria-label="${escapeHtml(t('reader.fontSize'))}">
             <span class="rs-val" id="rs-font-size-val">18</span>
           </div>
         </div>

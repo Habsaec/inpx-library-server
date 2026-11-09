@@ -6,6 +6,26 @@ import { escapeHtml, sanitizeHtml, siteTitleForDisplay, t, FORMAT_LABELS, downlo
 import { formatGenreLabel } from '../genre-map.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
 import { withOpdsProgress } from '../opds-progress.js';
+import { tp } from './shared.js';
+
+/** Authors / series of a book for «Все книги автора / серии» links: raw catalog names + display labels. */
+export function opdsBookRelated(book) {
+  const authors = String(book?.authors || '').split(':').map((a) => a.trim()).filter(Boolean)
+    .slice(0, 5)
+    .map((name) => ({ name, label: name.split(',').map((p) => p.trim()).filter(Boolean).join(' ') || name }));
+  const seen = new Set();
+  const series = [];
+  const list = Array.isArray(book?.seriesList) && book.seriesList.length
+    ? book.seriesList.map((s) => ({ name: s.name, label: s.displayName || s.name }))
+    : (book?.series ? [{ name: book.series, label: book.series }] : []);
+  for (const s of list) {
+    const key = String(s.name || '').trim();
+    if (!key || seen.has(key.toLowerCase())) continue;
+    seen.add(key.toLowerCase());
+    series.push({ name: key, label: String(s.label || key) });
+  }
+  return { authors, series: series.slice(0, 3) };
+}
 import { getBookExtraAcquisitions } from '../download-formats.js';
 
 function renderOpdsBaseLinks(baseUrl, selfPath, { acquisition = false } = {}) {
@@ -77,6 +97,13 @@ function renderOpdsBookEntries(baseUrl, items, { includeContent = false } = {}) 
     // Other stored files of the book (Calibre: AZW3, PDF… next to the EPUB) — as is, one link per format.
     for (const extra of getBookExtraAcquisitions(book)) {
       links.push(`<link href="${escapeHtml(`${dl}&format=${extra.format}`)}" rel="http://opds-spec.org/acquisition" type="${extra.mime}" title="${escapeHtml(extra.label)}"/>`);
+    }
+    const related = opdsBookRelated(book);
+    for (const a of related.authors) {
+      links.push(`<link href="${escapeHtml(`/opds/author?author=${encodeURIComponent('=' + a.name)}`)}" rel="related" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="${escapeHtml(tp('opds.relatedAuthor', { name: a.label }))}"/>`);
+    }
+    for (const s of related.series) {
+      links.push(`<link href="${escapeHtml(`/opds/series?series=${encodeURIComponent('=' + s.name)}`)}" rel="related" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="${escapeHtml(tp('opds.relatedSeries', { name: s.label }))}"/>`);
     }
     if (book.id) {
       links.push(`<link href="${escapeHtml(cover)}" rel="http://opds-spec.org/image" type="image/jpeg"/>`);

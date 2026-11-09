@@ -2573,7 +2573,7 @@ import {
     bindSeg('[data-set-layout]', 'layout');
     bindSeg('[data-set-eink-mode]', 'einkMode');
     const stepFont = (dir) => {
-      S.fontSize = Math.min(32, Math.max(12, Number(S.fontSize) + dir));
+      S.fontSize = Math.min(48, Math.max(12, Number(S.fontSize) + dir));
       applySettings(); refreshSettingsUI();
       scheduleChromeHide();
     };
@@ -3415,7 +3415,7 @@ import {
       e.preventDefault();
       const ratio = touchDistPinch(e.touches) / pinchStartDist;
       const dampened = 1 + (ratio - 1) * 0.35;
-      const newSize = Math.round(Math.min(32, Math.max(12, pinchStartSize * dampened)));
+      const newSize = Math.round(Math.min(48, Math.max(12, pinchStartSize * dampened)));
       if (newSize !== S.fontSize) { S.fontSize = newSize; applySettings(); refreshSettingsUI(); }
     }, { passive: false });
     doc.addEventListener('touchend', () => { pinchStartDist = 0; }, { passive: true });
