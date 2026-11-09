@@ -12652,24 +12652,41 @@ html[data-theme="light"] .card-cover-actions .download-menu-trigger:hover {
   min-width: 0;
 }
 
+/* Preferred-format split button: the menu hangs off the narrow ▾ caret, and left/right 0 made it exactly as wide
+   as the caret — «Markdown» touched the edge and the hovered item stuck out of the menu. Size it by the longest
+   format instead, right-aligned to the caret (it grows to the left, over the cover). */
+.card-cover-actions .download-split .download-menu-popover {
+  left: auto;
+  right: 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(260px, calc(100vw - 24px));
+}
+
+.card-cover-actions .download-split .download-format-link {
+  white-space: nowrap;
+}
+
+/* Hover actions show on hover, keyboard focus (:focus-visible) or an open menu. Plain :focus-within kept them
+   shown on a card after a mouse click there, until the next click elsewhere. */
 @media (hover: hover) and (pointer: fine) {
   .card:hover .card-cover::after,
-  .card:has(.card-cover-actions:focus-within) .card-cover::after,
+  .card:has(.card-cover-actions :focus-visible) .card-cover::after,
   .card:has(.download-menu[open]) .card-cover::after,
   .card:hover .card-cover-actions,
-  .card-cover-actions:focus-within,
+  .card-cover-actions:has(:focus-visible),
   .card:has(.download-menu[open]) .card-cover-actions {
     opacity: 1;
   }
 
   .card:hover .card-cover-actions,
-  .card-cover-actions:focus-within,
+  .card-cover-actions:has(:focus-visible),
   .card:has(.download-menu[open]) .card-cover-actions {
     pointer-events: auto;
   }
 
   .card:hover .card-cover-actions .card-cover-action,
-  .card-cover-actions:focus-within .card-cover-action,
+  .card-cover-actions:has(:focus-visible) .card-cover-action,
   .card:has(.download-menu[open]) .card-cover-actions .card-cover-action {
     backdrop-filter: blur(12px) saturate(1.2);
     -webkit-backdrop-filter: blur(12px) saturate(1.2);
@@ -14180,10 +14197,11 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   }
 
   /* The turning book: the outer .book-3d / .card-cover-hit stays still and catches the pointer,
-     so the turning body can't flicker at its edges. */
+     so the turning body can't flicker at its edges. Keyboard focus (:focus-visible) turns a card too; plain
+     :focus-within kept the book turned after a mouse click on its download menu until the next click elsewhere. */
   html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body,
   html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:has(:focus-visible) .card-cover {
     transform-style: preserve-3d;
     transform: perspective(var(--bk-persp)) translateY(var(--bk-lift)) rotateY(var(--bk-tilt));
     transition-delay: 0s;
@@ -14199,7 +14217,7 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   }
 
   html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:has(:focus-visible) .card-cover {
     --bk-tilt: -20deg;
     --bk-lift: -8px;
   }
@@ -14248,14 +14266,14 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
 
   html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::before,
   html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::before,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover::before {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:has(:focus-visible) .card-cover::before {
     display: block;
     transition-delay: 0s;
   }
 
   html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::after,
   html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::after,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover::after {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:has(:focus-visible) .card-cover::after {
     display: block;
     opacity: 1;
     transition-delay: 0s;
@@ -14264,7 +14282,7 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   @starting-style {
     html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body::after,
     html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover::after,
-    html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover::after {
+    html:not([data-ui-book3d="0"]) .card-cover-hit:has(:focus-visible) .card-cover::after {
       opacity: 0;
     }
   }
@@ -14282,13 +14300,13 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
 
   html:not([data-ui-book3d="0"]) .book-3d:hover .book-3d-body > .cover,
   html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover > .cover,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover > .cover {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:has(:focus-visible) .card-cover > .cover {
     transform: translateZ(calc(var(--bk-depth) / 2));
     transition-delay: 0s;
   }
 
   html:not([data-ui-book3d="0"]) .card-cover-hit:hover .card-cover-actions,
-  html:not([data-ui-book3d="0"]) .card-cover-hit:focus-within .card-cover-actions {
+  html:not([data-ui-book3d="0"]) .card-cover-hit:has(:focus-visible) .card-cover-actions {
     transform: translateZ(calc(var(--bk-depth) / 2 + 1px));
     transition-delay: 0s;
   }
