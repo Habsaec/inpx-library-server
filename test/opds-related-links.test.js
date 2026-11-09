@@ -37,3 +37,10 @@ test('OPDS v2 book detail carries the same related links', () => {
   assert.equal(related.length, 3);
   assert.equal(related[2].href, `/opds/v2/series?prefix=${encodeURIComponent('=Дозоры')}`);
 });
+
+test('OPDS v1: an HTML annotation is escaped, so the feed stays well-formed XML', () => {
+  const xml = renderOpdsBookDetail('http://x', { ...book, annotation: '<p>Охотник&nbsp;и<br>кодекс &laquo;x&raquo;</p>' });
+  const content = xml.match(/<content type="text\/html">([\s\S]*?)<\/content>/)[1];
+  assert.doesNotMatch(content, /<|&nbsp;|&laquo;/);
+  assert.match(content, /&lt;br&gt;/);
+});

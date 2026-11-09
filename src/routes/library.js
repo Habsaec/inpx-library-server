@@ -1539,7 +1539,8 @@ export function registerLibraryRoutes(app, deps) {
     }
   });
 
-  app.get('/api/authors/portrait', requireBrowseAuth, async (req, res, next) => {
+  // OPDS clients load portraits of navigation entries with their Basic credentials, like covers.
+  app.get('/api/authors/portrait', requireBrowseOrOpds, async (req, res, next) => {
     try {
       let name = String(req.query.name || '').trim();
       if (!name) {

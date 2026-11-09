@@ -7,21 +7,8 @@ import { opdsBookRelated } from './opds.js';
 // OPDS keeps the stored (Russian) genre names, like the genre navigation in routes/opds-v2.js.
 import { formatGenreLabel } from '../genre-map.js';
 import { unwrapEscapedMarkup } from '../html-sanitize.js';
-import { getBookExtraAcquisitions } from '../download-formats.js';
+import { opdsAcquisitions, loadOpdsBookMeta } from '../opds-common.js';
 
-const OPDS_MIME_FOR_SOURCE = {
-  fb2: 'application/fb2+zip',
-  epub: 'application/epub+zip',
-  mobi: 'application/x-mobipocket-ebook',
-  azw3: 'application/x-mobipocket-ebook',
-  pdf: 'application/pdf',
-  djvu: 'image/vnd.djvu',
-  cbz: 'application/vnd.comicbook+zip',
-  cbr: 'application/vnd.comicbook-rar',
-  txt: 'text/plain',
-  rtf: 'application/rtf',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-};
 
 function baseLinks(baseUrl, selfPath) {
   return [
@@ -31,8 +18,10 @@ function baseLinks(baseUrl, selfPath) {
   ];
 }
 
-export function renderOpds2Root(baseUrl, { userEntries = [] } = {}) {
+export function renderOpds2Root(baseUrl, { userEntries = [], hasCollections = false } = {}) {
   const catalogNav = [
+    { href: '/opds/v2/new', title: t('opds.nav.new'), type: 'application/opds+json' },
+    ...(hasCollections ? [{ href: '/opds/v2/collections', title: t('opds.nav.collections'), type: 'application/opds+json' }] : []),
     { href: '/opds/v2/authors', title: t('opds.nav.authors'), type: 'application/opds+json' },
     { href: '/opds/v2/series', title: t('opds.nav.series'), type: 'application/opds+json' },
     { href: '/opds/v2/titles', title: t('opds.nav.books'), type: 'application/opds+json' },
@@ -45,16 +34,26 @@ export function renderOpds2Root(baseUrl, { userEntries = [] } = {}) {
   });
 }
 
+function navEntryImage(e) {
+  return e.image || (e.coverBookId ? `${apiBookPath(e.coverBookId, 'cover')}?opds=1` : '');
+}
+
+function navEntryJson(e) {
+  const image = navEntryImage(e);
+  return {
+    href: e.href,
+    title: e.title,
+    type: 'application/opds+json',
+    properties: e.count !== undefined ? { numberOfItems: e.count } : undefined,
+    ...(image ? { images: [{ href: image, type: 'image/jpeg' }] } : {}),
+  };
+}
+
 export function renderOpds2NavigationFeed(baseUrl, { title, selfPath, entries, nextHref = null }) {
   const feed = {
     metadata: { title, numberOfItems: entries.length },
     links: baseLinks(baseUrl, selfPath),
-    navigation: entries.map(e => ({
-      href: e.href,
-      title: e.title,
-      type: 'application/opds+json',
-      properties: e.count !== undefined ? { numberOfItems: e.count } : undefined
-    }))
+    navigation: entries.map(navEntryJson)
   };
   if (nextHref) {
     feed.links.push({ rel: 'next', href: nextHref, type: 'application/opds+json' });
@@ -62,28 +61,15 @@ export function renderOpds2NavigationFeed(baseUrl, { title, selfPath, entries, n
   return JSON.stringify(feed);
 }
 
-function formatPublication(book) {
+function formatPublication(book, meta = null) {
   const authors = String(book.authors || '').split(':').map(a => a.trim()).filter(Boolean);
   const extLower = String(book.ext || 'fb2').toLowerCase();
-  const dl = downloadBookPath(book.id, 'opds=1');
 
-  // Download links — source format + conversion to epub for fb2
-  const links = [];
-  if (extLower === 'fb2') {
-    links.push({ rel: 'http://opds-spec.org/acquisition', href: dl, type: 'application/fb2+zip', title: 'FB2+ZIP' });
-    links.push({ rel: 'http://opds-spec.org/acquisition', href: `${dl}&format=epub2`, type: 'application/epub+zip', title: 'EPUB' });
-  } else if (extLower === 'epub') {
-    links.push({ rel: 'http://opds-spec.org/acquisition', href: dl, type: 'application/epub+zip', title: 'EPUB' });
-  } else if (extLower === 'mobi') {
-    links.push({ rel: 'http://opds-spec.org/acquisition', href: dl, type: 'application/x-mobipocket-ebook', title: 'MOBI' });
-  } else {
-    const sourceMime = OPDS_MIME_FOR_SOURCE[extLower] || 'application/octet-stream';
-    links.push({ rel: 'http://opds-spec.org/acquisition', href: dl, type: sourceMime, title: FORMAT_LABELS[extLower] || extLower.toUpperCase() });
-  }
-  // Other stored files of the book (Calibre: AZW3, PDF… next to the EPUB) — as is, one link per format.
-  for (const extra of getBookExtraAcquisitions(book)) {
-    links.push({ rel: 'http://opds-spec.org/acquisition', href: `${dl}&format=${extra.format}`, type: extra.mime, title: extra.label });
-  }
+  // Download links: every format the server offers for this book (opds-common.js)
+  const links = opdsAcquisitions(book, meta).map((l) => ({
+    rel: 'http://opds-spec.org/acquisition', href: l.href, type: l.type, title: l.title,
+    ...(l.length ? { properties: { size: l.length } } : {}),
+  }));
   if (book.id) {
     links.push({ rel: 'http://opds-spec.org/image', href: `${apiBookPath(book.id, 'cover')}?opds=1`, type: 'image/webp' });
   }
@@ -94,7 +80,9 @@ function formatPublication(book) {
       title: book.title || t('opds.noTitle'),
       author: authors.length ? authors.map(a => ({ name: a })) : [{ name: t('book.authorUnknown') }],
       language: book.lang || 'ru',
-      format: extLower
+      format: extLower,
+      ...(meta?.year ? { published: String(meta.year) } : {}),
+      ...(meta?.isbn ? { identifier: `urn:isbn:${meta.isbn}` } : {}),
     },
     links,
     images: book.id ? [{ href: `${apiBookPath(book.id, 'cover')}?opds=1`, type: 'image/webp' }] : []
@@ -123,22 +111,35 @@ function formatPublication(book) {
   return pub;
 }
 
-export function renderOpds2PublicationsFeed(baseUrl, { title, selfPath, items, nextHref = null, total = null, navEntries = [] }) {
+export function renderOpds2PublicationsFeed(baseUrl, { title, selfPath, items, nextHref = null, total = null, navEntries = [], paging = null, facets = [] }) {
+  const metaById = loadOpdsBookMeta(items);
   const feed = {
     metadata: { title },
     links: baseLinks(baseUrl, selfPath),
-    publications: items.map(formatPublication)
+    publications: items.map((b) => formatPublication(b, metaById.get(String(b.id)) || null))
   };
+  if (paging) {
+    total = paging.total;
+    nextHref = paging.next || null;
+    feed.metadata.itemsPerPage = paging.pageSize;
+    feed.metadata.currentPage = paging.page;
+    for (const rel of ['first', 'previous', 'last']) {
+      if (paging[rel]) feed.links.push({ rel, href: paging[rel], type: 'application/opds+json' });
+    }
+  }
+  if (facets.length) {
+    const groups = new Map();
+    for (const fct of facets) {
+      if (!groups.has(fct.group)) groups.set(fct.group, []);
+      groups.get(fct.group).push({ href: fct.href, title: fct.title, type: 'application/opds+json', ...(fct.active ? { rel: 'self' } : {}) });
+    }
+    feed.facets = [...groups.entries()].map(([group, links]) => ({ metadata: { title: group }, links }));
+  }
   if (total !== null) {
     feed.metadata.numberOfItems = total;
   }
   if (navEntries.length) {
-    feed.navigation = navEntries.map((e) => ({
-      href: e.href,
-      title: e.title,
-      type: 'application/opds+json',
-      properties: e.count !== undefined ? { numberOfItems: e.count } : undefined
-    }));
+    feed.navigation = navEntries.map(navEntryJson);
   }
   if (nextHref) {
     feed.links.push({ rel: 'next', href: nextHref, type: 'application/opds+json' });
@@ -150,7 +151,7 @@ export function renderOpds2BookDetail(baseUrl, book) {
   if (!book) {
     return JSON.stringify({ metadata: { title: t('book.notFound') }, links: baseLinks(baseUrl, '/opds/v2') });
   }
-  const pub = formatPublication(book);
+  const pub = formatPublication(book, loadOpdsBookMeta([book]).get(String(book.id)) || null);
   const related = opdsBookRelated(book);
   return JSON.stringify({
     metadata: pub.metadata,

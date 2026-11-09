@@ -11,7 +11,6 @@ import { attachFlibustaAnnotationsFromShards } from '../flibusta-sidecar.js';
 import {
   listGenres, getBookById,
   opdsQuery,
-  getAuthorBooksOpds,
   getAuthorSeriesBooksOpds,
   getSeriesBooksOpds,
   opdsSearchAuthors,
@@ -22,6 +21,12 @@ import {
   getLibraryView,
   getFollowingNewBooks,
   warmOpdsTitleQuery,
+  getAuthorSeriesGroupsOpds,
+  getAuthorStandaloneBooksOpds,
+  countSeriesBooksOpds,
+  authorAliasBookCount,
+  seriesCatalogBookCount,
+  getGenreGroupBookCountsAsync,
   resolveAuthorName,
 } from '../inpx.js';
 
@@ -33,6 +38,11 @@ import { getRecommendedLibraryView } from '../services/recommendations.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
 import { getUserShelves, getShelfById, getShelfBooks } from '../db.js';
 import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
+import { opdsPaging } from '../opds-common.js';
+import {
+  OPDS_NEW_SORTS, getOpdsNewBooks, getOpdsNewFacets, getOpdsUserList, opdsHasCollections, getOpdsCollections,
+  getOpdsCollectionBooks, withSeriesCovers, opdsAuthorPortrait,
+} from '../opds-feeds.js';
 import {
   renderOpdsRoot,
   renderOpdsOpenSearch,
@@ -68,12 +78,64 @@ export function registerOpdsRoutes(app, deps) {
 
   app.get('/opds', requireOpdsAuth, (req, res) => {
     res.type('application/atom+xml; charset=utf-8');
-    res.send(renderOpdsRoot(baseUrl(req), { userEntries: buildUserOpdsEntries(req.user?.username) }));
+    res.send(renderOpdsRoot(baseUrl(req), { userEntries: buildUserOpdsEntries(req.user?.username), hasCollections: opdsHasCollections() }));
   });
 
   app.get('/opds/root', requireOpdsAuth, (req, res) => {
     res.type('application/atom+xml; charset=utf-8');
-    res.send(renderOpdsRoot(baseUrl(req), { userEntries: buildUserOpdsEntries(req.user?.username) }));
+    res.send(renderOpdsRoot(baseUrl(req), { userEntries: buildUserOpdsEntries(req.user?.username), hasCollections: opdsHasCollections() }));
+  });
+
+  /* «Новинки» (INPX date, like /library/recent) with sort / language facets. */
+  app.get('/opds/new', requireOpdsAuth, async (req, res) => {
+    const username = req.user?.username || '';
+    const page = safePage(req.query.page);
+    const limit = 100;
+    const sort = OPDS_NEW_SORTS.includes(String(req.query.sort || '')) ? String(req.query.sort) : 'recent';
+    const lang = String(req.query.lang || '').trim().slice(0, 16);
+    const result = getOpdsNewBooks(username, { page, pageSize: limit, sort, lang });
+    await attachFlibustaAnnotationsFromShards(result.items);
+    res.type('application/atom+xml; charset=utf-8');
+    res.send(renderOpdsBooksFeed(baseUrl(req), {
+      username,
+      id: 'new',
+      title: t('opds.nav.new'),
+      selfPath: req.originalUrl,
+      items: result.items,
+      paging: opdsPaging(req.originalUrl, result.total, page, limit),
+      facets: getOpdsNewFacets(req.originalUrl, username, { sort, lang }),
+    }));
+  });
+
+  /* Подборки: the curated lists, found books in list order. */
+  app.get('/opds/collections', requireOpdsAuth, (req, res) => {
+    const entries = getOpdsCollections(req.user?.username).map((c) => ({
+      id: `collection-${c.slug}`,
+      title: c.title,
+      href: `/opds/collections/${encodeURIComponent(c.slug)}`,
+      acquisition: true,
+      content: countLabel('book', c.found),
+      coverBookId: c.coverBookId,
+    }));
+    res.type('application/atom+xml; charset=utf-8');
+    res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'collections', title: t('opds.nav.collections'), selfPath: '/opds/collections', entries }));
+  });
+
+  app.get('/opds/collections/:slug', requireOpdsAuth, async (req, res) => {
+    const page = safePage(req.query.page);
+    const limit = 100;
+    const result = getOpdsCollectionBooks(String(req.params.slug || ''), req.user?.username, { page, pageSize: limit });
+    if (!result) return res.status(404).type('text/plain').send(t('opds.collectionNotFound'));
+    await attachFlibustaAnnotationsFromShards(result.items);
+    res.type('application/atom+xml; charset=utf-8');
+    res.send(renderOpdsBooksFeed(baseUrl(req), {
+      username: req.user?.username,
+      id: `collection-${req.params.slug}`,
+      title: result.title,
+      selfPath: req.originalUrl,
+      items: result.items,
+      paging: opdsPaging(req.originalUrl, result.total, page, limit),
+    }));
   });
 
   app.get('/opds/user', requireOpdsAuth, (req, res) => {
@@ -131,6 +193,9 @@ export function registerOpdsRoutes(app, deps) {
         href: '/opds/user/recommended',
         content: t('opds.user.recommendedDesc')
       },
+      { id: 'user-continue', title: t('opds.user.continue'), href: '/opds/user/continue', content: t('opds.user.continueDesc') },
+      { id: 'user-read', title: t('opds.user.read'), href: '/opds/user/read', content: t('opds.user.readDesc') },
+      { id: 'user-rated', title: t('opds.user.rated'), href: '/opds/user/rated', content: t('opds.user.ratedDesc') },
     ];
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user', title: t('opds.user.myLibrary'), selfPath: '/opds/user', entries }));
@@ -161,12 +226,13 @@ export function registerOpdsRoutes(app, deps) {
       content: countLabel('book', shelf.bookCount)
     }));
     // Как на сайте и в приложении: умные полки — в том же списке (иначе при одних умных полках лента пустая).
-    for (const shelf of listSmartShelves(username)) {
+    for (const shelf of listSmartShelves(username, { withPreview: true })) {
       entries.push({
         id: `smart-shelf-${shelf.id}`,
         title: shelf.name,
         href: `/opds/user/smart-shelves/${shelf.id}`,
-        acquisition: true
+        acquisition: true,
+        content: countLabel('book', shelf.bookCount || 0)
       });
     }
     res.type('application/atom+xml; charset=utf-8');
@@ -194,11 +260,12 @@ export function registerOpdsRoutes(app, deps) {
   app.get('/opds/user/smart-shelves', requireOpdsAuth, (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
-    const entries = listSmartShelves(username).map((shelf) => ({
+    const entries = listSmartShelves(username, { withPreview: true }).map((shelf) => ({
       id: `smart-shelf-${shelf.id}`,
       title: shelf.name,
       href: `/opds/user/smart-shelves/${shelf.id}`,
-      acquisition: true
+      acquisition: true,
+      content: countLabel('book', shelf.bookCount || 0)
     }));
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-smart-shelves', title: t('opds.user.smartShelves'), selfPath: '/opds/user/smart-shelves', entries }));
@@ -213,7 +280,6 @@ export function registerOpdsRoutes(app, deps) {
     const limit = 100;
     const result = getSmartShelfBooks(shelf, { page, pageSize: limit });
     await attachFlibustaAnnotationsFromShards(result.items);
-    const nextHref = result.total > page * limit ? `/opds/user/smart-shelves/${shelf.id}?page=${page + 1}` : '';
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsBooksFeed(baseUrl(req), {
       username,
@@ -221,7 +287,7 @@ export function registerOpdsRoutes(app, deps) {
       title: shelf.name,
       selfPath: req.originalUrl,
       items: result.items,
-      nextHref
+      paging: opdsPaging(req.originalUrl, result.total, page, limit),
     }));
   });
 
@@ -234,7 +300,6 @@ export function registerOpdsRoutes(app, deps) {
       const limit = 100;
       const result = load(username, page, limit);
       await attachFlibustaAnnotationsFromShards(result.items);
-      const nextHref = result.total > page * limit ? `${path}?page=${page + 1}` : '';
       res.type('application/atom+xml; charset=utf-8');
       res.send(renderOpdsBooksFeed(baseUrl(req), {
         username,
@@ -242,7 +307,7 @@ export function registerOpdsRoutes(app, deps) {
         title: t(titleKey),
         selfPath: req.originalUrl,
         items: result.items,
-        nextHref
+        paging: opdsPaging(req.originalUrl, result.total, page, limit),
       }));
     });
   };
@@ -252,6 +317,12 @@ export function registerOpdsRoutes(app, deps) {
     (username, page, limit) => getFollowingNewBooks(username, { page, pageSize: limit, langs: effectiveContentLangs(username) }));
   userListFeed('/opds/user/recommended', 'user-recommended', 'opds.user.recommended',
     (username, page, limit) => getRecommendedLibraryView({ username, page, pageSize: limit, langs: effectiveContentLangs(username) }));
+  userListFeed('/opds/user/continue', 'user-continue', 'opds.user.continue',
+    (username, page, limit) => getOpdsUserList('continue', username, { page, pageSize: limit }));
+  userListFeed('/opds/user/read', 'user-read', 'opds.user.read',
+    (username, page, limit) => getOpdsUserList('read', username, { page, pageSize: limit }));
+  userListFeed('/opds/user/rated', 'user-rated', 'opds.user.rated',
+    (username, page, limit) => getOpdsUserList('rated', username, { page, pageSize: limit }));
 
   app.get('/opds/user/favorite-authors', requireOpdsAuth, (req, res) => {
     const username = req.user?.username;
@@ -261,6 +332,8 @@ export function registerOpdsRoutes(app, deps) {
       id: `fav-author-${a.name}`,
       title: formatAuthorForOpds(a.displayName || a.name),
       href: `/opds/author?author=${encodeURIComponent('=' + a.name)}`,
+      content: countLabel('book', authorAliasBookCount(a.name)),
+      image: opdsAuthorPortrait(a.name),
     }));
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-fav-authors', title: t('opds.user.favoriteAuthors'), selfPath: '/opds/user/favorite-authors', entries }));
@@ -274,7 +347,10 @@ export function registerOpdsRoutes(app, deps) {
       id: `fav-series-${s.name}`,
       title: s.displayName || s.name,
       href: `/opds/series?series=${encodeURIComponent('=' + s.name)}`,
+      content: countLabel('book', seriesCatalogBookCount(s.name)),
+      name: s.name,
     }));
+    withSeriesCovers(entries);
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-fav-series', title: t('opds.user.favoriteSeries'), selfPath: '/opds/user/favorite-series', entries }));
   });
@@ -320,7 +396,8 @@ export function registerOpdsRoutes(app, deps) {
         id: item.name,
         title: formatAuthorForOpds(item.name),
         href: `/opds/author?author=${encodeURIComponent(`=${item.name}`)}`,
-        content: countLabel('book', item.bookCount)
+        content: countLabel('book', item.bookCount),
+        image: opdsAuthorPortrait(item.name),
       }));
       if (result.total > page * limit) {
         entries.push({ id: 'next_page', title: t('opds.nextPage'), href: `/opds/search?type=author&term=${encodeURIComponent(term)}&page=${page + 1}` });
@@ -352,21 +429,20 @@ export function registerOpdsRoutes(app, deps) {
       }
 
       if (type === 'title') {
-        const hasMoreTitle = result.total > page * limit;
-        const nextHref = hasMoreTitle
-          ? `/opds/search?type=title&term=${encodeURIComponent(term)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}&page=${page + 1}`
-          : '';
+        const selfUrl = `/opds/search?type=title&term=${encodeURIComponent(term)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`;
         await attachFlibustaAnnotationsFromShards(result.items);
         res.type('application/atom+xml; charset=utf-8');
-        return res.send(renderOpdsBooksFeed(base, { username: req.user?.username, id: 'search', title: t('opds.nav.search'), selfPath: req.originalUrl, items: result.items, nextHref }));
+        return res.send(renderOpdsBooksFeed(base, { username: req.user?.username, id: 'search', title: t('opds.nav.search'), selfPath: req.originalUrl, items: result.items, paging: opdsPaging(selfUrl, result.total, page, limit) }));
       }
 
       const entries = result.items.map((item) => ({
         id: item.name,
         title: tp('book.seriesPrefix', { name: item.displayName || item.name }),
         href: `/opds/series?series=${encodeURIComponent(`=${item.name}`)}`,
-        content: countLabel('book', item.bookCount)
+        content: countLabel('book', item.bookCount),
+        name: item.name,
       }));
+      withSeriesCovers(entries.filter((e) => e.name));
       if (result.total > page * limit) {
         entries.push({ id: 'next_page', title: t('opds.nextPage'), href: `/opds/search?type=${type}&term=${encodeURIComponent(term)}&genre=${encodeURIComponent(genre)}&page=${page + 1}` });
       }
@@ -396,36 +472,28 @@ export function registerOpdsRoutes(app, deps) {
 
     if (author.startsWith('=')) {
       const authorName = opdsAuthorKey(author.slice(1));
-      const allBooks = getAuthorBooksOpds(authorName, genre);
-      // Group by series like inpx-web: series entries first, then standalone books
-      const seriesMap = new Map();
-      const standalone = [];
-      for (const book of allBooks) {
-        if (book.series) {
-          if (!seriesMap.has(book.series)) {
-            seriesMap.set(book.series, { book, count: 0 });
-          }
-          seriesMap.get(book.series).count++;
-        } else {
-          standalone.push(book);
-        }
-      }
-      const navEntries = [...seriesMap.entries()]
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([name, { count }]) => ({
-          id: `series:${name}`,
-          title: tp('book.seriesPrefix', { name }),
-          href: `/opds/author?author=${encodeURIComponent(author)}&series=${encodeURIComponent(name)}&genre=${encodeURIComponent(genre)}`,
-          content: countLabel('book', count),
-        }));
-      await attachFlibustaAnnotationsFromShards(standalone);
+      // Series entries first (page 1 only), then the books outside series, 100 per page.
+      const page = safePage(req.query.page);
+      const limit = 100;
+      const navEntries = page > 1 ? [] : getAuthorSeriesGroupsOpds(authorName, genre).map((g) => ({
+        id: `series:${g.name}`,
+        title: tp('book.seriesPrefix', { name: g.displayName }),
+        href: `/opds/author?author=${encodeURIComponent(author)}&series=${encodeURIComponent(g.name)}&genre=${encodeURIComponent(genre)}`,
+        content: countLabel('book', g.count),
+        name: g.name,
+      }));
+      withSeriesCovers(navEntries);
+      const standalone = getAuthorStandaloneBooksOpds(authorName, genre, { limit, offset: (page - 1) * limit });
+      await attachFlibustaAnnotationsFromShards(standalone.items);
+      const paging = opdsPaging(req.originalUrl, standalone.total, page, limit);
       res.type('application/atom+xml; charset=utf-8');
       return res.send(renderOpdsBooksFeed(base, { username: req.user?.username,
         id: 'search',
         title: authorName,
         selfPath: req.originalUrl,
         navEntries,
-        items: standalone,
+        items: standalone.items,
+        paging,
       }));
     }
 
@@ -439,7 +507,7 @@ export function registerOpdsRoutes(app, deps) {
       if (item.isNav) {
         entries.push({ id: item.id, title: item.title, href: `/opds/author?author=${encodeURIComponent(item.prefix)}&genre=${encodeURIComponent(genre)}`, content: countLabel('author', item.count) });
       } else {
-        entries.push({ id: item.id, title: formatAuthorForOpds(item.title), href: `/opds/author?author=${encodeURIComponent(`=${item.name}`)}&genre=${encodeURIComponent(genre)}`, content: countLabel('book', item.bookCount) });
+        entries.push({ id: item.id, title: formatAuthorForOpds(item.title), href: `/opds/author?author=${encodeURIComponent(`=${item.name}`)}&genre=${encodeURIComponent(genre)}`, content: countLabel('book', item.bookCount), image: opdsAuthorPortrait(item.name) });
       }
     }
 
@@ -454,10 +522,13 @@ export function registerOpdsRoutes(app, deps) {
 
     if (series.startsWith('=')) {
       const seriesName = series.slice(1);
-      const items = getSeriesBooksOpds(seriesName);
+      const page = safePage(req.query.page);
+      const limit = 100;
+      const items = getSeriesBooksOpds(seriesName, { limit, offset: (page - 1) * limit });
+      const total = countSeriesBooksOpds(seriesName);
       await attachFlibustaAnnotationsFromShards(items);
       res.type('application/atom+xml; charset=utf-8');
-      return res.send(renderOpdsBooksFeed(base, { username: req.user?.username, id: 'search', title: seriesName || t('facet.facetSeries'), selfPath: req.originalUrl, items }));
+      return res.send(renderOpdsBooksFeed(base, { username: req.user?.username, id: 'search', title: seriesName || t('facet.facetSeries'), selfPath: req.originalUrl, items, paging: opdsPaging(req.originalUrl, total, page, limit) }));
     }
 
     const entries = [];
@@ -470,9 +541,10 @@ export function registerOpdsRoutes(app, deps) {
       if (item.isNav) {
         entries.push({ id: item.id, title: item.title, href: `/opds/series?series=${encodeURIComponent(item.prefix)}&genre=${encodeURIComponent(genre)}`, content: countLabel('series', item.count) });
       } else {
-        entries.push({ id: item.id, title: tp('book.seriesPrefix', { name: item.title }), href: `/opds/series?series=${encodeURIComponent(`=${item.name}`)}&genre=${encodeURIComponent(genre)}`, content: countLabel('book', item.bookCount) });
+        entries.push({ id: item.id, title: tp('book.seriesPrefix', { name: item.title }), href: `/opds/series?series=${encodeURIComponent(`=${item.name}`)}&genre=${encodeURIComponent(genre)}`, content: countLabel('book', item.bookCount), name: item.name });
       }
     }
+    withSeriesCovers(entries.filter((e) => e.name));
 
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.series'), selfPath: req.originalUrl, entries }));
@@ -502,7 +574,7 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.books'), selfPath: req.originalUrl, entries }));
   });
 
-  app.get('/opds/genre', requireOpdsAuth, (req, res) => {
+  app.get('/opds/genre', requireOpdsAuth, async (req, res) => {
     const from = String(req.query.from || 'author');
     const term = String(req.query.term || '');
     const section = String(req.query.section || '');
@@ -544,8 +616,10 @@ export function registerOpdsRoutes(app, deps) {
         }
       }
     } else {
+      // A book with two genres of one group counts once (summing the genre counts did not).
+      const groupTotals = await getGenreGroupBookCountsAsync(groups).catch(() => null);
       for (const [groupName, codes] of Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0], 'ru'))) {
-        const total = codes.reduce((sum, code) => sum + (genreBookCount.get(code) || 0), 0);
+        const total = groupTotals ? (groupTotals.get(groupName) || 0) : codes.reduce((sum, code) => sum + (genreBookCount.get(code) || 0), 0);
         if (total > 0) {
           entries.push({
             id: groupName,

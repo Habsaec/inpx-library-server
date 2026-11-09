@@ -9250,7 +9250,21 @@ function opdsSearchFacet(facet, prefix, genre = '') {
 
   const prefixKey = prefix ? createSortKey(prefix) : '';
   let sql, params;
-  if (genre) {
+  if (genre && facet === 'authors') {
+    // Same books as the author feed with this genre: every alias (same search name) of the listed spelling.
+    sql = `SELECT c.name AS name, COALESCE(c.display_name, c.name) AS displayName,
+             COUNT(DISTINCT j.book_id) AS bookCount
+           FROM authors c
+           JOIN authors x ON x.id = c.id OR (TRIM(COALESCE(c.search_name, '')) != '' AND x.search_name = c.search_name)
+           JOIN book_authors j ON j.author_id = x.id
+           JOIN active_books ab ON ab.id = j.book_id
+           JOIN book_genres bg ON bg.book_id = ab.id
+           JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genre.split(',').map(() => '?').join(',')})
+           WHERE c.search_name >= ? AND c.search_name < ? AND c.book_count > 0 AND ${preferredAuthorRowSql('c')}
+           GROUP BY c.id ORDER BY c.search_name LIMIT 200`;
+    const genreParams = genre.split(',').map(g => g.trim());
+    params = [...genreParams, prefixKey, prefixKey + '\uffff'];
+  } else if (genre) {
     sql = `SELECT c.name AS name, COALESCE(c.display_name, c.name) AS displayName,
              COUNT(DISTINCT j.book_id) AS bookCount
            FROM ${conf.table} c
@@ -9266,12 +9280,15 @@ function opdsSearchFacet(facet, prefix, genre = '') {
     sql = `SELECT c.name AS name, COALESCE(c.display_name, c.name) AS displayName,
              COALESCE(c.book_count, 0) AS bookCount
            FROM ${conf.table} c
-           WHERE c.search_name >= ? AND c.search_name < ? AND c.book_count > 0
+           WHERE c.search_name >= ? AND c.search_name < ? AND c.book_count > 0${facet === 'authors' ? ` AND ${preferredAuthorRowSql('c')}` : ''}
            ORDER BY c.search_name LIMIT 200`;
     params = [prefixKey, prefixKey + '\uffff'];
   }
 
-  return db.prepare(sql).all(...params).filter(r => r.bookCount > 0).map(r => ({
+  const rows = db.prepare(sql).all(...params);
+  // One row per author key (preferredAuthorRowSql) and its count with the aliases — the feed merges them.
+  if (facet === 'authors' && !genre) for (const r of rows) r.bookCount = authorAliasBookCount(r.name, r.bookCount);
+  return rows.filter(r => r.bookCount > 0).map(r => ({
     id: r.name,
     title: r.displayName || r.name,
     name: r.name,
@@ -9346,7 +9363,7 @@ export function opdsSearchAuthors(term, { page = 1, pageSize = 100 } = {}) {
     items: result.items.map((row) => ({
       name: row.name,
       displayName: row.displayName || row.name,
-      bookCount: row.bookCount
+      bookCount: authorAliasBookCount(row.name, row.bookCount)
     }))
   };
 }
@@ -9435,7 +9452,104 @@ export function getAuthorSeriesBooksOpds(authorName, seriesName, genre = '') {
   return db.prepare(sql).all(...params);
 }
 
-export function getSeriesBooksOpds(seriesName) {
+/** Books of a series in an OPDS feed (the series feed pages them, the old LIMIT 500 cut 30+ big series short). */
+export function countSeriesBooksOpds(seriesName) {
+  const name = resolveSeriesCatalogName(String(seriesName || ''));
+  return db.prepare(`SELECT COUNT(*) AS n FROM active_books b JOIN book_series bs ON bs.book_id = b.id
+    JOIN series_catalog sc ON sc.id = bs.series_id AND sc.name = ?`).get(name)?.n || 0;
+}
+
+/* OPDS author feed, built from cheap parts: the series groups come from book_series (the same membership the
+   author + series feed reads, so a group's count is what it opens), the books outside series are paged. The old feed
+   loaded every book (LIMIT 500), grouped by the books.series text and cut big authors short. Aliases of the author
+   (same search / sort name) are included, like getAuthorBooksOpds. */
+function opdsAuthorBooksFrom(authorName, genre = '') {
+  const genreParams = String(genre || '').split(',').map((g) => g.trim()).filter(Boolean);
+  const genreJoin = genreParams.length
+    ? `JOIN book_genres bg ON bg.book_id = b.id
+       JOIN genres_catalog gc ON gc.id = bg.genre_id AND gc.name IN (${genreParams.map(() => '?').join(',')})`
+    : '';
+  return {
+    from: `FROM active_books b
+      JOIN book_authors ba ON ba.book_id = b.id
+      JOIN authors a ON a.id = ba.author_id AND ${authorAliasMatchSql('a')}
+      ${genreJoin}`,
+    params: [authorName, ...genreParams],
+  };
+}
+
+export function getAuthorSeriesGroupsOpds(authorName, genre = '') {
+  const { from, params } = opdsAuthorBooksFrom(authorName, genre);
+  return db.prepare(`SELECT sc.name AS name, COALESCE(sc.display_name, sc.name) AS displayName, COUNT(DISTINCT b.id) AS count
+    ${from}
+    JOIN book_series bs ON bs.book_id = b.id
+    JOIN series_catalog sc ON sc.id = bs.series_id
+    GROUP BY sc.id`).all(...params)
+    .sort((x, y) => String(x.displayName).localeCompare(String(y.displayName), 'ru'));
+}
+
+export function getAuthorStandaloneBooksOpds(authorName, genre = '', { limit = 100, offset = 0 } = {}) {
+  const { from, params } = opdsAuthorBooksFrom(authorName, genre);
+  const where = 'WHERE NOT EXISTS (SELECT 1 FROM book_series bs0 WHERE bs0.book_id = b.id)';
+  const total = db.prepare(`SELECT COUNT(DISTINCT b.id) AS n ${from} ${where}`).get(...params)?.n || 0;
+  const items = total ? db.prepare(`
+    SELECT b.id, b.title, b.authors, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.genres,
+           b.archive_name AS archiveName, b.file_name AS fileName, b.source_id AS sourceId,
+           COALESCE(s.flibusta_sidecar, 0) AS sourceFlibusta,
+           dc.annotation
+    ${from}
+    LEFT JOIN sources s ON s.id = b.source_id
+    LEFT JOIN book_details_cache dc ON dc.book_id = b.id
+    ${where}
+    GROUP BY b.id
+    ORDER BY b.title_search, b.title
+    LIMIT ? OFFSET ?`).all(...params, Math.max(1, Math.min(1000, Number(limit) || 100)), Math.max(0, Number(offset) || 0)) : [];
+  return { total, items };
+}
+
+/** Books of an author together with his same-key aliases — what his OPDS / author feed shows (authorAliasMatchSql).
+ *  authors.book_count counts one spelling only (47 listed, 53 in the feed). */
+/** Books of a series as listed in OPDS (series_catalog.book_count of the resolved key). */
+export function seriesCatalogBookCount(seriesName) {
+  return Number(facetEntityBookCount('series', resolveSeriesCatalogName(String(seriesName || '')))) || 0;
+}
+
+export function authorAliasBookCount(authorName, fallback = 0) {
+  return Number(facetEntityBookCount('authors', String(authorName || ''))) || Number(fallback) || 0;
+}
+
+/** Distinct books per genre group (a book with two genres of a group counts once; the old sum of genre counts did
+ *  not — 181k instead of 150k for science fiction). One scan of book_genres (~2–5 s on a 700k library): query worker,
+ *  stale-while-revalidate per catalog generation. `groups` = { groupName: [codes] }. */
+export async function getGenreGroupBookCountsAsync(groups) {
+  const names = Object.keys(groups || {});
+  const codes = [];
+  const caseParts = [];
+  names.forEach((name, idx) => {
+    for (const code of groups[name] || []) {
+      codes.push(String(code));
+      caseParts.push(`WHEN ? THEN ${idx}`);
+    }
+  });
+  if (!codes.length) return new Map();
+  const { getStaleOrScheduleAsync } = await import('./services/cache.js');
+  const key = `opds:genre-group-counts:${getRuntimeQueryCacheGeneration()}:${names.length}:${codes.length}`;
+  const rows = await getStaleOrScheduleAsync(key, () => queryAsync(`
+    SELECT g, COUNT(DISTINCT book_id) AS c FROM (
+      SELECT bg.book_id AS book_id, CASE gc.name ${caseParts.join(' ')} END AS g
+      FROM book_genres bg
+      JOIN genres_catalog gc ON gc.id = bg.genre_id
+      JOIN active_books b ON b.id = bg.book_id
+    ) WHERE g IS NOT NULL GROUP BY g`, codes, { timeoutMs: 120000 }), 30 * 60_000);
+  const out = new Map();
+  for (const r of rows || []) {
+    const name = names[Number(r.g)];
+    if (name !== undefined) out.set(name, Number(r.c) || 0);
+  }
+  return out;
+}
+
+export function getSeriesBooksOpds(seriesName, { limit = 500, offset = 0 } = {}) {
   const name = resolveSeriesCatalogName(String(seriesName || ''));
   return db
     .prepare(
@@ -9450,10 +9564,10 @@ export function getSeriesBooksOpds(seriesName) {
     LEFT JOIN sources s ON s.id = b.source_id
     LEFT JOIN book_details_cache dc ON dc.book_id = b.id
     ORDER BY CAST(b.series_no AS INTEGER), b.title
-    LIMIT 500
+    LIMIT ? OFFSET ?
   `
     )
-    .all(name);
+    .all(name, Math.max(1, Math.min(1000, Number(limit) || 500)), Math.max(0, Number(offset) || 0));
 }
 
 let _stmtRecordHistoryUser = null;

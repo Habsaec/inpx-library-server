@@ -3498,7 +3498,7 @@ let _stmtGetUserShelves = null;
 export function getUserShelves(username) {
   _stmtGetUserShelves ??= db.prepare(`
     SELECT s.id, s.name, s.description, s.created_at AS createdAt, s.on_home AS onHome,
-           (SELECT COUNT(*) FROM shelf_books sb WHERE sb.shelf_id = s.id AND EXISTS (SELECT 1 FROM books bb WHERE bb.id = sb.book_id)) AS bookCount,
+           (SELECT COUNT(*) FROM shelf_books sb WHERE sb.shelf_id = s.id AND EXISTS (SELECT 1 FROM active_books bb WHERE bb.id = sb.book_id)) AS bookCount,
            (SELECT GROUP_CONCAT(sb2.book_id, '|') FROM (
               SELECT sb2.book_id FROM shelf_books sb2
               JOIN active_books b ON b.id = sb2.book_id
