@@ -34,7 +34,7 @@ import {
 function opdsAuthorKey(name) {
   return resolveAuthorName(name) || name;
 }
-import { getRecommendedLibraryView } from '../services/recommendations.js';
+import { getRecommendedLibraryViewAsync } from '../services/recommendations.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
 import { getUserShelves, getShelfById, getShelfBooks } from '../db.js';
 import { listSmartShelves, getSmartShelf, getSmartShelfBooks } from '../smart-shelves.js';
@@ -298,7 +298,7 @@ export function registerOpdsRoutes(app, deps) {
       if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
       const page = safePage(req.query.page);
       const limit = 100;
-      const result = load(username, page, limit);
+      const result = await load(username, page, limit);
       await attachFlibustaAnnotationsFromShards(result.items);
       res.type('application/atom+xml; charset=utf-8');
       res.send(renderOpdsBooksFeed(baseUrl(req), {
@@ -316,7 +316,8 @@ export function registerOpdsRoutes(app, deps) {
   userListFeed('/opds/user/following', 'user-following', 'opds.user.following',
     (username, page, limit) => getFollowingNewBooks(username, { page, pageSize: limit, langs: effectiveContentLangs(username) }));
   userListFeed('/opds/user/recommended', 'user-recommended', 'opds.user.recommended',
-    (username, page, limit) => getRecommendedLibraryView({ username, page, pageSize: limit, langs: effectiveContentLangs(username) }));
+    // a cold pool is awaited (≤ 20 s): an OPDS client cannot refresh the empty «подбираем…» answer like the site
+    (username, page, limit) => getRecommendedLibraryViewAsync({ username, page, pageSize: limit, langs: effectiveContentLangs(username) }));
   userListFeed('/opds/user/continue', 'user-continue', 'opds.user.continue',
     (username, page, limit) => getOpdsUserList('continue', username, { page, pageSize: limit }));
   userListFeed('/opds/user/read', 'user-read', 'opds.user.read',

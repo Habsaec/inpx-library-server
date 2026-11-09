@@ -41,7 +41,7 @@ import {
   OPDS_NEW_SORTS, getOpdsNewBooks, getOpdsNewFacets, getOpdsUserList, opdsHasCollections, getOpdsCollections,
   getOpdsCollectionBooks, withSeriesCovers, opdsAuthorPortrait,
 } from '../opds-feeds.js';
-import { getRecommendedLibraryView } from '../services/recommendations.js';
+import { getRecommendedLibraryViewAsync } from '../services/recommendations.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
 import {
   renderOpds2Root,
@@ -239,7 +239,7 @@ export function registerOpdsV2Routes(app, deps) {
       const username = req.user?.username;
       if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
       const page = safePage(req.query.page);
-      const result = load(username, page, PAGE_SIZE);
+      const result = await load(username, page, PAGE_SIZE);
       await attachFlibustaAnnotationsFromShards(result.items);
       res.type(OPDS_JSON);
       res.send(renderOpds2PublicationsFeed(baseUrl(req), {
@@ -253,7 +253,7 @@ export function registerOpdsV2Routes(app, deps) {
   userListFeed('/opds/v2/user/following', 'opds.user.following',
     (username, page, limit) => getFollowingNewBooks(username, { page, pageSize: limit, langs: effectiveContentLangs(username) }));
   userListFeed('/opds/v2/user/recommended', 'opds.user.recommended',
-    (username, page, limit) => getRecommendedLibraryView({ username, page, pageSize: limit, langs: effectiveContentLangs(username) }));
+    (username, page, limit) => getRecommendedLibraryViewAsync({ username, page, pageSize: limit, langs: effectiveContentLangs(username) }));
   userListFeed('/opds/v2/user/continue', 'opds.user.continue',
     (username, page, limit) => getOpdsUserList('continue', username, { page, pageSize: limit }));
   userListFeed('/opds/v2/user/read', 'opds.user.read',

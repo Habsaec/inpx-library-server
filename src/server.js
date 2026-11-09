@@ -22,6 +22,7 @@ import { registerBrowseApiRoutes } from './routes/browse-api.js';
 import { registerProfileApiRoutes } from './routes/profile-api.js';
 import { registerOpdsRoutes } from './routes/opds.js';
 import { registerOpdsV2Routes } from './routes/opds-v2.js';
+import { scheduleRecommendationPrewarm } from './services/recommendations.js';
 import { registerKosyncRoutes } from './routes/kosync.js';
 import { registerSmartShelfRoutes } from './routes/smart-shelves.js';
 import { registerCollectionRoutes } from './routes/collections.js';
@@ -1467,6 +1468,8 @@ async function bootstrap() {
 
     ensureLanguageTotals().catch((error) => console.error('[startup] language totals:', error.message));
     setTimeout(() => { prewarmBrowseTotals().catch(() => {}); }, 8000).unref?.();
+    // pools of the users who opened recommendations recently, so the site / OPDS open them at once
+    scheduleRecommendationPrewarm(120_000);
     mergeSeriesCatalogByKey().then(() => mergeSeriesQualifierDuplicates()).catch((error) => {
       console.error('[startup] series merge:', error.message);
     });

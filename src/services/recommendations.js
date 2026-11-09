@@ -18,10 +18,13 @@ import {
   getNotRecommendedAuthors,
   authorMatchKey
 } from '../inpx.js';
-import { db, getReadBookIdSet, onViewRebuild } from '../db.js';
+import { db, getReadBookIdSet, onViewRebuild, getMeta, setMeta } from '../db.js';
 import { t } from '../i18n.js';
 
 const RECS_CACHE_TTL_MS = 10 * 60_000;
+/* After the TTL a pool is still served for this long while a fresh one is built in the background: an OPDS client
+   cannot refresh itself like the site's «подбираем…» page, so a cold pool meant an empty feed. */
+const RECS_STALE_MS = 6 * 60 * 60_000;
 const RECS_CACHE_MAX = 100;
 const RECS_CACHE_EVICT = 10;
 const recommendedViewCache = new Map();
@@ -91,16 +94,6 @@ function dedupeBooks(items, excludeIds) {
     seen.add(item.id);
     return true;
   });
-}
-
-function readTimedCache(store, key) {
-  const item = store.get(key);
-  if (!item) return null;
-  if (Date.now() > item.expiresAt) {
-    store.delete(key);
-    return null;
-  }
-  return item.value;
 }
 
 function writeTimedCache(store, key, value) {
@@ -355,24 +348,123 @@ export function invalidateRecommendationsCache(username) {
 
 export function invalidateAllRecommendations() {
   recommendedViewCache.clear();
+  scheduleRecommendationPrewarm(30_000);
 }
 
 /* Сбрасываем кеши при rebuild view — active_books меняется, фасетные данные устаревают */
 onViewRebuild(() => {
   recommendedViewCache.clear();
   facetBooksCache.clear();
+  scheduleRecommendationPrewarm(30_000);
 });
 
 /* Множество username, для которых сейчас идёт фоновое вычисление */
 const _computingSet = new Set();
 
+/* username → promise of the pool being built (single-flight per user). */
+const _buildPromises = new Map();
+
 function scheduleRecommendationBuild(username) {
-  if (_computingSet.has(username)) return;
+  const pending = _buildPromises.get(username);
+  if (pending) return pending;
   _computingSet.add(username);
-  buildRecommendationsAsync(username, 72)
-    .then((recommended) => writeTimedCache(recommendedViewCache, username, recommended))
-    .catch((err) => { console.error('[recommendations] build failed for', username, err.message); })
-    .finally(() => _computingSet.delete(username));
+  const job = buildRecommendationsAsync(username, 72)
+    .then((recommended) => { writeTimedCache(recommendedViewCache, username, recommended); return recommended; })
+    .catch((err) => { console.error('[recommendations] build failed for', username, err.message); return null; })
+    .finally(() => { _computingSet.delete(username); _buildPromises.delete(username); });
+  _buildPromises.set(username, job);
+  return job;
+}
+
+/** The user's pool: fresh, or stale (≤ RECS_STALE_MS past its TTL — then a rebuild is scheduled), or null. */
+function readRecommendedPool(username) {
+  const item = recommendedViewCache.get(username);
+  if (!item) return null;
+  const now = Date.now();
+  if (now <= item.expiresAt) return item.value;
+  if (now - item.expiresAt <= RECS_STALE_MS) {
+    scheduleRecommendationBuild(username);
+    return item.value;
+  }
+  recommendedViewCache.delete(username);
+  return null;
+}
+
+/* ── Prebuilt pools ────────────────────────────────────────────────────────────────────────────────
+   Users who opened recommendations in the last week (meta `recs_prewarm_users`, ≤ 50, written at most every
+   10 min) get their pool built 2 min after boot and 30 s after a catalog change, one user at a time, so the
+   site and OPDS usually open them at once. Each process (cluster worker) keeps its own pool. */
+const PREWARM_META_KEY = 'recs_prewarm_users';
+const PREWARM_MAX_USERS = 50;
+const PREWARM_ACTIVE_MS = 7 * 24 * 60 * 60_000;
+let _prewarmUsers = null;
+let _prewarmSavedAt = 0;
+let _prewarmTimer = null;
+let _prewarmRunning = false;
+
+function loadPrewarmUsers() {
+  if (_prewarmUsers) return _prewarmUsers;
+  _prewarmUsers = new Map();
+  try {
+    const raw = JSON.parse(getMeta(PREWARM_META_KEY) || '{}');
+    for (const [name, at] of Object.entries(raw || {})) {
+      if (typeof name === 'string' && Number(at) > 0) _prewarmUsers.set(name, Number(at));
+    }
+  } catch { /* corrupt meta → start empty */ }
+  return _prewarmUsers;
+}
+
+function noteRecommendationUser(username) {
+  const users = loadPrewarmUsers();
+  const isNew = !users.has(username);
+  users.set(username, Date.now());
+  if (!isNew && Date.now() - _prewarmSavedAt < 10 * 60_000) return;
+  const cutoff = Date.now() - PREWARM_ACTIVE_MS;
+  const kept = [...users.entries()].filter(([, at]) => at >= cutoff).sort((a, b) => b[1] - a[1]).slice(0, PREWARM_MAX_USERS);
+  _prewarmUsers = new Map(kept);
+  _prewarmSavedAt = Date.now();
+  try { setMeta(PREWARM_META_KEY, JSON.stringify(Object.fromEntries(kept))); } catch { /* read-only / busy: memory still works */ }
+}
+
+/** Build the pools of the recent users in the background (debounced; sequential). */
+export function scheduleRecommendationPrewarm(delayMs = 30_000) {
+  if (_prewarmTimer) clearTimeout(_prewarmTimer);
+  _prewarmTimer = setTimeout(async () => {
+    _prewarmTimer = null;
+    if (_prewarmRunning) return;
+    _prewarmRunning = true;
+    try {
+      const cutoff = Date.now() - PREWARM_ACTIVE_MS;
+      const names = [...loadPrewarmUsers().entries()].filter(([, at]) => at >= cutoff).sort((a, b) => b[1] - a[1]).map(([n]) => n);
+      for (const name of names) {
+        const item = recommendedViewCache.get(name);
+        if (item && Date.now() <= item.expiresAt) continue;
+        await scheduleRecommendationBuild(name);
+      }
+    } finally {
+      _prewarmRunning = false;
+    }
+  }, Math.max(0, delayMs));
+  _prewarmTimer.unref?.();
+}
+
+/**
+ * Like getRecommendedLibraryView, but a cold pool is awaited (≤ waitMs) instead of answered empty — for clients
+ * that cannot refresh a «подбираем…» page (OPDS). A stale pool is served at once (and refreshed in the background).
+ */
+export async function getRecommendedLibraryViewAsync(opts = {}, { waitMs = 20_000 } = {}) {
+  const username = String(opts.username || '').trim();
+  if (!username) return { total: 0, items: [], computing: false };
+  if (!readRecommendedPool(username)) {
+    noteRecommendationUser(username);
+    let timer = null;
+    await Promise.race([
+      scheduleRecommendationBuild(username),
+      new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, waitMs)); timer.unref?.(); }),
+    ]);
+    clearTimeout(timer);
+  }
+  return getRecommendedLibraryView(opts);
 }
 
 /** Additive catalog filters over an in-memory recommendation pool. */
@@ -485,7 +577,8 @@ export function getRecommendedLibraryView({
 } = {}) {
   const normalizedUsername = String(username || '').trim();
   if (!normalizedUsername) return { total: 0, items: [], computing: false };
-  const recommended = readTimedCache(recommendedViewCache, normalizedUsername);
+  noteRecommendationUser(normalizedUsername);
+  const recommended = readRecommendedPool(normalizedUsername);
   if (!recommended) {
     scheduleRecommendationBuild(normalizedUsername);
     return { total: 0, items: [], computing: true };
@@ -506,7 +599,7 @@ export function listRecommendedSectionGenres({
 } = {}) {
   const normalizedUsername = String(username || '').trim();
   if (!normalizedUsername) return [];
-  const recommended = readTimedCache(recommendedViewCache, normalizedUsername);
+  const recommended = readRecommendedPool(normalizedUsername);
   if (!recommended) return [];
   const filtered = filterRecommendedPool(recommended, { lang, format, year, minRate, hasSeries });
   return listGenresForBookIds(filtered.map((book) => book.id));
