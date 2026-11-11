@@ -5015,10 +5015,8 @@ body:has(.bottom-nav) .batch-fab {
   font-weight: 600;
 }
 
-html[data-theme="light"] .page-link-active,
-html[data-theme="light"] .page-jump-input {
+html[data-theme="light"] .page-link-active {
   color: #fff !important;
-  caret-color: #fff;
 }
 
 .page-link-prev,
@@ -5037,6 +5035,9 @@ html[data-theme="light"] .page-jump-input {
   user-select: none;
 }
 
+/* The current page is an input (type a number, Enter): an accent-tinted field with an accent frame — pale in the light
+   theme, deep in the dark one — so it reads as a place to type, not as a pressed button. No fake blinking caret: with
+   the real caret of whatever field was clicked there were two blinking on the page. */
 .page-jump {
   position: relative;
   display: inline-flex;
@@ -5046,37 +5047,11 @@ html[data-theme="light"] .page-jump-input {
   font-variant-numeric: tabular-nums;
 }
 
-.page-jump::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: calc(50% + var(--page-digits, 1) * 0.5ch + 0.45ch);
-  width: 2px;
-  height: 1.1em;
-  margin-top: -0.55em;
-  border-radius: 1px;
-  background: #1a1612;
-  pointer-events: none;
-  animation: page-jump-caret 1.05s steps(1, end) infinite;
-}
-
-.page-jump:focus-within::after {
-  display: none;
-}
-
-html[data-theme="light"] .page-jump::after {
-  background: #fff;
-}
-
-@keyframes page-jump-caret {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .page-jump::after {
-    animation: none;
-  }
+/* Colours come from the theme tokens only (surface, text, accent), so a custom palette from Admin → Appearance
+   tints the field too: the theme surface with a share of the accent, the theme text colour. */
+.page-jump-input {
+  --page-jump-bg: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  --page-jump-fg: var(--text);
 }
 
 .page-jump-input {
@@ -5084,10 +5059,11 @@ html[data-theme="light"] .page-jump::after {
   min-height: 32px;
   padding: 6px 8px;
   border-radius: var(--radius-button, 999px);
-  border: 1px solid var(--accent);
-  background-color: var(--accent);
-  color: #1a1612;
-  caret-color: #1a1612;
+  border: 1.5px solid var(--accent);
+  background-color: var(--page-jump-bg);
+  color: var(--page-jump-fg);
+  caret-color: var(--page-jump-fg);
+  cursor: text;
   font: inherit;
   font-size: inherit;
   font-weight: inherit;
@@ -5097,16 +5073,19 @@ html[data-theme="light"] .page-jump::after {
   appearance: textfield;
 }
 
-.page-jump-input::-webkit-outer-spin-button,
-.page-jump-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
+.page-jump-input:hover {
+  border-color: color-mix(in srgb, var(--accent) 80%, var(--page-jump-fg));
 }
 
 .page-jump-input:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: var(--focus-ring);
+}
+
+.page-jump-input::selection {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--page-jump-fg);
 }
 
 /* ?? Card detail page (book page uses wider card) ?? */

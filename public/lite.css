@@ -627,10 +627,6 @@ html[data-lite="1"] .page-link-active {
   color: var(--lite-accent-fg) !important;
 }
 
-html[data-lite="1"] .page-jump::after {
-  background: var(--lite-ink);
-}
-
 html[data-lite="1"] .page-jump-input {
   min-width: var(--lite-touch);
   min-height: var(--lite-touch);

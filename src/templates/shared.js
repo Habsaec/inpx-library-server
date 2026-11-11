@@ -482,7 +482,7 @@ export function renderPagination(basePath, page, pageSize, total, query = '') {
     if (pageNumbers[pageNumbers.length - 1] < totalPages - 1) pageNumbers.push('...');
     pageNumbers.push(totalPages);
   }
-  const jumpField = `<form class="page-jump" method="get" action="${escapeHtml(jumpPath || '/')}" style="--page-digits:${String(page).length}">${jumpHidden}<input class="page-jump-input" type="number" name="page" min="1" max="${totalPages}" value="${page}" inputmode="numeric" enterkeyhint="go" aria-label="${escapeHtml(t('pagination.page'))}" aria-current="page" style="width:${Math.max(4, String(totalPages).length + 2)}ch"></form>`;
+  const jumpField = `<form class="page-jump" method="get" action="${escapeHtml(jumpPath || '/')}">${jumpHidden}<input class="page-jump-input" type="text" name="page" value="${page}" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="go" data-page="${page}" data-max="${totalPages}" title="${escapeHtml(tp('pagination.jumpHint', { max: totalPages }))}" aria-label="${escapeHtml(t('pagination.page'))}" aria-current="page" style="width:${Math.max(4, String(totalPages).length + 2)}ch"></form>`;
   return `
     <nav class="pagination" style="margin-top:20px;" aria-label="${escapeHtml(t('pagination.label'))}">
       ${page > 1 ? `<a class="page-link page-link-prev" rel="prev" href="${pageHref(page - 1)}" aria-label="${escapeHtml(t('pagination.prev'))}">${escapeHtml(t('pagination.prev'))}</a>` : ''}

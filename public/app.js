@@ -9417,12 +9417,47 @@ function initAppPairingUi() {
 document.querySelectorAll('.page-jump').forEach((form) => {
   const input = form.querySelector('.page-jump-input');
   if (!input) return;
-  const syncCaret = () => {
-    const digits = String(input.value || '').replace(/\D/g, '').length || 1;
-    form.style.setProperty('--page-digits', String(digits));
+  // The whole number is selected on focus: typing replaces it and Backspace clears it, wherever the click put the
+  // caret (a click on the left of the centred digits left it before them, so Backspace deleted nothing).
+  let mouseFocus = false;
+  input.addEventListener('mousedown', () => {
+    mouseFocus = document.activeElement !== input;
+  });
+  const selectAll = () => {
+    try { input.select(); } catch { /* ignore */ }
   };
-  syncCaret();
-  input.addEventListener('input', syncCaret);
+  input.addEventListener('focus', () => {
+    selectAll();
+    setTimeout(selectAll, 0); // after the click has placed its caret
+  });
+  input.addEventListener('mouseup', (event) => {
+    if (!mouseFocus) return;
+    mouseFocus = false;
+    event.preventDefault(); // keep the selection the click would drop
+  });
+  // Digits only; clamp to 1…last page; an empty field restores the current page instead of submitting.
+  form.addEventListener('submit', (event) => {
+    const max = Number(input.dataset.max) || Infinity;
+    const current = input.dataset.page || '1';
+    const digits = String(input.value || '').replace(/\D/g, '');
+    if (!digits) {
+      event.preventDefault();
+      input.value = current;
+      input.select();
+      return;
+    }
+    input.value = String(Math.min(max, Math.max(1, Number(digits))));
+    if (input.value === current) {
+      event.preventDefault();
+      input.blur();
+    }
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      input.value = input.dataset.page || input.value;
+      input.blur();
+    }
+  });
 });
 
 // PWA: Service Worker registered by pageShell with versioned URL
