@@ -50,6 +50,7 @@ import {
   renderOpdsBooksFeed,
   renderOpdsBookDetail,
 } from '../templates.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 function formatAuthorForOpds(author) {
   if (!author) return '';
@@ -87,7 +88,7 @@ export function registerOpdsRoutes(app, deps) {
   });
 
   /* «Новинки» (INPX date, like /library/recent) with sort / language facets. */
-  app.get('/opds/new', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/new', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username || '';
     const page = safePage(req.query.page);
     const limit = 100;
@@ -105,7 +106,7 @@ export function registerOpdsRoutes(app, deps) {
       paging: opdsPaging(req.originalUrl, result.total, page, limit),
       facets: getOpdsNewFacets(req.originalUrl, username, { sort, lang }),
     }));
-  });
+  }));
 
   /* Подборки: the curated lists, found books in list order. */
   app.get('/opds/collections', requireOpdsAuth, (req, res) => {
@@ -121,7 +122,7 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'collections', title: t('opds.nav.collections'), selfPath: '/opds/collections', entries }));
   });
 
-  app.get('/opds/collections/:slug', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/collections/:slug', requireOpdsAuth, asyncHandler(async (req, res) => {
     const page = safePage(req.query.page);
     const limit = 100;
     const result = getOpdsCollectionBooks(String(req.params.slug || ''), req.user?.username, { page, pageSize: limit });
@@ -136,7 +137,7 @@ export function registerOpdsRoutes(app, deps) {
       items: result.items,
       paging: opdsPaging(req.originalUrl, result.total, page, limit),
     }));
-  });
+  }));
 
   app.get('/opds/user', requireOpdsAuth, (req, res) => {
     const username = req.user?.username;
@@ -201,7 +202,7 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user', title: t('opds.user.myLibrary'), selfPath: '/opds/user', entries }));
   });
 
-  app.get('/opds/user/bookmarks', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/user/bookmarks', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
     const items = getBookmarks(username, 'date');
@@ -213,7 +214,7 @@ export function registerOpdsRoutes(app, deps) {
       selfPath: '/opds/user/bookmarks',
       items
     }));
-  });
+  }));
 
   app.get('/opds/user/shelves', requireOpdsAuth, (req, res) => {
     const username = req.user?.username;
@@ -239,7 +240,7 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-shelves', title: t('opds.user.shelves'), selfPath: '/opds/user/shelves', entries }));
   });
 
-  app.get('/opds/user/shelves/:id', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/user/shelves/:id', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
     const shelfId = Number(req.params.id);
@@ -255,7 +256,7 @@ export function registerOpdsRoutes(app, deps) {
       selfPath: req.originalUrl,
       items
     }));
-  });
+  }));
 
   app.get('/opds/user/smart-shelves', requireOpdsAuth, (req, res) => {
     const username = req.user?.username;
@@ -271,7 +272,7 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-smart-shelves', title: t('opds.user.smartShelves'), selfPath: '/opds/user/smart-shelves', entries }));
   });
 
-  app.get('/opds/user/smart-shelves/:id', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/user/smart-shelves/:id', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
     const shelf = getSmartShelf(req.params.id, username);
@@ -289,11 +290,11 @@ export function registerOpdsRoutes(app, deps) {
       items: result.items,
       paging: opdsPaging(req.originalUrl, result.total, page, limit),
     }));
-  });
+  }));
 
   /* «Хочу прочитать», «Новое у любимых», «Рекомендации»: the same lists as the site (/library/want|following|recommended). */
   const userListFeed = (path, id, titleKey, load) => {
-    app.get(path, requireOpdsAuth, async (req, res) => {
+    app.get(path, requireOpdsAuth, asyncHandler(async (req, res) => {
       const username = req.user?.username;
       if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
       const page = safePage(req.query.page);
@@ -309,7 +310,7 @@ export function registerOpdsRoutes(app, deps) {
         items: result.items,
         paging: opdsPaging(req.originalUrl, result.total, page, limit),
       }));
-    });
+    }));
   };
   userListFeed('/opds/user/want', 'user-want', 'opds.user.want',
     (username, page, limit) => getLibraryView('want', { username, page, pageSize: limit, sort: 'recent' }));
@@ -340,7 +341,7 @@ export function registerOpdsRoutes(app, deps) {
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-fav-authors', title: t('opds.user.favoriteAuthors'), selfPath: '/opds/user/favorite-authors', entries }));
   });
 
-  app.get('/opds/user/favorite-series', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/user/favorite-series', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type('text/plain').send(t('api.auth.unauthorized'));
     const series = getFavoriteSeriesLight(username, 500);
@@ -354,14 +355,14 @@ export function registerOpdsRoutes(app, deps) {
     withSeriesCovers(entries);
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(baseUrl(req), { id: 'user-fav-series', title: t('opds.user.favoriteSeries'), selfPath: '/opds/user/favorite-series', entries }));
-  });
+  }));
 
   app.get('/opds/opensearch', requireOpdsAuth, (req, res) => {
     res.type('application/opensearchdescription+xml; charset=utf-8');
     res.send(renderOpdsOpenSearch(baseUrl(req)));
   });
 
-  app.get('/opds/search', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/search', requireOpdsAuth, asyncHandler(async (req, res) => {
     let term = String(req.query.term || req.query.query || req.query.q || req.query.searchTerm || '').trim();
     const type = String(req.query.type || '').trim();
     const genre = String(req.query.genre || '').trim();
@@ -453,9 +454,9 @@ export function registerOpdsRoutes(app, deps) {
 
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.search'), selfPath: req.originalUrl, entries: [] }));
-  });
+  }));
 
-  app.get('/opds/author', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/author', requireOpdsAuth, asyncHandler(async (req, res) => {
     const author = String(req.query.author || '');
     const genre = String(req.query.genre || '');
     const seriesQ = String(req.query.series || '');
@@ -514,9 +515,9 @@ export function registerOpdsRoutes(app, deps) {
 
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.authors'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
-  app.get('/opds/series', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/series', requireOpdsAuth, asyncHandler(async (req, res) => {
     const series = String(req.query.series || '');
     const genre = String(req.query.genre || '');
     const base = baseUrl(req);
@@ -549,9 +550,9 @@ export function registerOpdsRoutes(app, deps) {
 
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.series'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
-  app.get('/opds/title', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/title', requireOpdsAuth, asyncHandler(async (req, res) => {
     const titleQ = String(req.query.title || '');
     const genre = String(req.query.genre || '');
     const base = baseUrl(req);
@@ -573,9 +574,9 @@ export function registerOpdsRoutes(app, deps) {
 
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.books'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
-  app.get('/opds/genre', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/genre', requireOpdsAuth, asyncHandler(async (req, res) => {
     const from = String(req.query.from || 'author');
     const term = String(req.query.term || '');
     const section = String(req.query.section || '');
@@ -634,9 +635,9 @@ export function registerOpdsRoutes(app, deps) {
 
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsSectionFeed(base, { id: 'search', title: t('opds.nav.genres'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
-  app.get('/opds/book', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/book', requireOpdsAuth, asyncHandler(async (req, res) => {
     const book = getBookById(String(req.query.uid || ''));
     if (!book) {
       return res.status(404).type('text/plain').send(t('book.notFound'));
@@ -649,5 +650,5 @@ export function registerOpdsRoutes(app, deps) {
     }
     res.type('application/atom+xml; charset=utf-8');
     res.send(renderOpdsBookDetail(baseUrl(req), book, { username: req.user?.username }));
-  });
+  }));
 }

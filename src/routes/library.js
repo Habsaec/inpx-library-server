@@ -99,7 +99,7 @@ import {
   listRecentSectionGenres
 } from '../inpx.js';
 import { getDistinctFormats, parseGenreList, parseGenreMode, parseHasSeries } from '../inpx.js';
-import { listSmartShelves, getSmartShelfFirstPage } from '../smart-shelves.js';
+import { listSmartShelves, getSmartShelfFirstPage, warmSmartShelfTotals } from '../smart-shelves.js';
 import { getOrExtractBookDetails, getStoredBookDetailsCover, bookUsesSevenZipArchive, getBookPublishInfo } from '../fb2.js';
 import { annotationBbCodeToHtml } from '../html-sanitize.js';
 import { listPinnedCollections, getCollectionBooks } from '../collections.js';
@@ -389,7 +389,7 @@ export function registerLibraryRoutes(app, deps) {
   } = deps;
 
   // --- Home ---
-  app.get('/', requireBrowseAuth, (req, res) => {
+  app.get('/', requireBrowseAuth, asyncHandler(async (req, res) => {
     const stats = getCachedStats();
     const user = req.user || null;
     const username = user?.username || '';
@@ -398,6 +398,12 @@ export function registerLibraryRoutes(app, deps) {
     // Случайная выборка из пула — каждый рендер показывает разные книги
     const DISPLAY_COUNT = getHomeNewestDisplayCount();
     let displayNewest = sections.newest;
+    // Profile languages first: filtering after the random pick left such users with fewer books than the shelf holds.
+    const contentLangs = effectiveContentLangs(username);
+    if (contentLangs.length) {
+      const allowed = new Set(contentLangs);
+      displayNewest = displayNewest.filter((book) => allowed.has(String(book?.lang || '').trim().toLowerCase()));
+    }
     if (displayNewest.length > DISPLAY_COUNT) {
       const shuffled = displayNewest.slice();
       for (let i = shuffled.length - 1; i > 0; i--) {
@@ -405,11 +411,6 @@ export function registerLibraryRoutes(app, deps) {
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
       displayNewest = shuffled.slice(0, DISPLAY_COUNT);
-    }
-    const contentLangs = effectiveContentLangs(username);
-    if (contentLangs.length) {
-      const allowed = new Set(contentLangs);
-      displayNewest = displayNewest.filter((book) => allowed.has(String(book?.lang || '').trim().toLowerCase()));
     }
     const displaySections = { ...sections, newest: displayNewest };
     const hasContinueData = username ? hasContinueBooks(username) : false;
@@ -421,6 +422,8 @@ export function registerLibraryRoutes(app, deps) {
     // Profile «Главная страница»: hidden blocks are not even computed.
     const homeLayout = username ? getUserHomeLayout(username) : null;
     const homeShown = (id) => !homeLayout || isHomeSectionVisible(homeLayout, id);
+    // totals of the pinned smart shelves are counted on the query worker, not here
+    if (username && homeShown('shelves')) await warmSmartShelfTotals(username, { home: true });
     const homeShelves = username && homeShown('shelves') ? getPinnedHomeShelves(username, DISPLAY_COUNT) : [];
     const homeCollections = username && homeShown('collections') ? getPinnedHomeCollections(username, DISPLAY_COUNT) : [];
     let followingShelf = null;
@@ -447,11 +450,12 @@ export function registerLibraryRoutes(app, deps) {
     if (username) {
       setImmediate(() => { try { getReadBookIdSet(username); } catch { } });
     }
-  });
+  }));
 
-  app.get('/api/home/shelves', requireApiAuth, (req, res) => {
+  app.get('/api/home/shelves', requireApiAuth, asyncHandler(async (req, res) => {
+    await warmSmartShelfTotals(req.user.username, { home: true });
     res.json({ items: getPinnedHomeShelves(req.user.username, getHomeNewestDisplayCount(), { collections: req.query.collections === '1' }) });
-  });
+  }));
 
   // --- Catalog search ---
   app.get('/catalog', requireBrowseAuth, asyncHandler(async (req, res) => {
@@ -1192,9 +1196,10 @@ export function registerLibraryRoutes(app, deps) {
     }));
   });
 
-  app.get('/shelves', requireWebAuth, (req, res) => {
+  app.get('/shelves', requireWebAuth, asyncHandler(async (req, res) => {
     const stats = getCachedStats();
     const username = req.user.username;
+    await warmSmartShelfTotals(username);
     const shelfOrder = getUserHomeLayout(username).shelfOrder;
     res.send(renderShelves({
       shelves: getUserShelves(username),
@@ -1202,7 +1207,7 @@ export function registerLibraryRoutes(app, deps) {
       shelfOrder,
       user: req.user, stats, indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
     }));
-  });
+  }));
 
   /* Drag-and-drop in the shelves list (app.js): `order=shelf:3,smart:1,…` (all shelves, mixed) → homeLayout.shelfOrder,
      which the shelves lists, the web home and /api/home/shelves follow (shared with the app). */

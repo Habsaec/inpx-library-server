@@ -9,4 +9,4 @@ description: Common problems and how to fix them.
 - **No EPUB / MOBI under «Download».** The converter is not installed — run `install.cmd` / `install.sh` again.
 - **`better-sqlite3` / `NODE_MODULE_VERSION` error.** Run `install.cmd` / `install.sh` again.
 - **Forgot the admin password.** `reset-admin.cmd` (Windows) or `./reset-admin.sh`.
-- **The server «freezes».** Look for `[perf] event loop stalled` in `data/runtime.log`; response times per route are at `/health/perf`.
+- **The server «freezes».** Look for `[perf] event loop stalled` in `data/runtime.log`; response times per route are at `/health/perf` (signed in as an admin).

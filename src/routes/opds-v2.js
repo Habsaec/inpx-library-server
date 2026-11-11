@@ -49,6 +49,7 @@ import {
   renderOpds2PublicationsFeed,
   renderOpds2BookDetail,
 } from '../templates/opds-v2.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 const OPDS_JSON = 'application/opds+json; charset=utf-8';
 const PAGE_SIZE = 100;
@@ -81,7 +82,7 @@ export function registerOpdsV2Routes(app, deps) {
   });
 
   // «Новинки» with sort / language facets
-  app.get('/opds/v2/new', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/new', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username || '';
     const page = safePage(req.query.page);
     const sort = OPDS_NEW_SORTS.includes(String(req.query.sort || '')) ? String(req.query.sort) : 'recent';
@@ -96,7 +97,7 @@ export function registerOpdsV2Routes(app, deps) {
       paging: opdsPaging(req.originalUrl, result.total, page, PAGE_SIZE),
       facets: getOpdsNewFacets(req.originalUrl, username, { sort, lang }),
     }));
-  });
+  }));
 
   // Подборки
   app.get('/opds/v2/collections', requireOpdsAuth, (req, res) => {
@@ -110,7 +111,7 @@ export function registerOpdsV2Routes(app, deps) {
     res.send(renderOpds2NavigationFeed(baseUrl(req), { title: t('opds.nav.collections'), selfPath: '/opds/v2/collections', entries }));
   });
 
-  app.get('/opds/v2/collections/:slug', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/collections/:slug', requireOpdsAuth, asyncHandler(async (req, res) => {
     const page = safePage(req.query.page);
     const result = getOpdsCollectionBooks(String(req.params.slug || ''), req.user?.username, { page, pageSize: PAGE_SIZE });
     if (!result) return res.status(404).type(OPDS_JSON).send(JSON.stringify({ error: t('opds.collectionNotFound') }));
@@ -122,7 +123,7 @@ export function registerOpdsV2Routes(app, deps) {
       items: result.items,
       paging: opdsPaging(req.originalUrl, result.total, page, PAGE_SIZE),
     }));
-  });
+  }));
 
   // User library root
   app.get('/opds/v2/user', requireOpdsAuth, (req, res) => {
@@ -148,7 +149,7 @@ export function registerOpdsV2Routes(app, deps) {
   });
 
   // User bookmarks
-  app.get('/opds/v2/user/bookmarks', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/user/bookmarks', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
     const items = getBookmarks(username, 'date');
@@ -160,7 +161,7 @@ export function registerOpdsV2Routes(app, deps) {
       items,
       total: items.length
     }));
-  });
+  }));
 
   // User shelves list
   app.get('/opds/v2/user/shelves', requireOpdsAuth, (req, res) => {
@@ -186,7 +187,7 @@ export function registerOpdsV2Routes(app, deps) {
   });
 
   // Single shelf books
-  app.get('/opds/v2/user/shelves/:id', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/user/shelves/:id', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
     const shelfId = Number(req.params.id);
@@ -202,7 +203,7 @@ export function registerOpdsV2Routes(app, deps) {
       items,
       total: items.length
     }));
-  });
+  }));
 
   // Smart shelves (saved catalog filters)
   app.get('/opds/v2/user/smart-shelves', requireOpdsAuth, (req, res) => {
@@ -218,7 +219,7 @@ export function registerOpdsV2Routes(app, deps) {
     res.send(renderOpds2NavigationFeed(baseUrl(req), { title: t('opds.user.smartShelves'), selfPath: '/opds/v2/user/smart-shelves', entries }));
   });
 
-  app.get('/opds/v2/user/smart-shelves/:id', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/user/smart-shelves/:id', requireOpdsAuth, asyncHandler(async (req, res) => {
     const username = req.user?.username;
     if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
     const shelf = getSmartShelf(req.params.id, username);
@@ -231,11 +232,11 @@ export function registerOpdsV2Routes(app, deps) {
       title: shelf.name, selfPath: req.originalUrl, items: result.items,
       paging: opdsPaging(req.originalUrl, result.total, page, PAGE_SIZE),
     }));
-  });
+  }));
 
   // «Хочу прочитать», «Новое у любимых», «Рекомендации»: the same lists as the site
   const userListFeed = (path, titleKey, load) => {
-    app.get(path, requireOpdsAuth, async (req, res) => {
+    app.get(path, requireOpdsAuth, asyncHandler(async (req, res) => {
       const username = req.user?.username;
       if (!username) return res.status(401).type(OPDS_JSON).send(JSON.stringify({ error: t('api.auth.unauthorized') }));
       const page = safePage(req.query.page);
@@ -246,7 +247,7 @@ export function registerOpdsV2Routes(app, deps) {
         title: t(titleKey), selfPath: req.originalUrl, items: result.items,
         paging: opdsPaging(req.originalUrl, result.total, page, PAGE_SIZE),
       }));
-    });
+    }));
   };
   userListFeed('/opds/v2/user/want', 'opds.user.want',
     (username, page, limit) => getLibraryView('want', { username, page, pageSize: limit, sort: 'recent' }));
@@ -295,7 +296,7 @@ export function registerOpdsV2Routes(app, deps) {
   });
 
   // Authors navigation (prefix-based)
-  app.get('/opds/v2/authors', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/authors', requireOpdsAuth, asyncHandler(async (req, res) => {
     const prefix = String(req.query.prefix || '');
     const genre = String(req.query.genre || '');
     const series = String(req.query.series || '');
@@ -346,10 +347,10 @@ export function registerOpdsV2Routes(app, deps) {
 
     res.type(OPDS_JSON);
     res.send(renderOpds2NavigationFeed(base, { title: t('opds.nav.authors'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
   // Series navigation
-  app.get('/opds/v2/series', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/series', requireOpdsAuth, asyncHandler(async (req, res) => {
     const prefix = String(req.query.prefix || '');
     const genre = String(req.query.genre || '');
     const base = baseUrl(req);
@@ -380,10 +381,10 @@ export function registerOpdsV2Routes(app, deps) {
 
     res.type(OPDS_JSON);
     res.send(renderOpds2NavigationFeed(base, { title: t('opds.nav.series'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
   // Titles navigation
-  app.get('/opds/v2/titles', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/titles', requireOpdsAuth, asyncHandler(async (req, res) => {
     const prefix = String(req.query.prefix || '');
     const genre = String(req.query.genre || '');
     const base = baseUrl(req);
@@ -423,10 +424,10 @@ export function registerOpdsV2Routes(app, deps) {
 
     res.type(OPDS_JSON);
     res.send(renderOpds2NavigationFeed(base, { title: t('opds.nav.books'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
   // Genres — hierarchical: sections → sub-genres (like inpx-web)
-  app.get('/opds/v2/genres', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/genres', requireOpdsAuth, asyncHandler(async (req, res) => {
     const base = baseUrl(req);
     const section = String(req.query.section || '');
     const from = String(req.query.from || 'authors');
@@ -469,10 +470,10 @@ export function registerOpdsV2Routes(app, deps) {
 
     res.type(OPDS_JSON);
     res.send(renderOpds2NavigationFeed(base, { title: t('opds.nav.genres'), selfPath: req.originalUrl, entries }));
-  });
+  }));
 
   // Search
-  app.get('/opds/v2/search', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/search', requireOpdsAuth, asyncHandler(async (req, res) => {
     const query = String(req.query.query || req.query.term || req.query.q || '').trim();
     const genre = String(req.query.genre || '').trim();
     const page = safePage(req.query.page);
@@ -489,10 +490,10 @@ export function registerOpdsV2Routes(app, deps) {
       items: result.items,
       paging: opdsPaging(selfUrl, result.total, page, PAGE_SIZE),
     }));
-  });
+  }));
 
   // Single book detail
-  app.get('/opds/v2/book/:id', requireOpdsAuth, async (req, res) => {
+  app.get('/opds/v2/book/:id', requireOpdsAuth, asyncHandler(async (req, res) => {
     const book = getBookById(String(req.params.id || ''));
     if (!book) {
       return res.status(404).type(OPDS_JSON).send(renderOpds2BookDetail(baseUrl(req), null));
@@ -505,5 +506,5 @@ export function registerOpdsV2Routes(app, deps) {
     }
     res.type(OPDS_JSON);
     res.send(renderOpds2BookDetail(baseUrl(req), book));
-  });
+  }));
 }

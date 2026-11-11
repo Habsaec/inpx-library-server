@@ -187,3 +187,32 @@ registerBrowsePrewarmHook(async () => {
     }
   }
 });
+
+/**
+ * Counts the catalog totals of the user's smart shelves on the query worker, so the shelf pages read next
+ * (`getSmartShelfFirstPage`) find them in the memo instead of counting on the event loop (0.3–0.9 s per shelf
+ * right after a restart or a catalog change). `home` — pinned shelves with the profile languages (the home page);
+ * otherwise every shelf without them (the shelves list previews). Never throws.
+ */
+export async function warmSmartShelfTotals(username, { home = false } = {}) {
+  try {
+    const rows = db.prepare('SELECT query, on_home AS onHome FROM smart_shelves WHERE username = ?').all(username);
+    if (!rows.length) return;
+    let langs = null;
+    if (home) {
+      try { langs = effectiveContentLangs(username); } catch { /* none */ }
+    }
+    const jobs = [];
+    for (const row of rows) {
+      if (home && !row.onHome) continue;
+      let f;
+      try { f = parseSmartShelfFilter(row.query); } catch { continue; }
+      if (f.q) continue;
+      jobs.push(warmBrowseTotal({
+        genre: f.genre.join(','), genreMode: f.genreMode, lang: f.lang, langs, format: f.format,
+        year: f.year, minRate: f.minRate, hasSeries: f.hasSeries
+      }));
+    }
+    await Promise.all(jobs);
+  } catch { /* the sync count still works */ }
+}

@@ -12,6 +12,7 @@ import { hashPassword } from './auth.js';
 import { runMigrations } from './services/migrations.js';
 import { resolveIndexImportMode } from './index-import-mode.js';
 import { IDLE_MS, sessionStatusFromActivityAt } from '../public/position-sync.js';
+import { queryAsync } from './services/query-pool.js';
 
 /* scrypt is deliberately slow (~25 ms); the secret is fixed per process, so derive once.
    Uncached, the Telegram token decrypt on every signed-in book page was ~40% of CPU. */
@@ -2335,30 +2336,83 @@ const FTS_SYNC_REBUILD_MAX_BOOKS = 50_000;
  * status: ok | dirty | rebuilding | desynced | empty
  * @param {{ force?: boolean, recover?: boolean }} [opts]
  */
-export function getBooksFtsStatus({ force = false, recover = false } = {}) {
-  const now = Date.now();
-  if (!force && _ftsHealthCache.status && now - _ftsHealthCache.at < FTS_HEALTH_TTL_MS) {
-    return { ..._ftsHealthCache.status };
-  }
-
+function buildFtsSnapshot(booksCount, ftsDocCount) {
   const dirty = getMeta('books_fts_dirty') === '1';
   const rebuildProgress = getMeta(FTS_REBUILD_PROGRESS_KEY);
-  const booksCount = Number(db.prepare('SELECT COUNT(*) AS c FROM books').get()?.c) || 0;
-  const ftsDocCount = countBooksFtsDocs();
-
   let status = 'ok';
   if (dirty && rebuildProgress) status = 'rebuilding';
   else if (dirty) status = 'dirty';
   else if (booksCount === 0) status = 'empty';
   else if (ftsDocCount === 0 || ftsDocCount < Math.floor(booksCount * 0.5) || !booksFtsHasTokens()) status = 'desynced';
-
-  const snapshot = {
+  return {
     status,
     dirty,
     booksCount,
     ftsDocCount,
     rebuilding: status === 'rebuilding' || Boolean(rebuildProgress)
   };
+}
+
+/** Above this many book rows the two COUNT(*) of the health check are full scans worth keeping off the event loop. */
+const FTS_HEALTH_ASYNC_MIN_ROWID = 100_000;
+let _ftsHealthRefreshing = false;
+let _ftsHealthAsyncOff = false;
+
+/** Recount on the query worker; an unhealthy result drops the cache so the next caller takes the sync (recovering) path. */
+function refreshFtsHealthAsync() {
+  if (_ftsHealthRefreshing) return;
+  _ftsHealthRefreshing = true;
+  Promise.all([
+    queryAsync('SELECT COUNT(*) AS c FROM books', [], { mode: 'get' }),
+    queryAsync('SELECT COUNT(*) AS c FROM books_fts_docsize', [], { mode: 'get' })
+  ]).then(([books, docs]) => {
+    const snapshot = buildFtsSnapshot(Number(books?.c) || 0, Number(docs?.c) || 0);
+    _ftsHealthCache = snapshot.status === 'ok' || snapshot.status === 'empty'
+      ? { at: Date.now(), status: snapshot }
+      : { at: 0, status: null };
+  }).catch(() => {
+    // no worker: back to the exact check on the main connection
+    _ftsHealthAsyncOff = true;
+    _ftsHealthCache = { at: 0, status: null };
+  }).finally(() => {
+    _ftsHealthRefreshing = false;
+  });
+}
+
+export function getBooksFtsStatus({ force = false, recover = false } = {}) {
+  const now = Date.now();
+  if (!force && _ftsHealthCache.status && now - _ftsHealthCache.at < FTS_HEALTH_TTL_MS) {
+    return { ..._ftsHealthCache.status };
+  }
+  /* A healthy snapshot that expired is served as is while the counts are redone on the query worker: on a large
+     catalog they are two full scans (9 s on a cold disk at the first request after boot, ~10 ms warm every minute). */
+  if (!force && _ftsHealthCache.status
+    && (_ftsHealthCache.status.status === 'ok' || _ftsHealthCache.status.status === 'empty')
+    && getMeta('books_fts_dirty') !== '1') {
+    refreshFtsHealthAsync();
+    return { ..._ftsHealthCache.status };
+  }
+  /* First call after boot on a large catalog: cheap probes only (both tables have rows, the index has tokens, not
+     dirty) → «ok» with the row-id range as a provisional count; the exact counts follow from the worker. */
+  if (!force && !_ftsHealthAsyncOff && !_ftsHealthCache.status && getMeta('books_fts_dirty') !== '1') {
+    try {
+      const maxRowid = Number(db.prepare('SELECT MAX(rowid) AS m FROM books').get()?.m) || 0;
+      if (maxRowid >= FTS_HEALTH_ASYNC_MIN_ROWID
+        && db.prepare('SELECT 1 FROM books_fts_docsize LIMIT 1').get()
+        && booksFtsHasTokens()) {
+        const maxDoc = Number(db.prepare('SELECT MAX(id) AS m FROM books_fts_docsize').get()?.m) || 0;
+        const provisional = { status: 'ok', dirty: false, booksCount: maxRowid, ftsDocCount: maxDoc, rebuilding: false };
+        _ftsHealthCache = { at: 0, status: provisional };
+        refreshFtsHealthAsync();
+        return { ...provisional };
+      }
+    } catch { /* fall through to the exact check */ }
+  }
+
+  const booksCount = Number(db.prepare('SELECT COUNT(*) AS c FROM books').get()?.c) || 0;
+  const ftsDocCount = countBooksFtsDocs();
+  const snapshot = buildFtsSnapshot(booksCount, ftsDocCount);
+  const { status } = snapshot;
   _ftsHealthCache = { at: now, status: snapshot };
 
   if (recover && !_ftsRebuildScheduled) {

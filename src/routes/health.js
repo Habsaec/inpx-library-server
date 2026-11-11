@@ -12,6 +12,8 @@ import { config } from '../config.js';
 import { getEnabledSources } from '../db.js';
 import { getIndexStatus, getSourceRoot } from '../inpx.js';
 import { promiseWithTimeout } from '../utils/async-timeout.js';
+import { requireAdminApi } from '../middleware/auth.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 /**
  * @param {import('express').Application} app
@@ -59,14 +61,16 @@ export function registerHealthRoutes(app, deps) {
     res.status(ok ? 200 : 503).json(body);
   });
 
-  app.get('/health/perf', (req, res) => {
+  /* Per-route timings and the archive probe (disk reads, up to 30 s) are for the admin, not for anyone who
+     can reach the port; /health, /ready and /api/index-status stay public. */
+  app.get('/health/perf', requireAdminApi, (req, res) => {
     if (typeof getPerfSnapshot !== 'function') {
       return res.json({ ok: true, perf: null });
     }
     res.json({ ok: true, perf: getPerfSnapshot() });
   });
 
-  app.get('/api/health/archives', async (req, res) => {
+  app.get('/api/health/archives', requireAdminApi, asyncHandler(async (req, res) => {
     const SAMPLE_SIZE = 5;
     const ENDPOINT_TIMEOUT_MS = 30_000;
     const PER_ARCHIVE_TIMEOUT_MS = 15_000;
@@ -177,5 +181,5 @@ export function registerHealthRoutes(app, deps) {
         errors: [{ archive: '*', error: err.message || 'Timeout' }]
       });
     }
-  });
+  }));
 }

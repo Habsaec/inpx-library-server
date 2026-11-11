@@ -292,7 +292,7 @@ flowchart LR
 - **Нет EPUB / MOBI в «Скачать»:** конвертер не установлен — повторите `install.cmd` / `install.sh`.
 - **Ошибка `better-sqlite3` / `NODE_MODULE_VERSION`:** повторно запустите `install.cmd` / `install.sh`.
 - **Забыли пароль admin:** `reset-admin.cmd` (Windows) или `./reset-admin.sh`.
-- **Сервер «подвисает»:** ищите `[perf] event loop stalled` в `data/runtime.log`, время ответов — на `/health/perf`.
+- **Сервер «подвисает»:** ищите `[perf] event loop stalled` в `data/runtime.log`, время ответов — на `/health/perf` (под учётной записью администратора).
 
 </details>
 

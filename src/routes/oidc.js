@@ -19,6 +19,7 @@ import {
 import { invalidateSessionUserCache } from '../middleware/auth.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { getClientKey } from '../services/rate-limiter.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 function oidcErrorRedirect(code) {
   const key = String(code || 'OIDC_FAILED');
@@ -50,7 +51,7 @@ function issueSession(res, user) {
  * @param {import('express').Application} app
  */
 export function registerOidcRoutes(app) {
-  app.get('/auth/oidc/start', async (req, res) => {
+  app.get('/auth/oidc/start', asyncHandler(async (req, res) => {
     try {
       const settings = getOidcSettings();
       if (!isOidcConfigured(settings)) {
@@ -67,9 +68,9 @@ export function registerOidcRoutes(app) {
       });
       return res.redirect(oidcErrorRedirect(mapOidcError(err)));
     }
-  });
+  }));
 
-  app.get('/auth/oidc/callback', async (req, res) => {
+  app.get('/auth/oidc/callback', asyncHandler(async (req, res) => {
     const clearFlow = () => {
       res.clearCookie(getOidcFlowCookieName(), { path: '/' });
     };
@@ -124,5 +125,5 @@ export function registerOidcRoutes(app) {
       });
       return res.redirect(oidcErrorRedirect(code));
     }
-  });
+  }));
 }

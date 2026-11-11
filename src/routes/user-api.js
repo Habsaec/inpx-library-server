@@ -39,6 +39,7 @@ import { BATCH_DOWNLOAD_MAX, BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../consta
 import { getUserHomeLayout, orderShelves } from '../home-layout.js';
 import { normalizeBatchIdsParam, resolveAdhocBookIdsFromClientList, resolveBatchScopeBookIds } from './download.js';
 import { decodeBookRef } from '../utils/book-ref.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 /**
  * User-facing API routes: bookmarks, shelves, favorites, e-reader, history.
@@ -218,7 +219,7 @@ export function registerUserApiRoutes(app, deps) {
 
   /* Goodreads / LiveLib CSV → «Прочитано», «Хочу прочитать», «Мои оценки». Body: { csv } (≤ 2 MB). */
   const readingImportLocks = new Set();
-  app.post('/api/import/reading', requireApiAuth, async (req, res) => {
+  app.post('/api/import/reading', requireApiAuth, asyncHandler(async (req, res) => {
     const csv = String(req.body?.csv || '');
     if (!csv.trim()) {
       return apiFail(res, 400, ApiErrorCode.VALIDATION, t('import.reading.empty'));
@@ -243,7 +244,7 @@ export function registerUserApiRoutes(app, deps) {
     } finally {
       readingImportLocks.delete(username);
     }
-  });
+  }));
 
   /* Reading statistics + yearly goal (web profile renders the same data server-side). */
   app.get('/api/reading-stats', requireApiAuth, (req, res) => {
@@ -761,7 +762,7 @@ export function registerUserApiRoutes(app, deps) {
   });
 
   /** «Отправить → В Telegram» для выбранных книг: по карточке на книгу, как с одной книгой. */
-  app.post('/api/send-to-telegram/batch', requireApiAuth, async (req, res) => {
+  app.post('/api/send-to-telegram/batch', requireApiAuth, asyncHandler(async (req, res) => {
     try {
       const tgCfg = resolveTelegramRuntimeConfig();
       if (!tgCfg.enabled || !tgCfg.token) {
@@ -826,10 +827,10 @@ export function registerUserApiRoutes(app, deps) {
       console.error('Batch send to telegram error:', error);
       apiFail(res, 500, ApiErrorCode.TELEGRAM_SEND_FAILED, t('telegram.sendFailed'));
     }
-  });
+  }));
 
   /** Отправка книги в Telegram пользователя (привязанный аккаунт), «В Telegram» на странице книги. */
-  app.post('/api/send-to-telegram/:id', requireApiAuth, async (req, res) => {
+  app.post('/api/send-to-telegram/:id', requireApiAuth, asyncHandler(async (req, res) => {
     try {
       const book = getBookById(req.params.id);
       if (!book) return apiFail(res, 404, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
@@ -861,7 +862,7 @@ export function registerUserApiRoutes(app, deps) {
       console.error('Send to telegram error:', error);
       apiFail(res, 500, ApiErrorCode.TELEGRAM_SEND_FAILED, t('telegram.sendFailed'));
     }
-  });
+  }));
 
   /* ── Device tokens (Android reader) ───────────────────────────── */
 
@@ -909,7 +910,7 @@ export function registerUserApiRoutes(app, deps) {
     res.json({ ok: true });
   });
 
-  app.post('/api/auth/pairing', requireApiAuth, async (req, res) => {
+  app.post('/api/auth/pairing', requireApiAuth, asyncHandler(async (req, res) => {
     try {
       const { token, expiresAt } = createAppPairingToken(req.user.username);
       const serverUrl = resolvePublicBaseUrl(req);
@@ -942,7 +943,7 @@ export function registerUserApiRoutes(app, deps) {
     } catch (err) {
       return apiFail(res, 500, ApiErrorCode.INTERNAL, err?.message || t('api.error.unknown'));
     }
-  });
+  }));
 
   app.post('/api/auth/pairing/redeem', (req, res) => {
     if (isPairingRedeemRateLimited(req)) {

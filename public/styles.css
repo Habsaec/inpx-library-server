@@ -2610,6 +2610,22 @@ textarea:focus-visible {
   transform: translateY(0);
 }
 
+/* The reveal is started by app.js. Without it (script blocked, failed or still loading on a slow device) the block
+   used to stay invisible; after a short wait it now shows by itself. */
+@keyframes home-reveal-fallback {
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+.home-reveal:not(.home-reveal-active),
+.welcome-hero-banner.home-reveal:not(.home-reveal-active) .welcome-hero-quote,
+.welcome-hero-banner.home-reveal:not(.home-reveal-active) .welcome-hero-author {
+  animation: home-reveal-fallback 0.4s ease 1.2s forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .home-reveal {
     opacity: 1;
@@ -12243,6 +12259,46 @@ html[data-eink="1"] .topbar-lang-link.is-active {
   border-radius: var(--radius-button, 999px);
   background: var(--button-bg);
   color: var(--text);
+}
+
+/* Phones: .page-intro turns into a column there, but the rules above size the header for a row (fixed 36px heights,
+   flex-basis 280px — as a column that made the quick filter 280px tall and laid the sort row over the filter chips).
+   Keep a wrapping row: heading, then the filter / chips on their own line, then the sort controls on the right. */
+@media (max-width: 600px) {
+  .catalog-page-intro {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .catalog-page-intro > .page-intro-copy {
+    flex: 1 1 100%;
+    margin-right: 0;
+  }
+
+  .catalog-page-intro > .catalog-filter-panel {
+    flex: 1 1 100%;
+    height: auto;
+    min-height: 36px;
+  }
+
+  .catalog-page-intro > .browse-filter {
+    flex: 1 1 100%;
+    flex-direction: row;
+    max-width: none;
+  }
+
+  .catalog-page-intro > .browse-filter input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .catalog-page-intro > .actions {
+    margin-left: auto;
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 36px;
+    justify-content: flex-end;
+  }
 }
 
 /* Catalog multi-filter panel — collapsed by default */

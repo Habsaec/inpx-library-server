@@ -47,7 +47,7 @@ export function registerNotesRoutes(app, { batchEmailLocks }) {
     res.send(file.content);
   }));
 
-  app.post('/api/reader-notes/send', requireApiAuth, async (req, res) => {
+  app.post('/api/reader-notes/send', requireApiAuth, asyncHandler(async (req, res) => {
     const username = req.user.username;
     try {
       const body = req.body || {};
@@ -99,7 +99,7 @@ export function registerNotesRoutes(app, { batchEmailLocks }) {
       }
       res.status(500).json({ ok: false, code: ApiErrorCode.SMTP_ERROR, error: msg });
     }
-  });
+  }));
 
   app.post('/api/reader-notes/bulk', requireApiAuth, asyncHandler(async (req, res) => {
     const body = req.body || {};

@@ -6,8 +6,9 @@ import { t, translateKnownErrorMessage } from '../i18n.js';
 import { requireApiAuth, requireWebAuth } from '../middleware/auth.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { safePage } from '../utils/safe-int.js';
+import { asyncHandler } from '../utils/async-handler.js';
 import {
-  listSmartShelves, getSmartShelf, createSmartShelf, updateSmartShelf, deleteSmartShelf, getSmartShelfBooks, setSmartShelfOnHome
+  listSmartShelves, getSmartShelf, createSmartShelf, updateSmartShelf, deleteSmartShelf, getSmartShelfBooks, setSmartShelfOnHome, warmSmartShelfTotals
 } from '../smart-shelves.js';
 import { getUserHomeLayout, orderShelves } from '../home-layout.js';
 
@@ -15,13 +16,14 @@ const PAGE_SIZE = 24;
 
 /** @param {import('express').Application} app */
 export function registerSmartShelfRoutes(app) {
-  app.get('/api/smart-shelves', requireApiAuth, (req, res) => {
+  app.get('/api/smart-shelves', requireApiAuth, asyncHandler(async (req, res) => {
+    if (req.query.preview === '1') await warmSmartShelfTotals(req.user.username);
     const username = req.user.username;
     const list = listSmartShelves(username, { withPreview: req.query.preview === '1' });
     // In the user's order (drag in the shelves list, homeLayout.shelfOrder).
     res.json(orderShelves(list.map((s) => ({ ...s, kind: 'smart' })), getUserHomeLayout(username).shelfOrder)
       .map(({ kind, ...s }) => s));
-  });
+  }));
 
   app.post('/api/smart-shelves', requireApiAuth, (req, res) => {
     try {

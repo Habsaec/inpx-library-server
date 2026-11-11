@@ -938,8 +938,19 @@ let _qualifierMergeRunning = false;
  * (so «Вечная война [Карелин]» stays apart from Винокуров's). Runs at boot and after every index pass
  * (the indexers recreate the suffixed row); links and favorites move before the row is deleted.
  */
+const QUALIFIER_MERGE_FP_KEY = 'series_qualifier_merge_fp';
+
+/** What the merge decisions depend on: the last index pass and the set of series rows. */
+function qualifierMergeFingerprint() {
+  const row = db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS maxId FROM series_catalog').get();
+  return `v1|${getMeta('indexed_at') || ''}|${row.n}|${row.maxId}`;
+}
+
 export async function mergeSeriesQualifierDuplicates() {
   if (_qualifierMergeRunning || indexState.active) return 0;
+  /* Nothing indexed and no series row added or removed since the last full pass: the ~17k author lookups below
+     would give the same answers. They used to run at every boot (≈ 60 s of event-loop stalls on a cold disk). */
+  if (getMeta(QUALIFIER_MERGE_FP_KEY) === qualifierMergeFingerprint()) return 0;
   _qualifierMergeRunning = true;
   try {
     const candidates = [];
@@ -950,13 +961,30 @@ export async function mergeSeriesQualifierDuplicates() {
       const parts = splitSeriesQualifier(row.displayName);
       if (parts && parts.base !== row.name) candidates.push({ ...row, ...parts });
     }
-    if (!candidates.length) return 0;
+    if (!candidates.length) {
+      setMeta(QUALIFIER_MERGE_FP_KEY, qualifierMergeFingerprint());
+      return 0;
+    }
     const selectBase = db.prepare('SELECT id, search_name AS searchName FROM series_catalog WHERE name = ?');
-    const surnamesOf = db.prepare(`
+    const surnamesSql = `
       SELECT DISTINCT substr(a.name, 1, instr(a.name || ',', ',') - 1) AS surname
       FROM book_series bs JOIN book_authors ba ON ba.book_id = bs.book_id JOIN authors a ON a.id = ba.author_id
       WHERE bs.series_id = ? LIMIT 600
-    `);
+    `;
+    const surnamesStmt = db.prepare(surnamesSql);
+    /* Read on the query worker (a big base series is thousands of random page reads); a base such as «Рассказы»
+       is shared by hundreds of suffixed rows, so its surnames are read once per pass. */
+    const surnamesMemo = new Map();
+    const surnamesOf = (seriesId) => {
+      let job = surnamesMemo.get(seriesId);
+      if (!job) {
+        job = queryAsync(surnamesSql, [seriesId], { fallback: () => surnamesStmt.all(seriesId) })
+          .then((rows) => rows.map((r) => seriesCatalogKey(r.surname)));
+        surnamesMemo.set(seriesId, job);
+      }
+      return job;
+    };
+    const forgetSurnames = (seriesId) => surnamesMemo.delete(seriesId);
     const repointLinks = db.prepare('UPDATE OR IGNORE book_series SET series_id = ? WHERE series_id = ?');
     const dropLinks = db.prepare('DELETE FROM book_series WHERE series_id = ?');
     const repointFavs = db.prepare('UPDATE OR IGNORE favorite_series SET series_id = ? WHERE series_id = ?');
@@ -974,27 +1002,34 @@ export async function mergeSeriesQualifierDuplicates() {
       setSearch.run([...names].join(' | '), base.id);
     });
     let merged = 0;
+    let interrupted = false;
     let sliceEnd = Date.now() + 40;
     for (let i = 0; i < candidates.length; i += 1) {
       if (Date.now() >= sliceEnd) {
         await new Promise((resolve) => setTimeout(resolve, 15));
         sliceEnd = Date.now() + 40;
       }
-      if (indexState.active) break;
+      if (indexState.active) { interrupted = true; break; }
       const loser = candidates[i];
-      const base = selectBase.get(loser.base);
+      let base = selectBase.get(loser.base);
       if (!base || base.id === loser.id) continue;
       let ok = GENERIC_SERIES_QUALIFIERS.has(loser.qualifier);
       if (!ok) {
-        const mine = new Set(surnamesOf.all(loser.id).map((r) => seriesCatalogKey(r.surname)));
-        const theirs = surnamesOf.all(base.id).map((r) => seriesCatalogKey(r.surname));
+        const mine = await surnamesOf(loser.id);
+        const theirs = await surnamesOf(base.id);
         ok = seriesQualifierMatchesSurnames(loser.qualifier, mine)
           && seriesQualifierMatchesSurnames(loser.qualifier, theirs);
+        if (indexState.active) { interrupted = true; break; }
+        // the awaits above let other code run: take the base row as it is now
+        base = selectBase.get(loser.base);
+        if (!base || base.id === loser.id) continue;
       }
       if (!ok) continue;
       mergeInto(base, loser);
+      forgetSurnames(base.id); // it now has the loser's authors too
       merged += 1;
     }
+    if (!interrupted) setMeta(QUALIFIER_MERGE_FP_KEY, qualifierMergeFingerprint());
     if (merged) {
       clearRuntimeQueryCaches();
       await refreshCatalogBookCounts();
@@ -4047,11 +4082,12 @@ export function parseHasSeries(value) {
 function buildHasSeriesFilterSql(hasSeries = null) {
   const flag = hasSeries === 0 || hasSeries === 1 ? hasSeries : parseHasSeries(hasSeries);
   if (flag !== 0 && flag !== 1) return null;
-  const exists = `EXISTS (
-      SELECT 1 FROM book_series bs WHERE bs.book_id = active_books.id
-    )`;
+  /* A scalar subquery, not EXISTS: SQLite 3.51 turns a single-table EXISTS into a join («SEARCH bs EXISTS») and then
+     counts OFFSET before that test — with one more filter (genre, rating) page 2+ of «в серии» showed books of the
+     earlier pages again (OFFSET 240 returned rows 144–167 of the list). Same index lookup, same speed. */
+  const inSeries = `(SELECT 1 FROM book_series bs WHERE bs.book_id = active_books.id LIMIT 1)`;
   return {
-    where: flag === 1 ? exists : `NOT ${exists}`,
+    where: flag === 1 ? `${inSeries} IS NOT NULL` : `${inSeries} IS NULL`,
     params: []
   };
 }
@@ -4763,14 +4799,24 @@ export function searchBooks({
     const tBrowse = Date.now();
     const memoKey = mode === 'exact' ? `${browseBooksView}|${whereSql}|${JSON.stringify(gfParams)}` : '';
     const memoHit = memoKey ? _browseTotalMemo.get(memoKey) : null;
+    /* Small genres: read from the genre's book list (same rows; the memo key above stays on the default WHERE). */
+    const driven = genreFilter ? genreDrivenBrowse(genre, genreMode, projectionFresh, letterNorm, extraFilters, offset) : null;
+    const pageFrom = driven ? driven.from : browseFrom;
+    const pageWhere = driven ? driven.whereSql : whereSql;
+    const pageParams = driven ? driven.params : gfParams;
+    // the COUNT is a full pass either way, so it takes the genre's list up to the bigger (deep-page) limit
+    const drivenCount = genreFilter ? genreDrivenBrowse(genre, genreMode, projectionFresh, letterNorm, extraFilters, GENRE_DRIVEN_DEEP_OFFSET) : null;
+    const countFrom = drivenCount ? drivenCount.from : browseFrom;
+    const countWhere = drivenCount ? drivenCount.whereSql : whereSql;
+    const countParams = drivenCount ? drivenCount.params : gfParams;
     const countSql = !whereSql && projectionFresh
       ? 'SELECT COUNT(*) AS count FROM active_book_ids'
-      : `SELECT COUNT(*) AS count FROM ${browseFrom} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`;
+      : `SELECT COUNT(*) AS count FROM ${countFrom} LEFT JOIN sources s ON s.id = b.source_id ${countWhere}`;
     /* An expired total is served as is and recounted on the query worker: catalog changes wipe the memo anyway, so an
        old entry is only a little stale (read marks of «скрыть прочитанное»), while a sync recount cost 0.2–0.4 s. */
     const memoStale = Boolean(memoHit) && (Date.now() - memoHit.at) >= PAGE_CACHE_TTL_MS;
     if (memoStale && !_browseTotalInflight.has(memoKey)) {
-      const job = queryAsync(countSql, gfParams, { mode: 'get' })
+      const job = queryAsync(countSql, countParams, { mode: 'get' })
         .then((row) => { _browseTotalMemo.set(memoKey, { total: Number(row?.count) || 0, at: Date.now() }); })
         .catch(() => {})
         .finally(() => _browseTotalInflight.delete(memoKey));
@@ -4780,9 +4826,9 @@ export function searchBooks({
       ? memoHit
       : resolveSqlTotal(
         countSql,
-        gfParams,
-        `SELECT 1 FROM ${browseFrom} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`,
-        gfParams
+        countParams,
+        `SELECT 1 FROM ${countFrom} LEFT JOIN sources s ON s.id = b.source_id ${countWhere}`,
+        countParams
       );
     if (memoKey && !memoHit) {
       if (_browseTotalMemo.size >= 64) _browseTotalMemo.delete(_browseTotalMemo.keys().next().value);
@@ -4794,14 +4840,14 @@ export function searchBooks({
       .prepare(
         `
       SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
-      FROM ${browseFrom}
+      FROM ${pageFrom}
       LEFT JOIN sources s ON s.id = b.source_id
-      ${langFilterIsBroad(lang, langs) ? whereSql.replace(/\bb\.lang\b/g, '+b.lang') : whereSql}
+      ${langFilterIsBroad(lang, langs) ? pageWhere.replace(/\bb\.lang\b/g, '+b.lang') : pageWhere}
       ORDER BY ${listOrderBy}
       LIMIT ? OFFSET ?
     `
       )
-      .all(...gfParams, pageSize, offset)
+      .all(...pageParams, pageSize, offset)
       .map(mapBookListRow);
 
     attachSeriesListsToBooks(items);
@@ -5682,6 +5728,52 @@ function browseWhere(genreFilter, letterNorm, extraFilters) {
 }
 
 const BROWSE_FROM_PROJECTION = 'books b CROSS JOIN active_book_ids visible ON visible.book_id = b.id';
+
+/** Up to this many books in the selected genres a browse page is read from the genre's own book list. */
+const GENRE_DRIVEN_BROWSE_MAX = 8000;
+/** Deep pages (the default plan walks the sort index past every earlier hit): worth sorting a bigger genre. */
+const GENRE_DRIVEN_DEEP_MAX = 100_000;
+const GENRE_DRIVEN_DEEP_OFFSET = 240;
+
+/**
+ * Browse by genre, small genres: the default plan walks the whole sort index and tests every book for the genre —
+ * fine for a big genre (24 hits come fast), 0.5–2 s for page 50 of a genre with a few thousand books and for any page
+ * of a rare one, the COUNT always a full pass. Starting from the genre's rows in book_genres and sorting only those
+ * books is 2–70 ms. Returns { from, whereSql, params } (same rows as the default plan) or null — use the default.
+ */
+function genreDrivenBrowse(genre, genreMode, projectionFresh, letterNorm, extraFilters, offset = 0) {
+  const max = offset >= GENRE_DRIVEN_DEEP_OFFSET ? GENRE_DRIVEN_DEEP_MAX : GENRE_DRIVEN_BROWSE_MAX;
+  const genres = parseGenreList(genre);
+  if (!genres.length) return null;
+  let rows;
+  try {
+    rows = db.prepare(`SELECT name, book_count AS n FROM genres_catalog WHERE name IN (${genres.map(() => '?').join(',')})`).all(...genres);
+  } catch {
+    return null;
+  }
+  if (!rows.length) return null;
+  const and = genreMode === 'and';
+  let driver;
+  if (and) {
+    if (rows.length < genres.length) return null;
+    const rarest = rows.reduce((a, b) => (Number(b.n) < Number(a.n) ? b : a));
+    if (!(Number(rarest.n) > 0) || Number(rarest.n) > max) return null;
+    driver = [rarest.name];
+  } else {
+    const sum = rows.reduce((acc, row) => acc + (Number(row.n) || 0), 0);
+    if (!(sum > 0) || sum > max) return null;
+    driver = rows.map((row) => row.name);
+  }
+  // DISTINCT also for one genre: it keeps the subquery from being flattened (flattened, the planner scanned the id list first — 10× slower)
+  const ids = `(SELECT DISTINCT bg.book_id AS id FROM book_genres bg JOIN genres_catalog g ON g.id = bg.genre_id WHERE g.name IN (${driver.map(() => '?').join(',')}))`;
+  const from = projectionFresh
+    ? `${ids} gx CROSS JOIN books b ON b.id = gx.id JOIN active_book_ids visible ON visible.book_id = b.id`
+    : `${ids} gx CROSS JOIN active_books b ON b.id = gx.id`;
+  // AND: the other genres stay as EXISTS tests on the driver's books
+  const rest = and ? buildGenreFilterSql(genres.filter((name) => name !== driver[0]).join(','), 'and') : null;
+  const { whereSql, params } = browseWhere(rest, letterNorm, extraFilters);
+  return { from, whereSql, params: [...driver, ...params] };
+}
 const _browseTotalInflight = new Map();
 
 /**
@@ -5733,8 +5825,11 @@ export async function warmBrowseTotal({
     if (hit && Date.now() - hit.at < PAGE_CACHE_TTL_MS) return;
     let job = _browseTotalInflight.get(key);
     if (!job) {
-      const sql = `SELECT COUNT(*) AS count FROM ${from} LEFT JOIN sources s ON s.id = b.source_id ${whereSql}`;
-      job = queryAsync(sql, params, { mode: 'get' })
+      // a COUNT is a full pass either way: the genre's own list wins up to the bigger limit
+      const driven = genreDrivenBrowse(genre, genreMode, projectionFresh, String(letter || '').trim().toLowerCase(),
+        buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries, hideReadUser }), GENRE_DRIVEN_DEEP_OFFSET);
+      const sql = `SELECT COUNT(*) AS count FROM ${driven ? driven.from : from} LEFT JOIN sources s ON s.id = b.source_id ${driven ? driven.whereSql : whereSql}`;
+      job = queryAsync(sql, driven ? driven.params : params, { mode: 'get' })
         .then((row) => {
           if (_browseTotalMemo.size >= 64) _browseTotalMemo.delete(_browseTotalMemo.keys().next().value);
           _browseTotalMemo.set(key, { total: Number(row?.count) || 0, at: Date.now() });

@@ -99,6 +99,7 @@ import {
 } from '../services/portable-backup-store.js';
 import { listCollections, isCollectionsMatchRunning } from '../collections.js';
 import { renderAdminCollectionsCard, renderAdminConversionCard, renderAdminConversion, renderAdminDeliveryCard } from '../templates/admin.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 function lastFormFieldValue(value) {
   return Array.isArray(value) ? value[value.length - 1] : value;
@@ -435,7 +436,7 @@ export function registerAdminRoutes(app, deps) {
 
   // --- Sidecar diagnostics ---
 
-  app.get('/api/admin/sidecar/book/:id', requireAdminApi, async (req, res) => {
+  app.get('/api/admin/sidecar/book/:id', requireAdminApi, asyncHandler(async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) {
       return apiFail(res, 400, ApiErrorCode.BOOK_NOT_FOUND, t('book.notFound'));
@@ -504,9 +505,9 @@ export function registerAdminRoutes(app, deps) {
       sidecar: { coversArchive: coversArchive || '', imagesArchive: imagesArchive || '' },
       media: { cover, review, portrait, bio, illustrations }
     });
-  });
+  }));
 
-  app.get('/api/admin/sidecar/author', requireAdminApi, async (req, res) => {
+  app.get('/api/admin/sidecar/author', requireAdminApi, asyncHandler(async (req, res) => {
     const name = String(req.query.name || '').trim();
     if (!name) {
       return apiFail(res, 400, ApiErrorCode.VALIDATION, 'name is required');
@@ -540,7 +541,7 @@ export function registerAdminRoutes(app, deps) {
       ok: true, foundInCatalog: true, name, sourceId, root,
       detectedLayout: detectFlibustaSidecarLayout(root), md5Keys: keys, portrait, bio
     });
-  });
+  }));
 
   // --- Monitoring / Operations ---
 
@@ -767,13 +768,13 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.get('/admin/update', requireAdminWeb, async (req, res) => {
+  app.get('/admin/update', requireAdminWeb, asyncHandler(async (req, res) => {
     res.send(renderAdminUpdate({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
       operations: getOperationsSnapshot(), csrfToken: req.csrfToken || '',
       portable: { backups: await listPortableBackups(), schedule: getPortableBackupSchedule(), hasPassword: hasBackupPassword() }
     }));
-  });
+  }));
 
   app.get('/admin/smtp', requireAdminWeb, (req, res) => {
     res.send(renderAdminSmtp({
@@ -812,7 +813,7 @@ export function registerAdminRoutes(app, deps) {
     }));
   });
 
-  app.post('/admin/settings/ui', requireAdminWeb, async (req, res) => {
+  app.post('/admin/settings/ui', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
       const name = String(req.body.siteName || '').trim();
       setSetting('site_name', name);
@@ -904,7 +905,7 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) {
       res.redirect('/admin/appearance?flash=' + encodeURIComponent(uiAdminFlashMessage(error)));
     }
-  });
+  }));
 
   app.post('/admin/settings/ui/remove', requireAdminWeb, (req, res) => {
     try {
@@ -956,7 +957,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/admin/settings/ui/refresh-bg-palette', requireAdminWeb, async (req, res) => {
+  app.post('/admin/settings/ui/refresh-bg-palette', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
       await refreshBgThemePaletteForAdmin();
       clearPageDataCache();
@@ -965,7 +966,7 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) {
       res.redirect('/admin/appearance?flash=' + encodeURIComponent(uiAdminFlashMessage(error)));
     }
-  });
+  }));
 
   app.post('/admin/settings/ui/reset/typography', requireAdminWeb, (req, res) => {
     try {
@@ -978,7 +979,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/api/admin/ui/upload', requireAdminApi, parseUiUploadBody, async (req, res) => {
+  app.post('/api/admin/ui/upload', requireAdminApi, parseUiUploadBody, asyncHandler(async (req, res) => {
     const asset = String(req.query.asset || req.headers['x-ui-asset'] || '').trim();
     try {
       const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
@@ -995,7 +996,7 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) {
       return apiFail(res, 400, ApiErrorCode.VALIDATION, uiAdminFlashMessage(error));
     }
-  });
+  }));
 
   app.post('/api/admin/ui/remove', requireAdminApi, (req, res) => {
     const asset = String(req.body?.asset || '').trim();
@@ -1014,7 +1015,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/api/admin/ui/refresh-bg-palette', requireAdminApi, async (req, res) => {
+  app.post('/api/admin/ui/refresh-bg-palette', requireAdminApi, asyncHandler(async (req, res) => {
     try {
       await refreshBgThemePaletteForAdmin();
       clearPageDataCache();
@@ -1023,7 +1024,7 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) {
       return apiFail(res, 400, ApiErrorCode.VALIDATION, uiAdminFlashMessage(error));
     }
-  });
+  }));
 
   app.post('/api/admin/ui/preview', requireAdminApi, (req, res) => {
     try {
@@ -1056,7 +1057,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/admin/smtp', requireAdminWeb, async (req, res) => {
+  app.post('/admin/smtp', requireAdminWeb, asyncHandler(async (req, res) => {
     const { host, port, secure, user, pass, from, test } = req.body;
     const settings = { host, port: Number(port) || 587, secure: secure === '1', user, pass, from };
     if (test) {
@@ -1070,7 +1071,7 @@ export function registerAdminRoutes(app, deps) {
     }
     setSmtpSettings(settings);
     res.redirect('/admin/smtp?flash=' + encodeURIComponent(t('admin.smtp.flashSaved')));
-  });
+  }));
 
   app.get('/admin/telegram', requireAdminWeb, (req, res) => {
     res.send(renderAdminTelegram({
@@ -1126,7 +1127,7 @@ export function registerAdminRoutes(app, deps) {
 
   app.post('/admin/telegram/test-announce', requireAdminWeb, handleTelegramTestAnnounce);
 
-  app.post('/admin/telegram', requireAdminWeb, async (req, res) => {
+  app.post('/admin/telegram', requireAdminWeb, asyncHandler(async (req, res) => {
     const rawToken = String(req.body.token ?? '').trim();
     const allowedUsers = String(req.body.allowedUsers ?? '').trim();
     const accessMode = String(req.body.accessMode ?? '').trim();
@@ -1187,7 +1188,7 @@ export function registerAdminRoutes(app, deps) {
       logSystemEvent('warn', 'telegram-bot', 'ошибка перезапуска из админки', { error: err.message });
     });
     res.redirect('/admin/telegram?flash=' + encodeURIComponent(t('admin.telegram.flashSaved')));
-  });
+  }));
 
   app.get('/admin/events', requireAdminWeb, (req, res) => {
     const stats = getCachedStats();
@@ -1281,7 +1282,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/admin/sources/:id/update', requireAdminWeb, async (req, res) => {
+  app.post('/admin/sources/:id/update', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
       const id = Number(req.params.id);
       const name = req.body.name !== undefined ? String(req.body.name).trim() : undefined;
@@ -1305,7 +1306,7 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) {
       res.redirect('/admin/sources?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
-  });
+  }));
 
   app.post('/api/admin/sources/:id/edit', requireAdminApi, (req, res) => {
     try {
@@ -1362,7 +1363,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/api/admin/sources/:id/delete', requireAdminApi, async (req, res) => {
+  app.post('/api/admin/sources/:id/delete', requireAdminApi, asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     try {
       const status = getIndexStatus();
@@ -1423,7 +1424,7 @@ export function registerAdminRoutes(app, deps) {
       operationsState.sourceDeleteRunning = false;
       return res.status(500).json({ ok: false, error: error.message });
     }
-  });
+  }));
 
   app.get('/api/admin/sources/delete-progress', requireAdminApi, (req, res) => {
     if (!operationsState.sourceDeleteRunning) {
@@ -1644,11 +1645,11 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.get('/api/operations/portable-backups', requireAdminApi, async (req, res) => {
+  app.get('/api/operations/portable-backups', requireAdminApi, asyncHandler(async (req, res) => {
     res.json({ ok: true, backups: await listPortableBackups(), schedule: getPortableBackupSchedule() });
-  });
+  }));
 
-  app.post('/api/operations/portable-backups', requireAdminApi, async (req, res) => {
+  app.post('/api/operations/portable-backups', requireAdminApi, asyncHandler(async (req, res) => {
     try {
       const made = await createPortableBackupNow({ reason: 'manual', appVersion: readPortableAppVersion() });
       res.json({ ok: true, ...made });
@@ -1656,7 +1657,7 @@ export function registerAdminRoutes(app, deps) {
       if (error?.code === 'BACKUP_BUSY') return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.portable.busy'));
       return apiFail(res, 500, ApiErrorCode.INTERNAL, error.message);
     }
-  });
+  }));
 
   app.get('/api/operations/portable-backups/:name', requireAdminApi, (req, res) => {
     const full = resolvePortableBackupPath(req.params.name);
@@ -1664,7 +1665,7 @@ export function registerAdminRoutes(app, deps) {
     res.download(full, req.params.name);
   });
 
-  app.delete('/api/operations/portable-backups/:name', requireAdminApi, async (req, res) => {
+  app.delete('/api/operations/portable-backups/:name', requireAdminApi, asyncHandler(async (req, res) => {
     try {
       const ok = await deletePortableBackup(req.params.name);
       if (!ok) return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.portable.invalid'));
@@ -1672,7 +1673,7 @@ export function registerAdminRoutes(app, deps) {
     } catch {
       return apiFail(res, 404, ApiErrorCode.NOT_FOUND, t('admin.portable.invalid'));
     }
-  });
+  }));
 
   app.post('/api/operations/portable-backup-password', requireAdminApi, (req, res) => {
     try {
@@ -1692,7 +1693,7 @@ export function registerAdminRoutes(app, deps) {
   });
 
   let portableRestoreRunning = false;
-  app.post('/api/operations/portable-restore', requireAdminApi, async (req, res) => {
+  app.post('/api/operations/portable-restore', requireAdminApi, asyncHandler(async (req, res) => {
     if (portableRestoreRunning) return apiFail(res, 409, ApiErrorCode.CONFLICT, t('admin.portable.busy'));
     portableRestoreRunning = true;
     const tmpDir = path.join(config.dataDir, 'tmp');
@@ -1739,7 +1740,7 @@ export function registerAdminRoutes(app, deps) {
       portableRestoreRunning = false;
       fs.promises.unlink(tmpFile).catch(() => {});
     }
-  });
+  }));
 
   app.get('/api/operations/users-export', requireAdminApi, (req, res) => {
     const payload = exportUsersBackup();
@@ -2065,16 +2066,16 @@ export function registerAdminRoutes(app, deps) {
 
   // --- Проверка новой версии на GitHub + установка в один клик ---
 
-  app.get('/api/operations/update-check', requireAdminApi, async (req, res) => {
+  app.get('/api/operations/update-check', requireAdminApi, asyncHandler(async (req, res) => {
     try {
       const result = await checkForUpdate({ force: req.query.force === '1' });
       res.json({ ok: true, ...result });
     } catch (error) {
       apiFail(res, 502, ApiErrorCode.UPDATE_CHECK_FAILED, `${t('admin.update.checkFail')}: ${error.message}`);
     }
-  });
+  }));
 
-  app.post('/api/operations/update-apply', requireAdminApi, async (req, res) => {
+  app.post('/api/operations/update-apply', requireAdminApi, asyncHandler(async (req, res) => {
     let check;
     try {
       check = await checkForUpdate({ force: true });
@@ -2116,7 +2117,7 @@ export function registerAdminRoutes(app, deps) {
         scheduleRestart: updateScheduleRestart
       });
     });
-  });
+  }));
 
   app.post('/api/operations/events-retain', requireAdminApi, (req, res) => {
     const deleted = retainRecentSystemEvents(SYSTEM_EVENTS_RETAIN_COUNT);
@@ -2240,7 +2241,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/api/admin/duplicates/auto-clean', requireAdminApi, async (req, res) => {
+  app.post('/api/admin/duplicates/auto-clean', requireAdminApi, asyncHandler(async (req, res) => {
     if (getIndexStatus().active) {
       return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
     }
@@ -2290,7 +2291,7 @@ export function registerAdminRoutes(app, deps) {
     } finally {
       operationsState.dupCleanRunning = false;
     }
-  });
+  }));
 
   app.get('/api/admin/suppressed', requireAdminApi, (req, res) => {
     const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
@@ -2324,7 +2325,7 @@ export function registerAdminRoutes(app, deps) {
     }
   });
 
-  app.post('/api/admin/duplicates/unsuppress-all', requireAdminApi, async (req, res) => {
+  app.post('/api/admin/duplicates/unsuppress-all', requireAdminApi, asyncHandler(async (req, res) => {
     if (getIndexStatus().active) {
       return res.status(409).json({ ok: false, error: t('admin.duplicates.blockedDuringIndexing') || 'Operation is blocked during indexing' });
     }
@@ -2375,7 +2376,7 @@ export function registerAdminRoutes(app, deps) {
     } finally {
       operationsState.dupCleanRunning = false;
     }
-  });
+  }));
 
   // --- Content management (languages + genres) ---
 
@@ -2411,7 +2412,7 @@ export function registerAdminRoutes(app, deps) {
   });
 
   // Admin → Конвертация: fbc itself, conversion settings, preview.
-  app.get('/admin/conversion', requireAdminWeb, async (req, res) => {
+  app.get('/admin/conversion', requireAdminWeb, asyncHandler(async (req, res) => {
     await ensureFb2cngBuiltinCss().catch(() => '');
     const version = getFb2cngVersion();
     const latest = getCachedLatestFbc();
@@ -2445,9 +2446,9 @@ export function registerAdminRoutes(app, deps) {
       flash: String(req.query.flash || ''),
       csrfToken: req.csrfToken || ''
     }));
-  });
+  }));
 
-  app.post('/admin/conversion', requireAdminWeb, async (req, res) => {
+  app.post('/admin/conversion', requireAdminWeb, asyncHandler(async (req, res) => {
     const back = (q) => res.redirect(`/admin/conversion?${q}`);
     if (req.body.reset === '1') {
       setSetting('fb2cng_options', '');
@@ -2465,11 +2466,11 @@ export function registerAdminRoutes(app, deps) {
       options: Object.keys(diff).join(',').slice(0, 500)
     });
     back('flash=' + encodeURIComponent(t('admin.conv.saved')));
-  });
+  }));
 
   // fbc itself: look for a newer release, install it (SHA-256 checked), go back to the bundled one.
   // Vignette image upload (base64 in JSON): stored under a content hash; the form then saves the returned token.
-  app.post('/admin/conversion/vignette', requireAdminWeb, async (req, res) => {
+  app.post('/admin/conversion/vignette', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
       const raw = String(req.body?.data || '');
       if (raw.length > 1_500_000 || !/^[A-Za-z0-9+/=\s]*$/.test(raw)) return res.status(400).json({ ok: false, error: t('admin.conv.vg.badImage') });
@@ -2480,10 +2481,10 @@ export function registerAdminRoutes(app, deps) {
       const key = code === 'TOO_BIG' ? 'admin.conv.vg.tooBig' : 'admin.conv.vg.badImage';
       res.status(400).json({ ok: false, error: t(key) });
     }
-  });
+  }));
 
   // Preview: convert a catalog book (or the built-in sample) with the form's current, possibly unsaved settings.
-  app.post('/admin/conversion/preview', requireAdminWeb, async (req, res) => {
+  app.post('/admin/conversion/preview', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
       const result = await buildConversionPreview({
         fields: req.body?.fields && typeof req.body.fields === 'object' ? req.body.fields : {},
@@ -2496,7 +2497,7 @@ export function registerAdminRoutes(app, deps) {
       const known = { BOOK_NOT_FOUND: 'admin.conv.pv.notFound', NOT_FB2: 'admin.conv.pv.notFb2', TOO_LARGE: 'admin.conv.pv.tooLarge', BAD_EPUB: 'admin.conv.pv.badEpub', BAD_FORMAT: 'admin.conv.pv.badFormat' };
       res.status(400).json({ ok: false, error: known[code] ? t(known[code]) : code.slice(0, 400) });
     }
-  });
+  }));
 
   app.get('/admin/conversion/preview/:token/*', requireAdminWeb, (req, res) => {
     const file = getPreviewFile(req.params.token, req.params[0]);
@@ -2521,7 +2522,7 @@ export function registerAdminRoutes(app, deps) {
   });
 
   // Font upload: the raw file as application/octet-stream (no base64), original name in X-File-Name.
-  app.post('/admin/conversion/font', requireAdminWeb, express.raw({ type: 'application/octet-stream', limit: FONT_MAX_BYTES }), async (req, res) => {
+  app.post('/admin/conversion/font', requireAdminWeb, express.raw({ type: 'application/octet-stream', limit: FONT_MAX_BYTES }), asyncHandler(async (req, res) => {
     try {
       let name = '';
       try { name = decodeURIComponent(String(req.get('x-file-name') || '')); } catch { name = ''; }
@@ -2531,18 +2532,18 @@ export function registerAdminRoutes(app, deps) {
       const code = String(error.message || '');
       res.status(400).json({ ok: false, error: t(code === 'TOO_BIG' ? 'admin.conv.font.tooBig' : 'admin.conv.font.badType') });
     }
-  });
+  }));
 
-  app.post('/admin/conversion/fbc-check', requireAdminWeb, async (req, res) => {
+  app.post('/admin/conversion/fbc-check', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
       const info = await checkLatestFbc({ force: true });
       res.redirect('/admin/conversion?flash=' + encodeURIComponent(tp('admin.conv.fbc.checked', { version: info.version })));
     } catch (error) {
       res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(String(error.message || error).slice(0, 300)));
     }
-  });
+  }));
 
-  app.post('/admin/conversion/fbc-update', requireAdminWeb, async (req, res) => {
+  app.post('/admin/conversion/fbc-update', requireAdminWeb, asyncHandler(async (req, res) => {
     if (process.env.FB2CNG_PATH) {
       return res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(t('admin.conv.fbc.envLocked')));
     }
@@ -2560,9 +2561,9 @@ export function registerAdminRoutes(app, deps) {
     } finally {
       if (cur) await cur.cleanup().catch(() => {});
     }
-  });
+  }));
 
-  app.post('/admin/conversion/fbc-reset', requireAdminWeb, async (req, res) => {
+  app.post('/admin/conversion/fbc-reset', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
       await resetInstalledFbc();
       resetFb2cngVersionCache();
@@ -2571,7 +2572,7 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) {
       res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(String(error.message || error).slice(0, 300)));
     }
-  });
+  }));
 
   // Admin → Конвертация → «Скачивание»: offered formats, file names, WebP in FB2 (moved here from «Контент»).
   app.post('/admin/conversion/delivery', requireAdminWeb, (req, res) => {
@@ -2597,7 +2598,7 @@ export function registerAdminRoutes(app, deps) {
     res.redirect('/admin/conversion?flash=' + encodeURIComponent(t('admin.conv.deliverySaved')));
   });
 
-  app.post('/admin/content', requireAdminWeb, async (req, res) => {
+  app.post('/admin/content', requireAdminWeb, asyncHandler(async (req, res) => {
     // Пока идёт индексация, не трогаем excluded_* и не делаем DROP/CREATE VIEW:
     // SQLite может заблокировать или оставить active_books в полусогласованном состоянии.
     if (getIndexStatus().active) {
@@ -2659,5 +2660,5 @@ export function registerAdminRoutes(app, deps) {
       });
       res.redirect('/admin/content?flash=' + encodeURIComponent(error.message));
     }
-  });
+  }));
 }

@@ -235,6 +235,44 @@ export function getFb2cngVersion() {
   return value;
 }
 
+/**
+ * Runs `fbc --version` without blocking (boot): the first page with download formats then finds the memo instead of
+ * a synchronous process start (1.6 s on a cold disk, in the middle of rendering the catalog).
+ */
+export function warmFb2cngVersion() {
+  return new Promise((resolve) => {
+    let bin = '';
+    let mtime = 0;
+    try {
+      bin = getFb2cngBinaryPath();
+      if (bin) mtime = fs.statSync(bin).mtimeMs;
+    } catch { /* missing */ }
+    if (!bin || !mtime) return resolve('');
+    let out = '';
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      const m = /(\d+)\.(\d+)\.(\d+)/.exec(out);
+      const value = m ? `${m[1]}.${m[2]}.${m[3]}` : '';
+      // an unknown version is left to the sync probe, which is the one that decides
+      if (value) versionMemo = { path: bin, mtime, checkedAt: Date.now(), value };
+      resolve(value);
+    };
+    try {
+      const child = spawn(bin, ['--version'], { windowsHide: true });
+      const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } finish(); }, 8000);
+      timer.unref?.();
+      child.stdout?.on('data', (chunk) => { out += chunk; });
+      child.stderr?.on('data', (chunk) => { out += chunk; });
+      child.on('error', () => { clearTimeout(timer); finish(); });
+      child.on('close', () => { clearTimeout(timer); finish(); });
+    } catch {
+      finish();
+    }
+  });
+}
+
 function cmpVersion(a, b) {
   const pa = String(a).split('.').map(Number);
   const pb = String(b).split('.').map(Number);

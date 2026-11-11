@@ -191,10 +191,40 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
         res.status(500).send(t('api.batch.archiveError'));
       }
     });
+    /* Back-pressure: a book is read / converted only while fewer than MAX_QUEUED_ENTRIES wait to be written.
+       Without it the workers resolved every book at once and the buffers piled up in the archiver queue —
+       hundreds of MB for a large selection on a slow client. A closed connection stops the workers. */
+    const MAX_QUEUED_ENTRIES = 4;
+    let queuedEntries = 0;
+    let aborted = false;
+    let slotWaiters = [];
+    const wakeSlotWaiters = () => {
+      const waiters = slotWaiters;
+      slotWaiters = [];
+      for (const wake of waiters) wake();
+    };
+    const waitForSlot = async () => {
+      while (!aborted && queuedEntries >= MAX_QUEUED_ENTRIES) {
+        await new Promise((resolve) => { slotWaiters.push(resolve); });
+      }
+    };
+    const releaseSlot = () => {
+      queuedEntries = Math.max(0, queuedEntries - 1);
+      wakeSlotWaiters();
+    };
+    archive.on('entry', releaseSlot);
+    // a file that vanished between resolve and read: archiver warns and never emits 'entry' for it
+    archive.on('warning', releaseSlot);
+    archive.on('error', () => {
+      aborted = true;
+      wakeSlotWaiters();
+    });
     res.on('close', () => {
       if (!archiveFinalized) {
+        aborted = true;
         archive.destroy();
       }
+      wakeSlotWaiters();
       batchDownloadLocks.delete(lockKey);
     });
     archive.pipe(res);
@@ -213,15 +243,20 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
     let fatalError = null;
     const workers = Array.from({ length: workerCount }, async () => {
       for (;;) {
-        if (fatalError) return;
+        if (fatalError || aborted) return;
+        await waitForSlot();
+        if (fatalError || aborted) return;
         const idx = cursor++;
         if (idx >= bookIds.length) return;
+        queuedEntries += 1; // reserved until the archiver has written this book (or it is skipped)
         const bookId = bookIds[idx];
+        let appended = false;
         try {
           const book = booksMap.get(bookId);
           if (!book) {
             skippedMissing++;
             if (skippedDetails.length < 50) skippedDetails.push(`${bookId}: missing`);
+            releaseSlot();
             continue;
           }
           const sourceExt = String(book.ext || '').toLowerCase() || 'unknown';
@@ -229,6 +264,7 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
           const tResolve = Date.now();
           const download = await resolveDownload(book, format || undefined);
           totalResolveMs += Date.now() - tResolve;
+          if (aborted) return;
 
           const folder = zipSeriesFolderName(book);
           let fileName = sanitizeZipEntryName(download.fileName, `book-${bookId}.${download.format || 'fb2'}`);
@@ -260,8 +296,10 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
           } else {
             archive.append(download.content, { name: entryName });
           }
+          appended = true;
           includedCount++;
         } catch (error) {
+          if (!appended) releaseSlot();
           if (error?.code === 'FB2CNG_NOT_CONFIGURED') {
             fatalError = error;
             cursor = bookIds.length;
@@ -276,6 +314,7 @@ async function streamBatchZipArchive(req, res, next, { bookIds, archiveName, for
       }
     });
     await Promise.all(workers);
+    if (aborted) return; // client gone or archive error: nothing left to send
     if (fatalError) {
       throw fatalError;
     }

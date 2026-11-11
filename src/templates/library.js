@@ -571,7 +571,7 @@ export function renderCatalog({
       ? tp('catalog.queryPhrase', { q: query, scope: fieldLabels[field] || t('catalog.inLibrary') })
       : '';
     const genrePart = filterSummary
-      ? `${query ? ' · ' : ' '}${escapeHtml(filterSummary)}`
+      ? ` · ${escapeHtml(filterSummary)}`
       : '';
     const line = tp('catalog.found', { what: foundCore, queryPart, genrePart });
     return `<div class="list-context-hint list-context-hint-spacious">${line}</div>`;

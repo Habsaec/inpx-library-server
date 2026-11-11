@@ -1189,6 +1189,8 @@ app.use((error, req, res, next) => {
 app.use((error, req, res, next) => {
   console.error(error);
   logSystemEvent('error', 'server', 'unhandled request error', { message: error.message, path: req.path });
+  // a response already on its way (stream, ZIP): let Express close the connection
+  if (res.headersSent) return next(error);
   if (req.path.startsWith('/api/')) {
     return res.status(500).json({ ok: false, code: ApiErrorCode.INTERNAL, error: t('errors.internal') });
   }
@@ -1301,16 +1303,6 @@ function schedulePeriodicWalCheckpoint() {
   if (typeof t.unref === 'function') t.unref();
 }
 
-/* ── Express: глобальный обработчик ошибок (должен быть ПОСЛЕ всех маршрутов) ── */
-app.use((err, req, res, next) => {
-  console.error('[express-error]', err.stack || err);
-  logSystemEvent('error', 'server', 'unhandled request error', {
-    url: req.originalUrl, method: req.method, error: err.message
-  });
-  if (res.headersSent) return next(err);
-  res.status(500).send('Internal Server Error');
-});
-
 async function bootstrap() {
   initDb();
   try {
@@ -1372,6 +1364,8 @@ async function bootstrap() {
     console.log(`Library root: ${getLibraryRoot()}`);
     logSystemEvent('info', 'server', 'server started', { port: config.port, libraryRoot: getLibraryRoot() });
     warmSharedPageCaches();
+    // fbc version for the download-format menus: asked here, not synchronously inside the first page render
+    import('./fb2cng-options.js').then((m) => m.warmFb2cngVersion()).catch(() => {});
     // WAL в несколько ГБ нельзя ужимать в потоке HTTP: health и логин молчат десятки минут.
     if (shouldRunDbMaintenanceInThisProcess()) {
       setImmediate(() => {

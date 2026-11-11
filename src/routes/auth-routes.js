@@ -71,6 +71,7 @@ import {
   renderLogin, renderAdminLogin, renderRegister, renderProfile, renderProfileSettings,
   renderForgotPassword, renderResetPassword,
 } from '../templates.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 function getRecaptchaKeys() {
   return { siteKey: getSetting('recaptcha_site_key'), secretKey: decryptValue(getSetting('recaptcha_secret_key')) };
@@ -270,7 +271,7 @@ export function registerAuthRoutes(app, deps) {
     res.send(renderForgotPassword({ disabled: !isPasswordResetConfigured() }));
   });
 
-  app.post('/forgot-password', async (req, res) => {
+  app.post('/forgot-password', asyncHandler(async (req, res) => {
     if (!isPasswordResetConfigured()) {
       return res.status(404).send(renderForgotPassword({ disabled: true }));
     }
@@ -304,7 +305,7 @@ export function registerAuthRoutes(app, deps) {
     }
 
     res.send(renderForgotPassword({ message: t('passwordReset.emailSent') }));
-  });
+  }));
 
   app.get('/reset-password', (req, res) => {
     const token = String(req.query.token || '').trim();
@@ -354,7 +355,7 @@ export function registerAuthRoutes(app, deps) {
     }));
   });
 
-  app.post('/register', async (req, res) => {
+  app.post('/register', asyncHandler(async (req, res) => {
     const registrationEnabled = getSetting('allow_registration') === '1' && !isOidcRegistrationBlocked();
     const { siteKey, secretKey } = getRecaptchaKeys();
     const expectedInvite = String(getSetting('registration_invite_token') || '').trim();
@@ -390,7 +391,7 @@ export function registerAuthRoutes(app, deps) {
     } catch (error) {
       res.status(400).send(renderRegister({ ...regOpts, error: translateKnownErrorMessage(error.message) }));
     }
-  });
+  }));
 
   // --- Profile ---
 
@@ -578,7 +579,7 @@ export function registerAuthRoutes(app, deps) {
   });
 
   /** GET — надёжнее для внешнего редиректа в Telegram (POST+disable submit ломает отправку формы). */
-  app.get('/profile/telegram/link', requireWebAuth, async (req, res) => {
+  app.get('/profile/telegram/link', requireWebAuth, asyncHandler(async (req, res) => {
     try {
       const tgRuntime = resolveTelegramRuntimeConfig();
       if (!tgRuntime.enabled || !tgRuntime.token) {
@@ -593,7 +594,7 @@ export function registerAuthRoutes(app, deps) {
     } catch (error) {
       res.redirect('/profile/settings?flash=' + encodeURIComponent(translateKnownErrorMessage(error.message)));
     }
-  });
+  }));
 
   app.post('/profile/telegram/digest', requireWebAuth, (req, res) => {
     setUserTelegramDigest(req.user.username, lastFormValue(req.body?.digest) === '1');

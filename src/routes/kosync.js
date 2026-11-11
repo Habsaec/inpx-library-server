@@ -9,6 +9,7 @@ import { getBookById, isBookRead, addReadBooksIfMissing, recordKosyncReading } f
 import { invalidateUserPageCaches } from '../services/cache.js';
 import { logSystemEvent } from '../services/system-events.js';
 import { scheduleKosyncPositionBridge, readerProgressForKosync } from '../services/kosync-position-bridge.js';
+import { asyncHandler } from '../utils/async-handler.js';
 
 /** GET waits this long for the reader-position xpointer, then answers with the stored record. */
 const READER_PROGRESS_WAIT_MS = 5000;
@@ -77,7 +78,7 @@ export function registerKosyncRoutes(app) {
     res.json({ document, timestamp });
   });
 
-  app.get('/kosync/syncs/progress/:document', kosyncAuth, async (req, res) => {
+  app.get('/kosync/syncs/progress/:document', kosyncAuth, asyncHandler(async (req, res) => {
     const document = String(req.params.document || '');
     if (!DOCUMENT_RE.test(document)) {
       return res.status(403).json({ code: 2004, message: "Field 'document' not provided." });
@@ -98,5 +99,5 @@ export function registerKosyncRoutes(app) {
     }
     // Как у эталонного сервера: нет прогресса — 200 и пустой объект (плагин KOReader ждёт 200/401).
     res.json(fromReader || stored || {});
-  });
+  }));
 }

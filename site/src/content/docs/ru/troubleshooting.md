@@ -9,4 +9,4 @@ description: Типичные проблемы и их решения.
 - **В «Скачать» нет EPUB / MOBI.** Не установлен конвертер — запустите `install.cmd` / `install.sh` ещё раз.
 - **Ошибка `better-sqlite3` / `NODE_MODULE_VERSION`.** Запустите `install.cmd` / `install.sh` ещё раз.
 - **Забыли пароль администратора.** `reset-admin.cmd` (Windows) или `./reset-admin.sh`.
-- **Сервер «подвисает».** Ищите `[perf] event loop stalled` в `data/runtime.log`; время ответов по маршрутам — на `/health/perf`.
+- **Сервер «подвисает».** Ищите `[perf] event loop stalled` в `data/runtime.log`; время ответов по маршрутам — на `/health/perf` (под учётной записью администратора).

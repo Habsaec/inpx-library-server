@@ -12,6 +12,7 @@ import { setUserHomeLayout } from '../src/home-layout.js';
 import { registerOpdsRoutes } from '../src/routes/opds.js';
 import { renderShelves, renderCatalog, renderHome } from '../src/templates/library.js';
 import { getPinnedHomeShelves } from '../src/routes/library.js';
+import { stopQueryWorker } from '../src/services/query-pool.js';
 
 const SOURCE_ID = 9301;
 const USER = 'smart_shelf_user';
@@ -63,6 +64,7 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
+  stopQueryWorker(); // the shelves list warms its totals on the query worker
 });
 
 const auth = (username, extra = {}) => ({

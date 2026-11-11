@@ -1170,7 +1170,7 @@ const ru = {
   'catalog.resultsTitle': 'Результаты поиска',
   'catalog.pickMode': 'Выберите режим поиска: {{books}}, {{authors}} или {{series}}.',
   'catalog.loadMore': 'Далее',
-  'catalog.found': 'Найдено {{what}}{{queryPart}}{{genrePart}}.',
+  'catalog.found': 'Найдено: {{what}}{{queryPart}}{{genrePart}}.',
   'catalog.inBooks': 'среди книг',
   'catalog.inAuthors': 'среди авторов',
   'catalog.inSeries': 'среди серий',
