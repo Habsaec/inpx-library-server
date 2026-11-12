@@ -5734,6 +5734,8 @@ const GENRE_DRIVEN_BROWSE_MAX = 8000;
 /** Deep pages (the default plan walks the sort index past every earlier hit): worth sorting a bigger genre. */
 const GENRE_DRIVEN_DEEP_MAX = 100_000;
 const GENRE_DRIVEN_DEEP_OFFSET = 240;
+/** Extra filters that leave few books of a genre (language and «скрыть прочитанное» usually keep most of them). */
+const GENRE_DRIVEN_NARROWING_RE = /lib_rate|active_books\.date|active_books\.ext|book_series/;
 
 /**
  * Browse by genre, small genres: the default plan walks the whole sort index and tests every book for the genre —
@@ -5742,7 +5744,12 @@ const GENRE_DRIVEN_DEEP_OFFSET = 240;
  * books is 2–70 ms. Returns { from, whereSql, params } (same rows as the default plan) or null — use the default.
  */
 function genreDrivenBrowse(genre, genreMode, projectionFresh, letterNorm, extraFilters, offset = 0) {
-  const max = offset >= GENRE_DRIVEN_DEEP_OFFSET ? GENRE_DRIVEN_DEEP_MAX : GENRE_DRIVEN_BROWSE_MAX;
+  /* A second narrowing filter (rating, year, format, «в серии») makes hits rare: the default plan then walks most of
+     the sort index before it has 24 of them — a pinned smart shelf «sf_action + оценка 5 + в серии» (24.5k books in
+     the genre) took 7 s warm and 100 s on a cold disk, blocking the event loop at every start. Reading the genre's
+     own list is 0.2 s, so such a page takes it up to the bigger limit as well. */
+  const narrowed = extraFilters.some((ef) => GENRE_DRIVEN_NARROWING_RE.test(ef.where));
+  const max = offset >= GENRE_DRIVEN_DEEP_OFFSET || narrowed ? GENRE_DRIVEN_DEEP_MAX : GENRE_DRIVEN_BROWSE_MAX;
   const genres = parseGenreList(genre);
   if (!genres.length) return null;
   let rows;
