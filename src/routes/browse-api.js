@@ -47,6 +47,9 @@ const AUTHOR_SIDECAR_MS = parseEnvTimeoutMs('AUTHOR_SIDECAR_TIMEOUT_MS', 2_500);
 /**
  * @param {import('express').Application} app
  */
+/** `/api/library/:view` lists of one user that a client may read in pages of up to 500. */
+const LIBRARY_BIG_PAGE_VIEWS = new Set(['continue', 'read', 'want', 'rated']);
+
 export function registerBrowseApiRoutes(app) {
   app.get('/api/search/suggest', requireBrowseAuth, (req, res) => {
     const q = String(req.query.q || '').trim();
@@ -102,7 +105,11 @@ export function registerBrowseApiRoutes(app) {
     const view = String(req.params.view);
     const page = safePage(req.query.page);
     const pageSizeRaw = Number(req.query.pageSize);
-    const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 && pageSizeRaw <= 24
+    // Personal lists may be asked in big pages (≤ 500): the Android app loads all read / want /
+    // reading ids after every sync, and 24 a page was ~85 requests for 2000 read books.
+    // Catalog-wide views keep 24; a bigger value there falls back to 24 as before.
+    const pageSizeMax = LIBRARY_BIG_PAGE_VIEWS.has(view) ? 500 : 24;
+    const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 && pageSizeRaw <= pageSizeMax
       ? Math.floor(pageSizeRaw)
       : 24;
     const type = String(req.query.type || '').trim();
