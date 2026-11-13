@@ -266,6 +266,7 @@ export function getRuntimeQueryCacheGeneration() {
 function clearRuntimeQueryCaches() {
   runtimeQueryCacheGeneration += 1;
   _browseTotalMemo.clear();
+  _browsePageMemo.clear();
   scheduleBrowsePrewarm();
   _opdsQueryMemo.clear();
   _alphaIndexMemo.clear();
@@ -4790,10 +4791,7 @@ export function searchBooks({
     /* Ключ по s.flibusta_sidecar живёт в присоединённой таблице — с ним индекс books бесполезен и
        каждая страница сортирует весь каталог (~1.2 с). Нужен он только если у включённых источников
        флаг различается; при одном источнике ORDER BY совпадает с idx_books_recent_sort. */
-    const listOrderBy =
-      sort === 'recent' && enabledSourcesHaveMixedSidecarFlag()
-        ? applyOrder('COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, \'\'), b.imported_at) DESC, b.imported_at DESC, b.id DESC', order)
-        : resolveBookAliasSort(sort, 'b', order);
+    const listOrderBy = browseListOrderBy(sort, order);
 
     /* Total is the same for every page of the same filters — count 600k rows once per TTL, not per page. */
     const tBrowse = Date.now();
@@ -4836,18 +4834,9 @@ export function searchBooks({
     }
 
     const tBrowseItems = Date.now();
-    const items = db
-      .prepare(
-        `
-      SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
-      FROM ${pageFrom}
-      LEFT JOIN sources s ON s.id = b.source_id
-      ${langFilterIsBroad(lang, langs) ? pageWhere.replace(/\bb\.lang\b/g, '+b.lang') : pageWhere}
-      ORDER BY ${listOrderBy}
-      LIMIT ? OFFSET ?
-    `
-      )
-      .all(...pageParams, pageSize, offset)
+    const pageQuery = browsePageQuery({ pageFrom, pageWhere, pageParams, listOrderBy, lang, langs, pageSize, offset });
+    // a page prepared on the query worker (`warmBrowsePage`) is taken once, otherwise it is read here
+    const items = (takeBrowsePageMemo(pageQuery.key) || db.prepare(pageQuery.sql).all(...pageQuery.params))
       .map(mapBookListRow);
 
     attachSeriesListsToBooks(items);
@@ -5782,6 +5771,85 @@ function genreDrivenBrowse(genre, genreMode, projectionFresh, letterNorm, extraF
   return { from, whereSql, params: [...driver, ...params] };
 }
 const _browseTotalInflight = new Map();
+
+/** ORDER BY of a plain browse page (see the sidecar note in `searchBooks`). */
+function browseListOrderBy(sort, order) {
+  return sort === 'recent' && enabledSourcesHaveMixedSidecarFlag()
+    ? applyOrder('COALESCE(s.flibusta_sidecar, 0) DESC, COALESCE(NULLIF(b.date, \'\'), b.imported_at) DESC, b.imported_at DESC, b.id DESC', order)
+    : resolveBookAliasSort(sort, 'b', order);
+}
+
+/** SQL + params of one plain browse page; `key` names the result in `_browsePageMemo`. */
+function browsePageQuery({ pageFrom, pageWhere, pageParams, listOrderBy, lang, langs, pageSize, offset }) {
+  const sql = `
+      SELECT b.id, b.title, b.authors, b.genres, b.series, b.series_no AS seriesNo, b.ext, b.lang, b.lib_rate AS libRate, b.archive_name AS archiveName, b.deleted
+      FROM ${pageFrom}
+      LEFT JOIN sources s ON s.id = b.source_id
+      ${langFilterIsBroad(lang, langs) ? pageWhere.replace(/\bb\.lang\b/g, '+b.lang') : pageWhere}
+      ORDER BY ${listOrderBy}
+      LIMIT ? OFFSET ?
+    `;
+  const params = [...pageParams, pageSize, offset];
+  return { sql, params, key: `${runtimeQueryCacheGeneration}|${sql}|${JSON.stringify(params)}` };
+}
+
+/* Rows of browse pages read on the query worker, taken once by the next `searchBooks` of the same page. A pinned smart
+   shelf «sf_action + оценка 5 + в серии» reads up to 100 000 rows of the genre's list: 0.4 s warm, but after a restart on
+   a cold disk the home page froze the whole server for 55 s. */
+const BROWSE_PAGE_MEMO_TTL_MS = 2 * 60_000;
+const _browsePageMemo = new Map(); // key -> { rows, at }
+const _browsePageInflight = new Map();
+
+function takeBrowsePageMemo(key) {
+  const hit = _browsePageMemo.get(key);
+  if (!hit) return null;
+  _browsePageMemo.delete(key);
+  return Date.now() - hit.at < BROWSE_PAGE_MEMO_TTL_MS ? hit.rows : null;
+}
+
+/**
+ * Reads a plain browse page (no text query) on the query worker, so the next `searchCatalog` of that page takes the rows
+ * from the memo instead of reading them on the event loop. Only worth it for slow pages (genre + narrowing filter);
+ * call `warmBrowseTotal` too. Never throws.
+ */
+export async function warmBrowsePage({
+  query = '', genre = '', genreMode = 'or', letter = '', lang = '', langs = null,
+  format = '', year = 0, minRate = 0, hasSeries = null, hideReadUser = '',
+  sort = 'title', order = '', page = 1, pageSize = 24
+} = {}) {
+  try {
+    if (String(prepareSearchQueryInput(query) || '').trim()) return;
+    const projectionFresh = isActiveBooksProjectionFresh();
+    const letterNorm = String(letter || '').trim().toLowerCase();
+    const extraFilters = buildCatalogExtraFilters({ lang, langs, format, year, minRate, hasSeries, hideReadUser });
+    const genreFilter = buildGenreFilterSql(genre, genreMode);
+    const offset = (Math.max(1, Math.floor(Number(page) || 1)) - 1) * pageSize;
+    const { whereSql, params } = browseWhere(genreFilter, letterNorm, extraFilters);
+    const driven = genreFilter ? genreDrivenBrowse(genre, genreMode, projectionFresh, letterNorm, extraFilters, offset) : null;
+    const pageQuery = browsePageQuery({
+      pageFrom: driven ? driven.from : (projectionFresh ? BROWSE_FROM_PROJECTION : 'active_books b'),
+      pageWhere: driven ? driven.whereSql : whereSql,
+      pageParams: driven ? driven.params : params,
+      listOrderBy: browseListOrderBy(sort, order),
+      lang, langs, pageSize, offset
+    });
+    const hit = _browsePageMemo.get(pageQuery.key);
+    if (hit && Date.now() - hit.at < BROWSE_PAGE_MEMO_TTL_MS) return;
+    let job = _browsePageInflight.get(pageQuery.key);
+    if (!job) {
+      job = queryAsync(pageQuery.sql, pageQuery.params, { mode: 'all' })
+        .then((rows) => {
+          if (!Array.isArray(rows)) return;
+          if (_browsePageMemo.size >= 32) _browsePageMemo.delete(_browsePageMemo.keys().next().value);
+          _browsePageMemo.set(pageQuery.key, { rows, at: Date.now() });
+        })
+        .catch(() => {})
+        .finally(() => _browsePageInflight.delete(pageQuery.key));
+      _browsePageInflight.set(pageQuery.key, job);
+    }
+    await job;
+  } catch { /* the sync path in searchCatalog still works */ }
+}
 
 /**
  * Makes the (exact) total of a plain browse page ready in the memo WITHOUT blocking the event loop: the COUNT

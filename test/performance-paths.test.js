@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { initDb, db, refreshCatalogBookCounts } from '../src/db.js';
 import {
-  searchCatalog, warmBrowseTotal, listSearchGenres, listSearchGenresAsync, listLanguages, getBooksByFacet,
+  searchCatalog, warmBrowseTotal, warmBrowsePage, listSearchGenres, listSearchGenresAsync, listLanguages, getBooksByFacet,
   ensureLanguageTotals, opdsQuery, listAuthorsByLanguage, listEntitiesByLanguageAsync, listEntitiesByGenreAsync,
   listAuthorsByGenre
 } from '../src/inpx.js';
@@ -70,6 +70,19 @@ test('warmBrowseTotal leaves searchCatalog with the exact filtered total', async
   await warmBrowseTotal({ lang: 'ru', hasSeries: 1 });
   assert.equal(searchCatalog({ query: '', page: 1, pageSize: 24, sort: 'title', lang: 'ru', hasSeries: 1 }).total,
     Number(db.prepare("SELECT COUNT(*) AS c FROM active_books WHERE lang = 'ru' AND EXISTS (SELECT 1 FROM book_series bs WHERE bs.book_id = active_books.id)").get().c));
+});
+
+test('warmBrowsePage: a page read on the query worker is the page searchCatalog would read', async () => {
+  const args = { genre: 'perf_genre', hasSeries: 1, sort: 'title' };
+  const direct = searchCatalog({ query: '', page: 1, pageSize: 24, ...args }).items.map((b) => b.id);
+  await warmBrowsePage({ ...args, page: 1, pageSize: 24 });
+  const warmed = searchCatalog({ query: '', page: 1, pageSize: 24, ...args });
+  assert.deepEqual(warmed.items.map((b) => b.id), direct);
+  assert.deepEqual(direct, ['pp1', 'pp2']);
+  assert.ok(Array.isArray(warmed.items[0].genresList), 'rows from the worker go through mapBookListRow');
+  // taken once: the next read is a normal sync read with the same rows
+  assert.deepEqual(searchCatalog({ query: '', page: 1, pageSize: 24, ...args }).items.map((b) => b.id), direct);
+  await warmBrowsePage({ query: 'perf', page: 1, pageSize: 24 }); // a text query is not warmed and never throws
 });
 
 test('genre options for a language scope come from the counters and match the GROUP BY', async () => {

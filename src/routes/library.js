@@ -423,7 +423,7 @@ export function registerLibraryRoutes(app, deps) {
     const homeLayout = username ? getUserHomeLayout(username) : null;
     const homeShown = (id) => !homeLayout || isHomeSectionVisible(homeLayout, id);
     // totals of the pinned smart shelves are counted on the query worker, not here
-    if (username && homeShown('shelves')) await warmSmartShelfTotals(username, { home: true });
+    if (username && homeShown('shelves')) await warmSmartShelfTotals(username, { home: true, pageSize: DISPLAY_COUNT });
     const homeShelves = username && homeShown('shelves') ? getPinnedHomeShelves(username, DISPLAY_COUNT) : [];
     const homeCollections = username && homeShown('collections') ? getPinnedHomeCollections(username, DISPLAY_COUNT) : [];
     let followingShelf = null;
@@ -453,7 +453,7 @@ export function registerLibraryRoutes(app, deps) {
   }));
 
   app.get('/api/home/shelves', requireApiAuth, asyncHandler(async (req, res) => {
-    await warmSmartShelfTotals(req.user.username, { home: true });
+    await warmSmartShelfTotals(req.user.username, { home: true, pageSize: getHomeNewestDisplayCount() });
     res.json({ items: getPinnedHomeShelves(req.user.username, getHomeNewestDisplayCount(), { collections: req.query.collections === '1' }) });
   }));
 

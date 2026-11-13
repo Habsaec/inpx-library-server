@@ -3,7 +3,7 @@
  * Книги не хранятся — подбираются при открытии полки, поэтому полка «сама» пополняется после индексации.
  */
 import { db } from './db.js';
-import { getRuntimeQueryCacheGeneration, parseGenreList, parseGenreMode, parseHasSeries, searchCatalog, warmBrowseTotal, registerBrowsePrewarmHook } from './inpx.js';
+import { getRuntimeQueryCacheGeneration, parseGenreList, parseGenreMode, parseHasSeries, searchCatalog, warmBrowseTotal, warmBrowsePage, registerBrowsePrewarmHook } from './inpx.js';
 import { effectiveContentLangs } from './user-content-langs.js';
 
 const SORTS = ['recent', 'title', 'author', 'series', 'rating'];
@@ -18,9 +18,13 @@ const FIRST_PAGE_CACHE_MAX = 200;
 const firstPageCache = new Map();
 
 /** `getSmartShelfBooks` для первой страницы через кеш; вызывающий не должен менять результат. */
-export function getSmartShelfFirstPage(shelf, { pageSize = 24, langs = null } = {}) {
+function firstPageKey(query, pageSize, langs) {
   const langKey = Array.isArray(langs) ? langs.join(',') : '';
-  const key = `${getRuntimeQueryCacheGeneration()}|${pageSize}|${langKey}|${shelf.query}`;
+  return `${getRuntimeQueryCacheGeneration()}|${pageSize}|${langKey}|${query}`;
+}
+
+export function getSmartShelfFirstPage(shelf, { pageSize = 24, langs = null } = {}) {
+  const key = firstPageKey(shelf.query, pageSize, langs);
   const hit = firstPageCache.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.value;
   const value = getSmartShelfBooks(shelf, { page: 1, pageSize, langs });
@@ -192,12 +196,15 @@ registerBrowsePrewarmHook(async () => {
  * Counts the catalog totals of the user's smart shelves on the query worker, so the shelf pages read next
  * (`getSmartShelfFirstPage`) find them in the memo instead of counting on the event loop (0.3–0.9 s per shelf
  * right after a restart or a catalog change). `home` — pinned shelves with the profile languages (the home page);
- * otherwise every shelf without them (the shelves list previews). Never throws.
+ * otherwise every shelf without them (the shelves list previews). `pageSize` — also read the first page there
+ * (`warmBrowsePage`) unless `getSmartShelfFirstPage` has it cached: a genre + rating + «в серии» shelf reads up to
+ * 100 000 rows of the genre, which froze the server for 55 s on a cold disk after a restart. Never throws.
  */
-export async function warmSmartShelfTotals(username, { home = false } = {}) {
+export async function warmSmartShelfTotals(username, { home = false, pageSize = 0 } = {}) {
   try {
     const rows = db.prepare('SELECT query, on_home AS onHome FROM smart_shelves WHERE username = ?').all(username);
     if (!rows.length) return;
+    if (!home && !pageSize) pageSize = PREVIEW_COUNT; // the shelves list previews (`listSmartShelves` withPreview)
     let langs = null;
     if (home) {
       try { langs = effectiveContentLangs(username); } catch { /* none */ }
@@ -208,10 +215,15 @@ export async function warmSmartShelfTotals(username, { home = false } = {}) {
       let f;
       try { f = parseSmartShelfFilter(row.query); } catch { continue; }
       if (f.q) continue;
-      jobs.push(warmBrowseTotal({
+      const args = {
         genre: f.genre.join(','), genreMode: f.genreMode, lang: f.lang, langs, format: f.format,
         year: f.year, minRate: f.minRate, hasSeries: f.hasSeries
-      }));
+      };
+      jobs.push(warmBrowseTotal(args));
+      const cached = firstPageCache.get(firstPageKey(row.query, pageSize, langs));
+      if (pageSize > 0 && !(cached && cached.expiresAt > Date.now())) {
+        jobs.push(warmBrowsePage({ ...args, sort: f.sort, order: f.order, page: 1, pageSize }));
+      }
     }
     await Promise.all(jobs);
   } catch { /* the sync count still works */ }
