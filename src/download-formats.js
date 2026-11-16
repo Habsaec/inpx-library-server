@@ -3,9 +3,11 @@ import { db } from './db.js';
 import { fb2cngSupports } from './fb2cng-options.js';
 
 /** Formats fb2cng can produce from FB2 (when configured). */
-export const FB2_CONVERTIBLE_FORMATS = ['epub2', 'epub3', 'kepub', 'kepub3', 'kfx', 'azw8', 'pdf', 'txt', 'md'];
+export const FB2_CONVERTIBLE_FORMATS = ['epub2', 'epub3', 'kepub', 'kepub3', 'kfx', 'azw8', 'azw3', 'pdf', 'txt', 'md'];
 /** Formats that need fbc >= 1.6 (older binaries: EPUB / KEPUB / KFX / AZW8 only). */
 const FB2CNG_EXTENDED_FORMATS = new Set(['kepub3', 'pdf', 'txt', 'md']);
+/** Native AZW3 (KF8) output appeared in fbc 2.0. */
+const FB2CNG_AZW3_FORMATS = new Set(['azw3']);
 
 /** FB2 packed into a single-entry ZIP (`.fb2.zip`); needs no converter. */
 export const FB2_ZIP_FORMAT = 'fb2zip';
@@ -19,6 +21,7 @@ export const FORMAT_LABELS = {
   kepub3: 'KEPUB3',
   kfx: 'KFX',
   azw8: 'AZW8',
+  azw3: 'AZW3',
   pdf: 'PDF',
   txt: 'TXT',
   md: 'Markdown'
@@ -30,7 +33,8 @@ export const DOWNLOAD_FORMATS = new Set(['fb2', FB2_ZIP_FORMAT, ...FB2_CONVERTIB
 export function getFb2cngConvertibleFormats() {
   if (!config.fb2cngPath) return [];
   const extended = fb2cngSupports('1.6.0');
-  return FB2_CONVERTIBLE_FORMATS.filter((f) => extended || !FB2CNG_EXTENDED_FORMATS.has(f));
+  const azw3 = fb2cngSupports('2.0.0');
+  return FB2_CONVERTIBLE_FORMATS.filter((f) => (extended || !FB2CNG_EXTENDED_FORMATS.has(f)) && (azw3 || !FB2CNG_AZW3_FORMATS.has(f)));
 }
 
 /** Formats shown in admin and used for batch ZIP (FB2 source). */

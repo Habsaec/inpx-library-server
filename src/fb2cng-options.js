@@ -159,16 +159,23 @@ export const FB2CNG_OPTION_DEFS = [
   { key: 'screen_width', path: 'document.images.screen.width', type: 'int', min: 600, max: 4000, def: 1264, group: 'images' },
   { key: 'screen_height', path: 'document.images.screen.height', type: 'int', min: 600, max: 4000, def: 1680, group: 'images' },
   { key: 'cover_generate', path: 'document.images.cover.generate', type: 'bool', def: true, group: 'images' },
-  { key: 'cover_resize', path: 'document.images.cover.resize', type: 'enum', values: ['none', 'keepAR', 'stretch', 'fit'], def: 'stretch', group: 'images' },
+  // `fill` (fbc 2.1): proportional, covers both screen sides without cropping
+  { key: 'cover_resize', path: 'document.images.cover.resize', type: 'enum', values: ['none', 'keepAR', 'stretch', 'fit', 'fill'], valuesSince: { fill: '2.1.0' }, def: 'stretch', group: 'images' },
   { key: 'screen_dpi', path: 'document.images.screen.dpi', type: 'int', min: 72, max: 600, def: 300, group: 'images', since: '1.9.0' },
   { key: 'img_rasterize_svg', path: 'document.images.rasterize_svg', type: 'bool', def: false, group: 'images', since: '1.9.0' },
   { key: 'img_raster_format', path: 'document.images.raster_format', type: 'enum', values: ['auto', 'jpeg'], def: 'auto', group: 'images', since: '1.9.0' },
+  { key: 'img_fit_to_screen', path: 'document.images.fit_to_screen', type: 'bool', def: false, group: 'images', since: '2.1.0' },
+  { key: 'img_baseline_jpeg', path: 'document.images.baseline_jpeg', type: 'bool', def: false, group: 'images', since: '2.1.0' },
+  { key: 'img_grayscale', path: 'document.images.grayscale', type: 'enum', values: ['none', 'luma'], def: 'none', group: 'images', since: '2.1.0' },
   { key: 'page_map_size', path: 'document.page_map.size', type: 'int', min: 500, max: 20000, def: 2300, group: 'text' },
   { key: 'annotation_in_toc', path: 'document.annotation.in_toc', type: 'bool', def: true, group: 'text' },
   { key: 'toc_untitled', path: 'document.toc_page.include_chapters_without_title', type: 'bool', def: false, group: 'text' },
   { key: 'kfx_compression', path: 'document.kfx.compression', type: 'enum', values: ['none', 'lzma'], def: 'none', group: 'kindle', since: '1.9.0' },
+  // document.azw3.apnx is not offered: it writes a sidecar file / .sdr folder that one download cannot carry
+  { key: 'azw3_compression', path: 'document.azw3.compression', type: 'enum', values: ['none', 'standard', 'huffdic'], def: 'standard', group: 'kindle', since: '2.0.0' },
   { key: 'pdf_page_frame', path: 'document.pdf.page_frame', type: 'enum', values: ['0', '0.5pt', '1pt', '2pt', '1px'], def: '0', group: 'pdf', since: '1.9.5' },
-  { key: 'md_images', path: 'document.images.markdown', type: 'enum', values: ['placeholder', 'embedded'], def: 'placeholder', group: 'md', since: '1.9.0' },
+  // fbc 2.0 moved the key (the old one makes 2.x reject the whole config)
+  { key: 'md_images', path: 'document.images.markdown', pathSince: { '2.0.0': 'document.markdown.images' }, type: 'enum', values: ['placeholder', 'embedded'], def: 'placeholder', group: 'md', since: '1.9.0' },
   // Шаблоны Go (text/template + slim-sprig). '' = оставить как в базовом конфиге. Проверяет fbc при сохранении.
   { key: 'tpl_title', path: 'document.metainformation.title_template', type: 'text', def: '', group: 'templates', fallback: '' },
   { key: 'tpl_creator', path: 'document.metainformation.creator_name_template', type: 'text', def: '', group: 'templates', fallback: '' },
@@ -283,15 +290,33 @@ function cmpVersion(a, b) {
   return 0;
 }
 
-/** fbc не older than `min`; при неизвестной версии считаем, что поддерживает (не прячем возможности вслепую). */
-export function fb2cngSupports(min) {
-  const v = getFb2cngVersion();
-  return !v || cmpVersion(v, min) >= 0;
+/**
+ * fbc не older than `min`; при неизвестной версии считаем, что поддерживает (не прячем возможности вслепую).
+ * `version` — проверяемая версия (по умолчанию установленного бинарника; новый бинарник перед установкой — свою).
+ */
+export function fb2cngSupports(min, version = getFb2cngVersion()) {
+  return !version || cmpVersion(version, min) >= 0;
 }
 
-/** Опция известна установленному fbc (в старый бинарник ключи 1.9 не пишем — он отклонит конфиг). */
-export function isFb2cngOptionSupported(def) {
-  return !def.since || fb2cngSupports(def.since);
+/** Опция известна fbc этой версии (в старый бинарник ключи 1.9 не пишем — он отклонит конфиг). */
+export function isFb2cngOptionSupported(def, version = getFb2cngVersion()) {
+  return !def.since || fb2cngSupports(def.since, version);
+}
+
+/** Значения enum, которые понимает fbc этой версии (`valuesSince`: новое значение у старой опции). */
+export function fb2cngOptionValues(def, version = getFb2cngVersion()) {
+  if (!def.valuesSince) return def.values;
+  return def.values.filter((v) => !def.valuesSince[v] || fb2cngSupports(def.valuesSince[v], version));
+}
+
+/** YAML-путь опции для fbc этой версии (`pathSince`: ключ переехал в новой версии). */
+export function fb2cngOptionPath(def, version = getFb2cngVersion()) {
+  let out = def.path;
+  let best = '';
+  for (const [since, p] of Object.entries(def.pathSince || {})) {
+    if (fb2cngSupports(since, version) && (!best || cmpVersion(since, best) > 0)) { best = since; out = p; }
+  }
+  return out;
 }
 
 /* ───────────── нормализация ───────────── */
@@ -345,11 +370,14 @@ export function normalizeFb2cngOptions(raw) {
   return out;
 }
 
-/** Только отличия от значений по умолчанию. */
-export function diffFb2cngOptions(full) {
+/** Только отличия от значений по умолчанию (то, чего fbc этой версии не знает, отбрасывается). */
+export function diffFb2cngOptions(full, version = getFb2cngVersion()) {
   const out = {};
   for (const def of FB2CNG_OPTION_DEFS) {
-    if (full[def.key] !== def.def && isFb2cngOptionSupported(def)) out[def.key] = full[def.key];
+    const v = full[def.key];
+    if (v === def.def || !isFb2cngOptionSupported(def, version)) continue;
+    if (def.type === 'enum' && !fb2cngOptionValues(def, version).includes(v)) continue;
+    out[def.key] = v;
   }
   return out;
 }
@@ -530,21 +558,24 @@ function yamlScalar(def, value) {
 
 /**
  * Собрать YAML: базовый текст + отличия. `files.cssPath` — путь файла со своим CSS (его пишет вызывающий).
+ * `files.version` — для какой версии fbc (по умолчанию установленной): от неё зависят ключи и их пути.
  */
 export function buildFb2cngConfigText(baseText, options, files = {}) {
   let text = baseText;
-  const diff = diffFb2cngOptions(normalizeFb2cngOptions(options));
+  const version = files.version ?? getFb2cngVersion();
+  const diff = diffFb2cngOptions(normalizeFb2cngOptions(options), version);
   for (const key of Object.keys(diff)) {
     const def = DEFS_BY_KEY.get(key);
     if (def.cssOnly) continue;
-    if (def.type === 'text') text = setYamlValue(text, def.path, { block: diff[key] });
-    else if (def.type === 'css') text = setYamlValue(text, def.path, JSON.stringify(files.cssPath || 'custom.css'));
+    const keyPath = fb2cngOptionPath(def, version);
+    if (def.type === 'text') text = setYamlValue(text, keyPath, { block: diff[key] });
+    else if (def.type === 'css') text = setYamlValue(text, keyPath, JSON.stringify(files.cssPath || 'custom.css'));
     else if (def.type === 'vignette') {
       const v = diff[key];
-      if (v === 'builtin') text = setYamlValue(text, def.path, 'builtin');
-      else text = setYamlValue(text, def.path, JSON.stringify(path.join(files.vignetteDir || getVignetteDir(), v.slice(5))));
+      if (v === 'builtin') text = setYamlValue(text, keyPath, 'builtin');
+      else text = setYamlValue(text, keyPath, JSON.stringify(path.join(files.vignetteDir || getVignetteDir(), v.slice(5))));
     }
-    else text = setYamlValue(text, def.path, yamlScalar(def, diff[key]));
+    else text = setYamlValue(text, keyPath, yamlScalar(def, diff[key]));
   }
   if (files.cssPath && !diff.custom_css) text = setYamlValue(text, 'document.stylesheet_path', JSON.stringify(files.cssPath));
   return text.endsWith('\n') ? text : `${text}\n`;
@@ -877,14 +908,14 @@ export async function validateFb2cngOptions(options, bin = getFb2cngBinaryPath()
  * Файл конфига с текущими сохранёнными настройками во временной папке — для проверки нового fbc перед установкой.
  * @returns {Promise<{ path: string, cleanup: () => Promise<void> }>}
  */
-export async function writeCurrentConfigForCheck(optionsOverride = null) {
+export async function writeCurrentConfigForCheck(optionsOverride = null, version = undefined) {
   await ensureFb2cngBuiltinCss();
   const dir = path.join(config.conversionTempDir, `cfgcur-${crypto.randomBytes(6).toString('hex')}`);
   await fs.promises.mkdir(dir, { recursive: true });
   const options = optionsOverride || parseFb2cngOptionsSetting(getSetting('fb2cng_options'));
-  // для нового бинарника не отфильтровываем опции по версии установленного (since снимаем)
+  // `version` — версия нового бинарника: ключи и их пути берутся для неё, а не для установленного
   const cssPath = materializeCssSync(options, dir);
   const cfg = path.join(dir, 'cfg.yaml');
-  await fs.promises.writeFile(cfg, buildFb2cngConfigText(readBaseConfigText(), options, { cssPath }), 'utf8');
+  await fs.promises.writeFile(cfg, buildFb2cngConfigText(readBaseConfigText(), options, { cssPath, version }), 'utf8');
   return { path: cfg, cleanup: () => fs.promises.rm(dir, { recursive: true, force: true }) };
 }

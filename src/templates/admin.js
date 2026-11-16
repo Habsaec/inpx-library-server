@@ -42,7 +42,7 @@ import {
 } from '../download-formats.js';
 import { DOWNLOAD_FILENAME_STYLES } from '../download-filename.js';
 import { FB2_WEBP_MODES } from '../fb2-webp-images.js';
-import { FB2CNG_OPTION_DEFS, isFb2cngOptionSupported } from '../fb2cng-options.js';
+import { FB2CNG_OPTION_DEFS, isFb2cngOptionSupported, fb2cngOptionValues } from '../fb2cng-options.js';
 import {
   TELEGRAM_DEFAULT_PROFILE_DESCRIPTION,
   TELEGRAM_DEFAULT_PROFILE_SHORT,
@@ -2394,7 +2394,7 @@ export function renderAdminCollectionsCard({ collections = [], matching = false,
 /** Админка → Контент → «Конвертация» (fb2cng): настройки (`FB2CNG_OPTION_DEFS`) + управление самим fbc. */
 export function renderAdminConversionCard({ values = {}, templateDefaults = {}, fbc = {}, previewFormats = ['epub2', 'epub3'], fontLabel = (v) => String(v).slice(5), customBase = false, csrfToken = '', error = '' }) {
   const groups = ['text', 'templates', 'fix', 'images', 'fonts', 'css', 'vignettes', 'kindle', 'pdf', 'md'];
-  const defs = FB2CNG_OPTION_DEFS.filter(isFb2cngOptionSupported);
+  const defs = FB2CNG_OPTION_DEFS.filter((def) => isFb2cngOptionSupported(def));
   const valueLabel = (def, o) => t(`admin.conv.val.${def.key}.${o}`);
   const field = (def) => {
     const id = `fb2cng-${def.key}`;
@@ -2425,9 +2425,12 @@ export function renderAdminConversionCard({ values = {}, templateDefaults = {}, 
         </div></div>`;
     }
     if (def.type === 'enum') {
+      const choices = fb2cngOptionValues(def);
+      // a value this fbc does not know (saved under a newer one) is not written — show the effective default
+      const sel = choices.includes(v) ? v : def.def;
       return `<div class="admin-field-group"><label for="${id}">${label}</label>
-        <select id="${id}" name="${name}" style="max-width:420px">${def.values.map((o) =>
-          `<option value="${escapeHtml(o)}" ${v === o ? 'selected' : ''}>${escapeHtml(valueLabel(def, o))}</option>`).join('')}</select></div>`;
+        <select id="${id}" name="${name}" style="max-width:420px">${choices.map((o) =>
+          `<option value="${escapeHtml(o)}" ${sel === o ? 'selected' : ''}>${escapeHtml(valueLabel(def, o))}</option>`).join('')}</select></div>`;
     }
     if (def.type === 'text' || def.type === 'css') {
       const shown = v || templateDefaults[def.key] || '';

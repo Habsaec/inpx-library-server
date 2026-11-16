@@ -151,7 +151,7 @@ let installing = false;
  * Скачать, проверить и установить последний fbc. `validateConfigPath` — YAML, который новый бинарник обязан принять.
  * @returns {Promise<{ version: string, previous: string }>}
  */
-export async function installLatestFbc({ validateConfigPath = '', previousVersion = '' } = {}) {
+export async function installLatestFbc({ validateConfigPath = '', validateConfigFor = null, previousVersion = '' } = {}) {
   if (installing) throw new Error('Update is already running');
   installing = true;
   const work = path.join(config.conversionTempDir, `fbc-update-${crypto.randomBytes(6).toString('hex')}`);
@@ -196,11 +196,18 @@ export async function installLatestFbc({ validateConfigPath = '', previousVersio
     const ver = await runBinary(candidate, ['--version'], work);
     const vm = /(\d+\.\d+\.\d+)/.exec(ver.out);
     if (!ver.ok || !vm || vm[1] !== info.version) throw new Error(`New binary check failed: ${ver.out.slice(0, 200)}`);
-    if (validateConfigPath) {
-      const dump = await runBinary(candidate, ['-c', validateConfigPath, 'dumpconfig', path.join(work, 'dump.yaml')], work);
-      if (!dump.ok || /error/i.test(dump.out)) {
-        throw new Error(`The new fbc rejects the current conversion settings: ${dump.out.slice(0, 300)}`);
+    // validateConfigFor(version) writes the settings as that version expects them (keys move between releases)
+    const check = validateConfigFor ? await validateConfigFor(info.version) : null;
+    try {
+      const cfgPath = check?.path || validateConfigPath;
+      if (cfgPath) {
+        const dump = await runBinary(candidate, ['-c', cfgPath, 'dumpconfig', path.join(work, 'dump.yaml')], work);
+        if (!dump.ok || /error/i.test(dump.out)) {
+          throw new Error(`The new fbc rejects the current conversion settings: ${dump.out.slice(0, 300)}`);
+        }
       }
+    } finally {
+      if (check?.cleanup) await check.cleanup().catch(() => {});
     }
 
     // 4. swap in (a running Windows exe cannot be overwritten, but can be renamed)

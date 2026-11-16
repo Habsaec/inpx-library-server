@@ -35,7 +35,7 @@ const MIME = {
   xhtml: 'application/xhtml+xml; charset=utf-8', html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8',
   css: 'text/css; charset=utf-8', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
   webp: 'image/webp', svg: 'image/svg+xml', pdf: 'application/pdf', txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8',
-  kfx: 'application/octet-stream', azw8: 'application/octet-stream', ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff', woff2: 'font/woff2'
+  kfx: 'application/octet-stream', azw8: 'application/octet-stream', azw3: 'application/octet-stream', ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff', woff2: 'font/woff2'
 };
 
 /** Файл из распакованного предпросмотра или null. */
@@ -106,8 +106,8 @@ function bookIdFromInput(input) {
 }
 
 const EPUB_FORMATS = new Set(['epub2', 'epub3', 'kepub', 'kepub3']);
-const KINDLE_FORMATS = new Set(['kfx', 'azw8']);
-const SINGLE_FILE_EXT = { pdf: 'pdf', txt: 'txt', md: 'md', kfx: 'kfx', azw8: 'azw8' };
+const KINDLE_FORMATS = new Set(['kfx', 'azw8', 'azw3']);
+const SINGLE_FILE_EXT = { pdf: 'pdf', txt: 'txt', md: 'md', kfx: 'kfx', azw8: 'azw8', azw3: 'azw3' };
 
 const hrefFor = (token, name) => `/admin/conversion/preview/${token}/${name.split('/').map(encodeURIComponent).join('/')}`;
 

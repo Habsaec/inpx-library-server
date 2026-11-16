@@ -250,11 +250,11 @@ if exist "converter\fbc.exe" (
   goto :done
 )
 
-set "FBC_VERSION=v1.9.5"
+set "FBC_VERSION=v2.1.1"
 set "FBC_ARCH=%PLATFORM_ARCH%"
-set "FBC_SHA256=c4e76822e7ab5b8c699fc6f9644d2c75022c03abf886ac3e270f4705b2d6f589"
-if /i "%PLATFORM_ARCH%"=="arm64" set "FBC_SHA256=e66abecfff62baf03131a080a43b5036fce9e354f1e54ebe43fa31f935c85e21"
-if /i "%PLATFORM_ARCH%"=="386" set "FBC_SHA256=5abb920a096ddd285f2db86b7f3d6f533b8d144ff041346d2d9c2354863bd3ea"
+set "FBC_SHA256=c5ce359dfa1765439eb8b438fe1927390ebef8780012ce1976e618df5322eb1b"
+if /i "%PLATFORM_ARCH%"=="arm64" set "FBC_SHA256=bb220c598ae5b102e02e3ca64bdd7d276c6811818b352339452fd51514d9065d"
+if /i "%PLATFORM_ARCH%"=="386" set "FBC_SHA256=29cf87d5c13d758c9464d59b098de472b130f30a81539d350a0f33ea9b11064e"
 
 echo    Downloading fb2cng %FBC_VERSION% for Windows (%FBC_ARCH%)...
 if not exist "converter" mkdir converter

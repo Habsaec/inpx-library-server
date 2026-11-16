@@ -5346,6 +5346,7 @@ function attachSendToEreader() {
               <option value="kepub">KEPUB (Kobo)</option>
               <option value="kfx">KFX (Kindle)</option>
               <option value="azw8">AZW8 (Kindle)</option>
+              <option value="azw3">AZW3</option>
               <option value="fb2">FB2</option>
               <option value="fb2zip">FB2.ZIP</option>
             </select>

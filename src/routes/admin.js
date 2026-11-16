@@ -2547,19 +2547,16 @@ export function registerAdminRoutes(app, deps) {
     if (process.env.FB2CNG_PATH) {
       return res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(t('admin.conv.fbc.envLocked')));
     }
-    let cur = null;
     try {
       const previous = getFb2cngVersion();
-      cur = await writeCurrentConfigForCheck();
-      const result = await installLatestFbc({ validateConfigPath: cur.path, previousVersion: previous });
+      // the settings are written for the NEW version (fbc 2.0 moved / added keys)
+      const result = await installLatestFbc({ validateConfigFor: (version) => writeCurrentConfigForCheck(null, version), previousVersion: previous });
       resetFb2cngVersionCache();
       logSystemEvent('info', 'admin', 'fbc updated', { admin: req.user.username, from: previous || '-', to: result.version });
       res.redirect('/admin/conversion?flash=' + encodeURIComponent(tp('admin.conv.fbc.updated', { version: result.version })));
     } catch (error) {
       logSystemEvent('warn', 'admin', 'fbc update failed', { admin: req.user.username, message: String(error.message || error).slice(0, 300) });
       res.redirect('/admin/conversion?conversionError=' + encodeURIComponent(String(error.message || error).slice(0, 300)));
-    } finally {
-      if (cur) await cur.cleanup().catch(() => {});
     }
   }));
 

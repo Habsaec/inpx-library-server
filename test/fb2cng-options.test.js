@@ -57,6 +57,30 @@ test('1.9 options: patched into the right sections, enums validated', async () =
   assert.doesNotMatch(text, /backlinks:/);
 });
 
+test('fbc 2.x: Markdown images key moved, new options gated by the target version', () => {
+  const o = normalizeFb2cngOptions({
+    md_images: 'embedded', azw3_compression: 'huffdic', cover_resize: 'fill',
+    img_fit_to_screen: true, img_baseline_jpeg: true, img_grayscale: 'luma'
+  });
+  const v2 = buildFb2cngConfigText(base, o, { version: '2.1.1' });
+  assert.match(v2, /^ {2}markdown:\n {4}images: embedded$/m);
+  assert.doesNotMatch(v2, /^ {4}markdown: embedded$/m);
+  assert.match(v2, /^ {2}azw3:\n {4}compression: huffdic$/m);
+  assert.match(v2, /resize: fill/);
+  assert.match(v2, /fit_to_screen: true/);
+  assert.match(v2, /baseline_jpeg: true/);
+  assert.match(v2, /grayscale: luma/);
+  // 2.0: AZW3 yes, the 2.1 image options and `fill` not yet
+  const v20 = buildFb2cngConfigText(base, o, { version: '2.0.1' });
+  assert.match(v20, /compression: huffdic/);
+  assert.doesNotMatch(v20, /fill|fit_to_screen|baseline_jpeg|grayscale/);
+  // 1.9: the old Markdown key, nothing of 2.x (it would reject the whole config)
+  const v19 = buildFb2cngConfigText(base, o, { version: '1.9.5' });
+  assert.match(v19, /^ {4}markdown: embedded$/m);
+  assert.doesNotMatch(v19, /azw3|fill|fit_to_screen|baseline_jpeg|grayscale/);
+  assert.deepEqual(Object.keys(diffFb2cngOptions(o, '1.9.5')), ['md_images']);
+});
+
 import { setYamlValue, readYamlText, cleanTemplateText, FB2CNG_OPTION_DEFS } from '../src/fb2cng-options.js';
 import { fbcAssetName, compareVersions } from '../src/fb2cng-binary.js';
 

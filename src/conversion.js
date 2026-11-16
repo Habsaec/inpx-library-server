@@ -58,6 +58,8 @@ const FILE_EXTENSIONS = {
   azw3: 'azw3',
   mobi: 'mobi'
 };
+/** Kindle outputs marked as a book (EBOK), not a personal document. */
+const KINDLE_EBOOK_FORMATS = new Set(['kfx', 'azw8', 'azw3']);
 const conversionLocks = new Map();
 const converterWaiters = [];
 let activeConverters = 0;
@@ -369,7 +371,7 @@ async function convertFb2Book(book, format) {
         const rawBuffer = await applyFb2WebpMode(await readBookBufferForDelivery(book));
         await fs.promises.writeFile(sourcePath, rawBuffer);
         const convertArgs = ['convert', '--to', format, '--ow', '--nd'];
-        if (format === 'kfx' || format === 'azw8') {
+        if (KINDLE_EBOOK_FORMATS.has(format)) {
           convertArgs.push('--ebook');
         }
         convertArgs.push(sourcePath, outputDir);
@@ -415,7 +417,7 @@ export async function convertForPreview({ book = null, buffer = null, format, co
       ensureDir(outputDir);
       const raw = book ? await applyFb2WebpMode(await readBookBufferForDelivery(book)) : buffer;
       await fs.promises.writeFile(sourcePath, raw);
-      await runConverter(['convert', '--to', format, '--ow', '--nd', ...(format === 'kfx' || format === 'azw8' ? ['--ebook'] : []), sourcePath, outputDir], book || { id: 'preview' }, configPath);
+      await runConverter(['convert', '--to', format, '--ow', '--nd', ...(KINDLE_EBOOK_FORMATS.has(format) ? ['--ebook'] : []), sourcePath, outputDir], book || { id: 'preview' }, configPath);
       const files = (await fs.promises.readdir(outputDir, { withFileTypes: true })).filter((i) => i.isFile()).map((i) => i.name);
       if (!files.length) throw new Error(`fb2cng did not produce a ${format} file`);
       return await fs.promises.readFile(path.join(outputDir, files[0]));

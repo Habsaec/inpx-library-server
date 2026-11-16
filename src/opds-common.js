@@ -34,6 +34,7 @@ const OPDS_MIME_FOR_CONVERSION = {
   kepub3: 'application/kepub+zip',
   kfx: 'application/vnd.amazon.ebook',
   azw8: 'application/vnd.amazon.ebook',
+  azw3: 'application/x-mobipocket-ebook',
   pdf: 'application/pdf',
   txt: 'text/plain',
   md: 'text/markdown',
