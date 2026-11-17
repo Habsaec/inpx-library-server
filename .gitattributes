@@ -1,0 +1,5 @@
+# Windows scripts must stay CRLF: cmd.exe breaks labels / goto on LF-only files
+*.cmd text eol=crlf
+*.bat text eol=crlf
+# Shell scripts must stay LF
+*.sh text eol=lf
