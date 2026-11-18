@@ -64,6 +64,8 @@ const NS_EPUB = 'http://www.idpf.org/2007/ops'
 /** Ссылка явно помечена как сноска (EPUB, FB2 после конвертации в XHTML). */
 export const footnoteLinkElementIsMarked = a => {
     if (!a?.getAttributeNS) return false
+    /* fb2cng (fbc): EPUB2 / KEPUB footnote links carry only class="link-footnote" (no noteref). */
+    if (a.classList?.contains('link-footnote')) return true
     const t = a.getAttributeNS(NS_EPUB, 'type')
     if (t && /\bnoteref\b/i.test(t)) return true
     const role = a.getAttribute?.('role')

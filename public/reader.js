@@ -3020,6 +3020,24 @@ import {
     return el || null;
   }
 
+  const FOOTNOTE_EPUB_NS = 'http://www.idpf.org/2007/ops';
+
+  /** Popup copy of a note: drop backlinks («[page 3]») and in-book links (they would navigate the page itself). */
+  function cleanFootnoteClone(node) {
+    if (!node?.querySelectorAll) return node;
+    for (const link of [...node.querySelectorAll('a')]) {
+      const type = link.getAttributeNS?.(FOOTNOTE_EPUB_NS, 'type') || link.getAttribute('epub:type') || '';
+      const role = link.getAttribute('role') || '';
+      if (link.classList.contains('link-backlink') || /\bbacklink\b/.test(type) || /\bdoc-backlink\b/.test(role)) {
+        link.remove();
+        continue;
+      }
+      const target = (link.getAttribute('href') || '').trim();
+      if (!/^(?:https?|mailto):/i.test(target)) link.removeAttribute('href');
+    }
+    return node;
+  }
+
   function showFootnoteClonePopup(clonedNode) {
     const shell = ensureFootnoteShell();
     shell.body.replaceChildren();
@@ -3029,7 +3047,7 @@ import {
     const ff = fontMap[S.font] || fontMap.serif;
     wrap.style.cssText =
       `color:${fg};background:transparent;font-family:${ff};font-size:${S.fontSize}px;line-height:${S.lineHeight};word-break:break-word;`;
-    wrap.appendChild(clonedNode);
+    wrap.appendChild(cleanFootnoteClone(clonedNode));
     shell.body.appendChild(wrap);
     shell.overlay.hidden = false;
     document.body.classList.add('reader-footnote-open');
@@ -3089,8 +3107,15 @@ import {
     if (!book?.resolveHref || !book.sections?.length || book.isExternal?.(href)) return false;
     const frag = footnoteTargetFragmentFromHref(href || '');
     if (!frag || !shouldTrySpineFootnoteClone(a, href)) return false;
-    const resolved = book.resolveHref(`#${frag}`);
-    if (!resolved) return false;
+    // FB2 resolves a bare id; EPUB needs the section path (OEBPS/footnotes.xhtml#n1).
+    let resolved = null;
+    try {
+      resolved = book.resolveHref(`#${frag}`)
+        || (href && !href.startsWith('#') ? book.resolveHref(href) : null);
+    } catch {
+      resolved = null;
+    }
+    if (!resolved || typeof resolved.then === 'function') return false;
     let doc;
     try {
       doc = book.sections[resolved.index]?.createDocument?.();
@@ -3098,11 +3123,37 @@ import {
       return false;
     }
     if (!doc) return false;
-    let el = typeof resolved.anchor === 'function' ? resolved.anchor(doc) : null;
-    if (!el) el = findFootnoteTargetEl(doc, frag);
-    if (!el || el === a || el.contains?.(a)) return false;
+    const pick = (d) => {
+      let el = null;
+      try {
+        el = typeof resolved.anchor === 'function' ? resolved.anchor(d) : null;
+      } catch {
+        el = null;
+      }
+      if (!el?.nodeType) el = findFootnoteTargetEl(d, frag);
+      if (!el || el === a || el.contains?.(a)) return null;
+      return el;
+    };
+    if (typeof doc.then !== 'function') {
+      const el = pick(doc);
+      if (!el) return false;
+      e.preventDefault();
+      showFootnoteClonePopup(el.cloneNode(true));
+      return true;
+    }
+    // EPUB: createDocument() is async, but view.js reads defaultPrevented right after dispatch,
+    // so claim the tap now; if the note cannot be found, go to it instead of doing nothing.
     e.preventDefault();
-    showFootnoteClonePopup(el.cloneNode(true));
+    const goToNote = () => {
+      try {
+        Promise.resolve(view.goTo(href)).catch(() => {});
+      } catch { /* */ }
+    };
+    Promise.resolve(doc).then((d) => {
+      const el = d ? pick(d) : null;
+      if (el) showFootnoteClonePopup(el.cloneNode(true));
+      else goToNote();
+    }).catch(goToNote);
     return true;
   }
 
