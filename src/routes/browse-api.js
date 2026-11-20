@@ -18,6 +18,7 @@ import {
   getSuggestions,
   listAuthors,
   getAlphaIndex,
+  ALPHA_INDEX_MAX_DEPTH,
   listGenres,
   listGenresGrouped,
   listSeries,
@@ -204,10 +205,11 @@ export function registerBrowseApiRoutes(app) {
   }));
 
   /* Alphabet index (web /authors?idx= and the Android catalog): `prefix` '' → first letters with counts; a longer one →
-     its next-letter groups, or `items` (name, displayName, bookCount) once the group holds ≤ 300 names. */
+     its next-letter groups, plus `items` (name, displayName, bookCount) once the group holds ≤ 60 names (groups stay
+     above a list of more than 8, so the prefix can be narrowed up to a whole surname). */
   app.get('/api/browse/index', requireBrowseAuth, asyncHandler(async (req, res) => {
     const kind = req.query.kind === 'series' ? 'series' : 'authors';
-    const prefix = String(req.query.prefix || '').slice(0, 12);
+    const prefix = String(req.query.prefix || '').slice(0, ALPHA_INDEX_MAX_DEPTH);
     res.json(await getAlphaIndex(kind, prefix, { langs: effectiveContentLangs(req.user?.username) }));
   }));
 

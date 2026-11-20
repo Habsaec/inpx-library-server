@@ -87,6 +87,7 @@ import {
   searchCatalog,
   warmBrowseTotal,
   getAlphaIndex,
+  ALPHA_INDEX_MAX_DEPTH,
   listEntitiesByGenreAsync,
   listEntitiesByLanguageAsync,
   searchOverview,
@@ -753,7 +754,7 @@ export function registerLibraryRoutes(app, deps) {
     const stats = getCachedStats();
     const authorLangs = effectiveContentLangs(req.user?.username);
     const cacheKey = `browse:authors:${contentLangCacheKey(authorLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
-    const idx = query ? '' : String(req.query.idx || '').slice(0, 12);
+    const idx = query ? '' : String(req.query.idx || '').slice(0, ALPHA_INDEX_MAX_DEPTH);
     const alphaRoot = query ? null : await getAlphaIndex('authors', '', { langs: authorLangs });
     const alphaIndex = idx ? await getAlphaIndex('authors', idx, { langs: authorLangs }) : null;
     const result = alphaIndex ? { total: 0, items: [] } : getStaleOrSchedule(cacheKey, () => listAuthors({ query, page, pageSize, sort, order, startsWith, letter, langs: authorLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });
@@ -775,7 +776,7 @@ export function registerLibraryRoutes(app, deps) {
     const stats = getCachedStats();
     const seriesLangs = effectiveContentLangs(req.user?.username);
     const cacheKey = `browse:series:${contentLangCacheKey(seriesLangs)}:${page}:${sort}:${order}:${letter}:${query}`;
-    const idx = query ? '' : String(req.query.idx || '').slice(0, 12);
+    const idx = query ? '' : String(req.query.idx || '').slice(0, ALPHA_INDEX_MAX_DEPTH);
     const alphaRoot = query ? null : await getAlphaIndex('series', '', { langs: seriesLangs });
     const alphaIndex = idx ? await getAlphaIndex('series', idx, { langs: seriesLangs }) : null;
     const result = alphaIndex ? { total: 0, items: [] } : getStaleOrSchedule(cacheKey, () => listSeries({ query, page, pageSize, sort, order, letter, langs: seriesLangs }), PAGE_CACHE_TTL_MS, { total: 0, items: [] });

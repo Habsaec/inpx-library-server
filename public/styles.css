@@ -7820,9 +7820,42 @@ html[data-theme="light"] .page-link-active {
   background: var(--accent-soft, rgba(212, 167, 106, 0.18));
 }
 
-.alpha-index-letters .alpha-index-reset {
-  justify-self: start;
-  font-weight: 400;
+.alpha-index-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 16px;
+}
+
+.alpha-index-bar .alpha-index-reset {
+  padding: 4px 0;
+}
+
+.alpha-index-fold > summary {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.alpha-index-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.alpha-index-fold > summary::after {
+  content: ' ▾';
+  color: var(--muted);
+}
+
+.alpha-index-fold[open] > summary::after {
+  content: ' ▴';
+}
+
+.alpha-index-fold[open] > .alpha-index-letters {
+  margin-top: 8px;
 }
 
 .alpha-index-path {

@@ -9171,8 +9171,12 @@ export function opdsQuery(facet, prefix = '', depth = 0, genre = '') {
    at most ALPHA_INDEX_LIST_MAX names, which are then listed alphabetically. Every query is a range on the
    `search_name` index (`book_count > 0`, the profile languages through `catalog_lang_counts`) and runs on the query
    worker; results are memoized until the catalog changes. */
-const ALPHA_INDEX_LIST_MAX = 300;
-const ALPHA_INDEX_MAX_DEPTH = 12;
+// 300 left «Ще» as one wall of 280 names on a phone: past ~60 names the next-letter chips are faster to scan.
+const ALPHA_INDEX_LIST_MAX = 60;
+// Deep enough for a whole surname («Константиновский» = 16) plus the start of the first name.
+export const ALPHA_INDEX_MAX_DEPTH = 40;
+// Past this many listed names the next-letter chips stay above the list, so the prefix can be narrowed to the full surname.
+const ALPHA_INDEX_KEEP_GROUPS_MIN = 8;
 const _alphaIndexMemo = new Map();
 
 export async function getAlphaIndex(kind, prefix = '', { langs = null } = {}) {
@@ -9220,7 +9224,11 @@ export async function getAlphaIndex(kind, prefix = '', { langs = null } = {}) {
   if (key && (total <= ALPHA_INDEX_LIST_MAX || depth >= ALPHA_INDEX_MAX_DEPTH)) {
     items = await run(`SELECT c.name AS name, COALESCE(c.display_name, c.name) AS displayName, ${countExpr} AS bookCount
       FROM ${table} c WHERE ${whereSql} ORDER BY c.search_name, c.name LIMIT 1000`, [...langParams, ...params, ...langParams]);
-    groups = [];
+    if (total <= ALPHA_INDEX_KEEP_GROUPS_MIN || groups.length < 2 || depth >= ALPHA_INDEX_MAX_DEPTH) groups = [];
+  } else if (key && groups.some((g) => g.prefix === key)) {
+    // A name equal to the prefix itself («Ще», «Кор ») has no deeper group: list it next to the groups.
+    items = await run(`SELECT c.name AS name, COALESCE(c.display_name, c.name) AS displayName, ${countExpr} AS bookCount
+      FROM ${table} c WHERE ${whereSql} AND c.search_name = ? ORDER BY c.name LIMIT 50`, [...langParams, ...params, ...langParams, key]);
   }
   const value = {
     kind: isSeries ? 'series' : 'authors',

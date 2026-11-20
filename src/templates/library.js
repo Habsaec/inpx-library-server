@@ -1190,10 +1190,13 @@ function renderAlphaIndex({ path, facetBasePath, root, current }) {
   const cyr = root.groups.filter((g) => /^[а-яё]$/.test(g.prefix));
   const lat = root.groups.filter((g) => /^[a-z]$/.test(g.prefix));
   const rows = (getLocale() === 'en' ? [lat, cyr] : [cyr, lat]).filter((row) => row.length);
-  const letterRow = `<nav class="alpha-index-letters" aria-label="${escapeHtml(t('browse.alphaIndex'))}">${rows.map((row) =>
+  const letterNav = `<nav class="alpha-index-letters" aria-label="${escapeHtml(t('browse.alphaIndex'))}">${rows.map((row) =>
     `<div class="alpha-index-letter-row">${row.map(letterLink).join('')}</div>`
-  ).join('')}${active ? `<a class="alpha-index-reset" href="${escapeHtml(path)}">${escapeHtml(t('browse.reset'))}</a>` : ''}</nav>`;
-  if (!current) return `<section class="alpha-index">${letterRow}</section>`;
+  ).join('')}</nav>`;
+  if (!current) return `<section class="alpha-index">${letterNav}</section>`;
+  // A letter is open: the two letter rows fold into one «А–Я» button (on a phone they took most of the screen).
+  const letterRow = `<div class="alpha-index-bar"><details class="alpha-index-fold"><summary>${escapeHtml(t('browse.alphaIndexLetters'))}</summary>${letterNav}</details>
+    <a class="alpha-index-reset" href="${escapeHtml(path)}">${escapeHtml(t('browse.reset'))}</a></div>`;
   const crumbs = [];
   for (let i = 1; i <= active.length; i += 1) {
     const p = active.slice(0, i);
