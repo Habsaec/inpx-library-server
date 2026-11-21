@@ -1759,10 +1759,11 @@ export function renderAdminAppearance({
     : `<span class="muted">${escapeHtml(t('admin.ui.fontCustomEmpty'))}</span>`;
 
   /* `min` per role: text / muted / link 4.5 (AA), the accent as a fill 3 (WCAG 1.4.11). */
-  const contrastBadge = (ratio, min = 4.5) => {
+  const contrastBadge = (ratio, min = 4.5, fill = false) => {
     if (!Number.isFinite(Number(ratio))) return '<span class="ui-contrast-badge" data-ui-contrast hidden></span>';
     const low = Number(ratio) < min;
-    const title = t(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk').split('{{min}}').join(String(min));
+    const key = `admin.ui.${low ? 'contrastLow' : 'contrastOk'}${fill ? 'Fill' : ''}`;
+    const title = t(key).split('{{min}}').join(String(min));
     return `<span class="ui-contrast-badge${low ? ' is-low' : ''}" data-ui-contrast title="${escapeHtml(title)}">${escapeHtml(String(ratio))}:1</span>`;
   };
 
@@ -1776,7 +1777,7 @@ export function renderAdminAppearance({
         <div class="ui-color-row-value">
           <input type="color" id="${id}" name="${name}" form="ui-main-form" value="${escapeHtml(value)}" data-ui-color-input${role === 'surface' ? ` data-ui-glass-color="${theme}"` : ''}${disabled ? ' disabled' : ''}${locked && lockedTitle ? ` title="${escapeHtml(lockedTitle)}"` : ''}>
           <code data-ui-color-hex>${escapeHtml(value)}</code>
-          ${role === 'surface' ? '' : contrastBadge(contrast, role === 'accent' ? 3 : 4.5)}
+          ${role === 'surface' ? '' : contrastBadge(contrast, role === 'accent' ? 3 : 4.5, role === 'accent')}
         </div>
         ${autoName ? `<label class="admin-checkbox-label ui-color-row-auto">
           <input type="checkbox" data-ui-color-auto ${auto ? 'checked' : ''}>

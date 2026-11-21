@@ -6310,7 +6310,7 @@ function attachUiAppearanceUpload() {
   }
 
   /* `min` per role from the preview API (`contrast.min`): text roles 4.5, the accent fill 3. */
-  function setRowContrast(row, ratio, min = 4.5) {
+  function setRowContrast(row, ratio, min = 4.5, fill = false) {
     const badge = row?.querySelector('[data-ui-contrast]');
     if (!badge) return;
     const value = Number(ratio);
@@ -6322,7 +6322,7 @@ function attachUiAppearanceUpload() {
     badge.hidden = false;
     badge.textContent = `${value}:1`;
     badge.classList.toggle('is-low', low);
-    badge.title = uiTp(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk', { min });
+    badge.title = uiTp(`admin.ui.${low ? 'contrastLow' : 'contrastOk'}${fill ? 'Fill' : ''}`, { min });
   }
 
   /* Same threshold as GLASS_WARNING_OPACITY in theme-engine.js. */
@@ -6372,7 +6372,7 @@ function attachUiAppearanceUpload() {
         if (!row) continue;
         const input = row.querySelector('[data-ui-color-input]');
         if (role === 'surface' ? input?.disabled : rowIsAuto(row)) setRowColor(row, palette[role]);
-        if (role !== 'surface') setRowContrast(row, palette.contrast?.[role], palette.contrast?.min?.[role] ?? 4.5);
+        if (role !== 'surface') setRowContrast(row, palette.contrast?.[role], palette.contrast?.min?.[role] ?? 4.5, role === 'accent');
       }
       syncGlassPreview(theme);
     }

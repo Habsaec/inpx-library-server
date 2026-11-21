@@ -11416,6 +11416,17 @@ html:not([data-theme="light"]) .ui-contrast-badge.is-low {
   background: rgba(240, 138, 150, 0.14);
 }
 
+/* «Panels are quite transparent» note under a theme color card: its own block, set off from the hint. */
+.ui-glass-contrast-warning:not([hidden]) {
+  display: block;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--panel-soft-bg, transparent);
+  color: var(--text);
+}
+
 @media (max-width: 520px) {
   .ui-color-row {
     grid-template-columns: minmax(0, 1fr) auto;
