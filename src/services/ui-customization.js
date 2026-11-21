@@ -827,6 +827,7 @@ export function getUiCustomization() {
   const book3d = uiSetting('ui_book_3d') !== '0';
   const pageTransitions = uiSetting('ui_page_transitions') !== '0';
   const decor = normalizeDecor(uiSetting('ui_decor'));
+  const coverDim = uiSetting('ui_cover_dim') !== '0';
   const radiusPreset = uiSetting('ui_radius_preset') || 'rounded';
   const shadowPreset = uiSetting('ui_shadow_preset') || 'normal';
   const fontSize = readFontSizeSetting();
@@ -918,6 +919,7 @@ export function getUiCustomization() {
     book3d,
     pageTransitions,
     decor,
+    coverDim,
     manuscriptFont,
     manuscriptInk,
     manuscriptSize,
@@ -1240,6 +1242,7 @@ export function getThemePreviewFromDraft(draft = {}) {
     ? draftStr(draft.book3d) !== '0'
     : saved.book3d !== false;
   const decor = draft.decor !== undefined ? normalizeDecor(draftStr(draft.decor)) : saved.decor;
+  const coverDim = draft.coverDim !== undefined ? draftStr(draft.coverDim) !== '0' : saved.coverDim !== false;
   const manuscriptFont = COVER_TITLE_FONTS[draftStr(draft.manuscriptFont, saved.manuscriptFont)]
     ? draftStr(draft.manuscriptFont, saved.manuscriptFont)
     : saved.manuscriptFont;
@@ -1277,6 +1280,7 @@ export function getThemePreviewFromDraft(draft = {}) {
       manuscript: manuscriptWash,
       book3d,
       decor,
+      coverDim,
       shape: true,
       typography: true,
     },
@@ -1326,6 +1330,7 @@ export function saveUiSettings({
   book3d,
   pageTransitions,
   decor,
+  coverDim,
   dynamicThemeFromBg,
 } = {}) {
   if (dynamicThemeFromBg !== undefined) {
@@ -1462,6 +1467,9 @@ export function saveUiSettings({
   }
   if (decor !== undefined) {
     setSetting('ui_decor', normalizeDecor(decor));
+  }
+  if (coverDim !== undefined) {
+    setSetting('ui_cover_dim', coverDim ? '1' : '0');
   }
   invalidateUiCustomizationCache();
 }
@@ -1857,6 +1865,8 @@ export function getPublicUiSettingsJson() {
     hasCustomHeader: ui.hasCustomHeader,
     showHeader: ui.showHeader,
     showLogo: ui.showLogo,
+    /* additive: dim covers a little in the dark theme (Admin → Appearance → Effects); the app follows it */
+    coverDim: ui.coverDim !== false,
     coverFallbackUrl: ui.coverFallbackUrl || bundledCoverUrl('dark'),
     coverFallbackLightUrl: ui.hasCustomCover ? (ui.coverFallbackUrl || bundledCoverUrl('dark')) : bundledCoverUrl('light'),
     hasCustomCover: ui.hasCustomCover,

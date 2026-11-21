@@ -3411,6 +3411,19 @@ html[data-theme="light"] .cover {
     inset 0 0 0 1px rgba(0, 0, 0, 0.18);
 }
 
+/* Dark theme: a light veil on the existing overlay layer, so bright covers do not glare in a dark grid
+   (no `filter` on dozens of images); full brightness on hover / focus. Admin → Effects can turn it off. */
+html[data-theme="dark"]:not([data-ui-cover-dim="0"]):not([data-eink="1"]) .cover::after {
+  background-color: rgba(0, 0, 0, 0.1);
+  transition: background-color 0.2s ease;
+}
+
+html[data-theme="dark"]:not([data-ui-cover-dim="0"]) .cover:hover::after,
+html[data-theme="dark"]:not([data-ui-cover-dim="0"]) .cover:focus-visible::after,
+html[data-theme="dark"]:not([data-ui-cover-dim="0"]) .card:hover .cover::after {
+  background-color: transparent;
+}
+
 /* Spine groove on left edge - imitates the binding fold */
 .cover::before {
   content: '';

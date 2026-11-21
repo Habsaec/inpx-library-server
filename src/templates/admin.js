@@ -2283,6 +2283,13 @@ export function renderAdminAppearance({
           <span class="admin-field-hint">${escapeHtml(t('admin.ui.pageTransitionsHint'))}</span>
         </div>
         <div class="admin-field-group admin-field-group--compact">
+          <label class="admin-checkbox-label ui-asset-checkbox">
+            <input type="checkbox" form="ui-main-form" name="coverDim" value="1" ${ui.coverDim !== false ? 'checked' : ''}>
+            ${escapeHtml(t('admin.ui.coverDim'))}
+          </label>
+          <span class="admin-field-hint">${escapeHtml(t('admin.ui.coverDimHint'))}</span>
+        </div>
+        <div class="admin-field-group admin-field-group--compact">
           <label for="ui-decor">${escapeHtml(t('admin.ui.decor'))}</label>
           <select id="ui-decor" name="decor" form="ui-main-form">
             <option value=""${!ui.decor ? ' selected' : ''}>${escapeHtml(t('admin.ui.decorNone'))}</option>

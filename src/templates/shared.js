@@ -1637,6 +1637,7 @@ function uiHtmlRootAttrs() {
   if (ui.book3d === false) attrs += ' data-ui-book3d="0"';
   if (ui.pageTransitions === false) attrs += ' data-ui-transitions="0"';
   if (ui.decor) attrs += ` data-ui-decor="${escapeHtml(ui.decor)}"`;
+  if (ui.coverDim === false) attrs += ' data-ui-cover-dim="0"';
   if (hasUiThemeShapeConfigured()) attrs += ' data-ui-shape="1"';
   if (hasUiThemeTypographyConfigured()) attrs += ' data-ui-typography="1"';
   const coverPair = coverFallbackPair();

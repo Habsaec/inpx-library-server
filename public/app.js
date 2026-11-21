@@ -6474,6 +6474,8 @@ function attachUiAppearanceUpload() {
     else document.documentElement.removeAttribute('data-ui-book3d');
     if (attrs.decor === 'snow' || attrs.decor === 'leaves') document.documentElement.setAttribute('data-ui-decor', attrs.decor);
     else if (attrs.decor !== undefined) document.documentElement.removeAttribute('data-ui-decor');
+    if (attrs.coverDim === false) document.documentElement.setAttribute('data-ui-cover-dim', '0');
+    else if (attrs.coverDim !== undefined) document.documentElement.removeAttribute('data-ui-cover-dim');
     setRootAttr('data-ui-shape', attrs.shape);
     setRootAttr('data-ui-typography', attrs.typography);
     if (data.webfont && /^[a-z0-9-]+$/.test(data.webfont)) {
