@@ -1738,9 +1738,143 @@ export function renderAdminTelegram({ user, stats, indexStatus, tg = {}, botRunn
   return pageShell({ title: t('admin.telegram.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('admin.telegram.title') }], mode: 'admin', currentPath: '/admin/telegram', csrfToken });
 }
 
+/** «Наборы оформления»: schedule form, «save current as a set», the list of sets. */
+function renderThemeSetsPanel({ sets = [], schedule = {}, active = null, upcoming = [] } = {}, csrfToken = '') {
+  const loc = getLocale() === 'en' ? 'en-GB' : 'ru-RU';
+  const thisYear = new Date().getFullYear();
+  /* the year only when it is not this one: «26 ноября» twice in a row read as a repeat */
+  const fmtAt = (date, withTime) => date.toLocaleString(loc, {
+    day: 'numeric',
+    month: 'long',
+    ...(date.getFullYear() !== thisYear ? { year: 'numeric' } : {}),
+    ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}),
+  });
+  const setName = (set) => (set ? `«${set.name}»` : t('admin.ui.sets.baseName'));
+  const withTime = schedule.mode === 'rotate' && schedule.unit === 'hours';
+  const md = (value) => {
+    const m = /^(\d{2})-(\d{2})$/.exec(String(value || ''));
+    return m ? `${m[2]}.${m[1]}` : '';
+  };
+  const modeRadio = (mode) => `
+    <label class="admin-checkbox-label">
+      <input type="radio" name="mode" value="${mode}" ${schedule.mode === mode ? 'checked' : ''}>
+      ${escapeHtml(t(`admin.ui.sets.mode_${mode}`))}
+    </label>`;
+  const swatch = (set) => {
+    const s = set.settings || {};
+    const dark = s.ui_glass_color_dark || '#1a1612';
+    const light = s.ui_glass_color_light || '#fff9f0';
+    const accentDark = s.ui_accent_dark || '#c4a35a';
+    const accentLight = s.ui_accent_light || '#8a6230';
+    return `<span class="ui-preset-swatch" style="--preset-dark:${escapeHtml(dark)};--preset-light:${escapeHtml(light)};--preset-accent-dark:${escapeHtml(accentDark)};--preset-accent-light:${escapeHtml(accentLight)}"></span>`;
+  };
+  /* own header picture, else its background picture, else a note */
+  const thumb = (set) => {
+    const asset = set.files.includes('header.webp') ? 'header' : (set.files.includes('background.webp') ? 'background' : '');
+    return asset
+      ? `<img class="ui-theme-set-thumb" src="/custom/ui/${asset}?s=${escapeHtml(set.id)}&amp;v=${encodeURIComponent(set.updatedAt || set.createdAt)}" alt="" loading="lazy">`
+      : `<span class="ui-theme-set-thumb ui-theme-set-thumb--empty">${escapeHtml(t('admin.ui.sets.noHeader'))}</span>`;
+  };
+  const action = (set, name, label, cls = 'button') => `
+    <form method="post" action="/admin/settings/ui/sets/${escapeHtml(set.id)}/${name}"${name === 'delete' ? ` data-confirm="${escapeHtml(tp('admin.ui.sets.confirmDelete', { name: set.name }))}"` : ''}${name === 'apply' ? ` data-confirm="${escapeHtml(t('admin.ui.sets.confirmApply'))}"` : ''}${name === 'replace' ? ` data-confirm="${escapeHtml(t('admin.ui.sets.confirmReplace'))}"` : ''}>
+      ${csrfHiddenField(csrfToken)}
+      <button type="submit" class="${cls}">${escapeHtml(label)}</button>
+    </form>`;
+  const rows = sets.map((set, index) => `
+    <li class="ui-theme-set${active?.id === set.id ? ' is-active' : ''}">
+      ${thumb(set)}
+      <div class="ui-theme-set-body">
+        <form class="ui-theme-set-edit" method="post" action="/admin/settings/ui/sets/${escapeHtml(set.id)}/update">
+          ${csrfHiddenField(csrfToken)}
+          <div class="ui-theme-set-title">
+            ${swatch(set)}
+            <input type="text" name="name" value="${escapeHtml(set.name)}" maxlength="60" aria-label="${escapeHtml(t('admin.ui.sets.name'))}" required>
+            ${active?.id === set.id ? `<span class="ui-theme-set-badge">${escapeHtml(t('admin.ui.sets.activeBadge'))}</span>` : ''}
+          </div>
+          <div class="ui-theme-set-dates">
+            <label>${escapeHtml(t('admin.ui.sets.from'))} <input type="text" name="from" value="${escapeHtml(md(set.from))}" placeholder="20.12" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
+            <label>${escapeHtml(t('admin.ui.sets.to'))} <input type="text" name="to" value="${escapeHtml(md(set.to))}" placeholder="10.01" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
+            <button type="submit" class="button">${escapeHtml(t('admin.save'))}</button>
+          </div>
+          <span class="admin-field-hint">${escapeHtml(set.includeLogo ? t('admin.ui.sets.withLogo') : t('admin.ui.sets.withoutLogo'))}</span>
+        </form>
+        <div class="ui-theme-set-actions">
+          ${index > 0 ? action(set, 'up', '↑') : ''}
+          ${index < sets.length - 1 ? action(set, 'down', '↓') : ''}
+          ${action(set, 'apply', t('admin.ui.sets.apply'))}
+          ${action(set, 'replace', t('admin.ui.sets.replace'))}
+          ${action(set, 'delete', t('admin.ui.sets.delete'), 'button-danger')}
+        </div>
+      </div>
+    </li>`).join('');
+  const upcomingHtml = upcoming.length
+    ? `<ul class="ui-theme-set-upcoming">${upcoming.map((c) => `<li><strong>${escapeHtml(fmtAt(c.at, withTime))}</strong> → ${escapeHtml(setName(c.set))}</li>`).join('')}</ul>`
+    : '';
+  return `
+      <div class="admin-tab-panel" data-admin-tab-group="appearance" data-admin-tab-panel="sets" role="tabpanel">
+      <div class="admin-card">
+        <div class="admin-card-title">${escapeHtml(t('admin.ui.sets.scheduleTitle'))}</div>
+        <p class="admin-card-subtitle">${escapeHtml(t('admin.ui.sets.intro'))}</p>
+        <p><strong>${escapeHtml(t('admin.ui.sets.nowShown'))}</strong> ${escapeHtml(setName(active))}</p>
+        ${upcomingHtml}
+        <form method="post" action="/admin/settings/ui/sets/schedule" class="ui-theme-set-schedule">
+          ${csrfHiddenField(csrfToken)}
+          <div class="ui-theme-set-modes">
+            ${modeRadio('off')}
+            ${modeRadio('rotate')}
+            ${modeRadio('calendar')}
+          </div>
+          <div class="ui-theme-set-rotate-only">
+          <div class="ui-theme-set-every">
+            <label for="ui-sets-every">${escapeHtml(t('admin.ui.sets.every'))}</label>
+            <input type="number" id="ui-sets-every" name="every" min="1" max="365" value="${escapeHtml(String(schedule.every || 3))}">
+            <select name="unit" aria-label="${escapeHtml(t('admin.ui.sets.every'))}">
+              <option value="hours"${schedule.unit === 'hours' ? ' selected' : ''}>${escapeHtml(t('admin.ui.sets.unitHours'))}</option>
+              <option value="days"${schedule.unit !== 'hours' ? ' selected' : ''}>${escapeHtml(t('admin.ui.sets.unitDays'))}</option>
+            </select>
+          </div>
+          <input type="hidden" name="includeBase" value="0">
+          <label class="admin-checkbox-label">
+            <input type="checkbox" name="includeBase" value="1" ${schedule.includeBase !== false ? 'checked' : ''}>
+            ${escapeHtml(t('admin.ui.sets.includeBase'))}
+          </label>
+          <span class="admin-field-hint">${escapeHtml(t('admin.ui.sets.rotateHint'))}</span>
+          </div>
+          <span class="admin-field-hint ui-theme-set-calendar-only">${escapeHtml(t('admin.ui.sets.calendarHint'))}</span>
+          <button type="submit" class="button button-primary">${escapeHtml(t('admin.save'))}</button>
+        </form>
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-card-title">${escapeHtml(t('admin.ui.sets.createTitle'))}</div>
+        <p class="admin-card-subtitle">${escapeHtml(t('admin.ui.sets.createHint'))}</p>
+        <form method="post" action="/admin/settings/ui/sets/create" class="ui-theme-set-create">
+          ${csrfHiddenField(csrfToken)}
+          <input type="text" name="name" maxlength="60" placeholder="${escapeHtml(t('admin.ui.sets.namePlaceholder'))}" required aria-label="${escapeHtml(t('admin.ui.sets.name'))}">
+          <label>${escapeHtml(t('admin.ui.sets.from'))} <input type="text" name="from" placeholder="20.12" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
+          <label>${escapeHtml(t('admin.ui.sets.to'))} <input type="text" name="to" placeholder="10.01" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
+          <label class="admin-checkbox-label">
+            <input type="checkbox" name="includeLogo" value="1">
+            ${escapeHtml(t('admin.ui.sets.includeLogo'))}
+          </label>
+          <button type="submit" class="button button-primary">${escapeHtml(t('admin.ui.sets.create'))}</button>
+        </form>
+        <span class="admin-field-hint">${escapeHtml(t('admin.ui.sets.logoHint'))}</span>
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-card-title">${escapeHtml(tp('admin.ui.sets.listTitle', { n: sets.length }))}</div>
+        ${sets.length
+          ? `<p class="admin-card-subtitle">${escapeHtml(t('admin.ui.sets.listHint'))}</p><ul class="ui-theme-set-list">${rows}</ul>`
+          : `<p class="muted">${escapeHtml(t('admin.ui.sets.empty'))}</p>`}
+      </div>
+      </div>`;
+}
+
 export function renderAdminAppearance({
   user, stats, indexStatus, ui = {}, siteName = '', homeSubtitle = '',
-  homeNewestCount = '', homeNewestCountDefault = 12, flash = '', csrfToken = ''
+  homeNewestCount = '', homeNewestCountDefault = 12, flash = '', csrfToken = '',
+  themeSets = { sets: [], schedule: { mode: 'off' }, active: null, upcoming: [] },
 }) {
   const logoPreview = ui.logoUrl
     ? `<img src="${escapeHtml(ui.logoUrl)}" alt="" class="ui-asset-preview">`
@@ -1913,6 +2047,7 @@ export function renderAdminAppearance({
 
   const content = `
     ${flash ? renderAlert('success', flash) : ''}
+    ${themeSets.active ? renderAlert('info', tp('admin.ui.sets.activeBanner', { name: themeSets.active.name })) : ''}
     <div class="admin-appearance-layout" data-ui-appearance-page>
       <div class="admin-appearance-preview-bar" data-ui-preview-bar hidden>
         <span class="admin-appearance-preview-dot"></span>
@@ -1922,7 +2057,8 @@ export function renderAdminAppearance({
       ${renderAdminTabs('appearance', [
         { id: 'brand', label: t('admin.ui.tabBrand') },
         { id: 'background', label: t('admin.ui.tabBackground') },
-        { id: 'theme', label: t('admin.ui.tabTheme') }
+        { id: 'theme', label: t('admin.ui.tabTheme') },
+        { id: 'sets', label: t('admin.ui.tabSets') }
       ])}
       <div class="admin-tab-panel" data-admin-tab-group="appearance" data-admin-tab-panel="brand" role="tabpanel">
       <!-- 1. Брендинг -->
@@ -2306,6 +2442,7 @@ export function renderAdminAppearance({
       </div>
 
       </div>
+${renderThemeSetsPanel(themeSets, csrfToken)}
 
       <!-- Основная форма сохранения -->
       <form id="ui-main-form" method="post" action="/admin/settings/ui" data-track-dirty>

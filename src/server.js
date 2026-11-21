@@ -807,7 +807,7 @@ registerBrowseApiRoutes(app);
 registerProfileApiRoutes(app);
 
 app.get('/custom/ui/:asset', (req, res) => {
-  if (!serveUiAsset(String(req.params.asset || ''), res)) {
+  if (!serveUiAsset(String(req.params.asset || ''), res, String(req.query.s || ''))) {
     res.status(404).end();
   }
 });

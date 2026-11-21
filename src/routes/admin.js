@@ -56,6 +56,11 @@ import {
   getPublicUiSettingsJson, getThemePreviewFromDraft, getUiAppearanceFormState
 } from '../services/ui-customization.js';
 import {
+  baseAppearanceMiddleware, listThemeSets, getThemeSchedule, saveThemeSchedule,
+  createThemeSetFromCurrent, updateThemeSet, replaceThemeSetFromCurrent, deleteThemeSet, moveThemeSet,
+  applyThemeSetToBase, resolveThemeSetAt, upcomingThemeSetChanges,
+} from '../services/theme-sets.js';
+import {
   setSetting, getSetting, encryptValue, decryptValue, getSources, getSourceById,
   addSource, updateSource, deleteSourceProgressive, forceDetachSourceRowUnsafe, convertFolderSourceToCalibre,
   getSmtpSettings, setSmtpSettings, getTelegramSettings, setTelegramSettings, resolveTelegramTokenForAdmin, resolveTelegramApiBase, syncTelegramChatsFromLinkedUsers, hasAdminUser, listUsers, countAdminUsers,
@@ -235,6 +240,10 @@ export function registerAdminRoutes(app, deps) {
       renderAdminAppearance
     }
   } = deps;
+
+  /* Appearance admin sees and edits the main look, never the theme set the schedule shows right now
+     (AsyncLocalStorage: safe across the awaits of an async handler). */
+  app.use(['/admin/appearance', '/admin/settings/ui', '/api/admin/ui'], baseAppearanceMiddleware);
 
   // --- Settings (web form POSTs) ---
 
@@ -801,9 +810,16 @@ export function registerAdminRoutes(app, deps) {
   });
 
   app.get('/admin/appearance', requireAdminWeb, (req, res) => {
+    const now = new Date();
     res.send(renderAdminAppearance({
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(),
       ui: getUiCustomization(),
+      themeSets: {
+        sets: listThemeSets(),
+        schedule: getThemeSchedule(),
+        active: resolveThemeSetAt(now),
+        upcoming: upcomingThemeSetChanges(now, 3),
+      },
       siteName: getSetting('site_name') || '',
       homeSubtitle: getSetting('home_subtitle') || '',
       homeNewestCount: getSetting('home_newest_count') || '',
@@ -906,6 +922,71 @@ export function registerAdminRoutes(app, deps) {
       res.redirect('/admin/appearance?flash=' + encodeURIComponent(uiAdminFlashMessage(error)));
     }
   }));
+
+  // --- Theme sets («Наборы оформления») ---
+  const setsRedirect = (res, key) => res.redirect('/admin/appearance?flash=' + encodeURIComponent(t(key)) + '#sets');
+  const setsError = (res, error) => res.redirect('/admin/appearance?flash=' + encodeURIComponent(uiAdminFlashMessage(error)) + '#sets');
+  const afterSetsChange = (req, action, extra = {}) => {
+    clearPageDataCache();
+    logSystemEvent('info', 'settings', `ui theme set ${action}`, { actor: req.user.username, ...extra });
+  };
+
+  app.post('/admin/settings/ui/sets/schedule', requireAdminWeb, (req, res) => {
+    try {
+      const schedule = saveThemeSchedule({
+        mode: lastFormFieldValue(req.body.mode),
+        every: lastFormFieldValue(req.body.every),
+        unit: lastFormFieldValue(req.body.unit),
+        includeBase: isFormFlagEnabled(req.body.includeBase),
+      });
+      afterSetsChange(req, 'schedule', { mode: schedule.mode, every: schedule.every, unit: schedule.unit });
+      setsRedirect(res, 'admin.ui.sets.flashSchedule');
+    } catch (error) { setsError(res, error); }
+  });
+
+  app.post('/admin/settings/ui/sets/create', requireAdminWeb, (req, res) => {
+    try {
+      const set = createThemeSetFromCurrent({
+        name: lastFormFieldValue(req.body.name),
+        includeLogo: isFormFlagEnabled(req.body.includeLogo),
+        from: lastFormFieldValue(req.body.from),
+        to: lastFormFieldValue(req.body.to),
+      });
+      afterSetsChange(req, 'created', { id: set.id, name: set.name });
+      setsRedirect(res, 'admin.ui.sets.flashCreated');
+    } catch (error) { setsError(res, error); }
+  });
+
+  app.post('/admin/settings/ui/sets/:id/:action', requireAdminWeb, (req, res) => {
+    const id = String(req.params.id || '');
+    const action = String(req.params.action || '');
+    try {
+      if (action === 'update') {
+        updateThemeSet(id, {
+          name: lastFormFieldValue(req.body.name),
+          from: lastFormFieldValue(req.body.from),
+          to: lastFormFieldValue(req.body.to),
+        });
+      } else if (action === 'replace') {
+        replaceThemeSetFromCurrent(id);
+      } else if (action === 'apply') {
+        const { logoChanged } = applyThemeSetToBase(id);
+        if (logoChanged) {
+          void syncTelegramBotProfilePhoto({ force: true }).catch((err) => {
+            logSystemEvent('warn', 'telegram-bot', 'аватар бота не обновлён после применения набора', { error: err.message });
+          });
+        }
+      } else if (action === 'up' || action === 'down') {
+        moveThemeSet(id, action);
+      } else if (action === 'delete') {
+        deleteThemeSet(id);
+      } else {
+        return res.status(404).end();
+      }
+      afterSetsChange(req, action, { id });
+      setsRedirect(res, `admin.ui.sets.flash_${action === 'up' || action === 'down' ? 'move' : action}`);
+    } catch (error) { setsError(res, error); }
+  });
 
   app.post('/admin/settings/ui/remove', requireAdminWeb, (req, res) => {
     try {

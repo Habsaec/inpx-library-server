@@ -3,7 +3,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from '../config.js';
 import { getSharp } from './sharp-loader.js';
-import { getSetting, setSetting } from '../db.js';
+import { setSetting } from '../db.js';
+import { themeSetSetting, themeSetAssetPath } from './theme-sets.js';
+
+/* Every appearance read goes through the active theme set (src/services/theme-sets.js): a scheduled
+   set overrides the keys it covers; admin appearance routes run in the base context and see the main
+   look. Settings this module does not override fall through to the plain stored value. */
+const uiSetting = themeSetSetting;
 import {
   DEFAULT_GLASS_DARK,
   DEFAULT_GLASS_LIGHT,
@@ -241,30 +247,30 @@ export async function coverTitleColorFromImageBuffer(buffer) {
 }
 
 function readCoverTitleFont() {
-  const raw = getSetting('ui_cover_title_font');
+  const raw = uiSetting('ui_cover_title_font');
   return COVER_TITLE_FONTS[raw] ? raw : DEFAULT_COVER_TITLE_FONT;
 }
 
 function readCoverTitleSize() {
-  const raw = getSetting('ui_cover_title_size');
+  const raw = uiSetting('ui_cover_title_size');
   if (raw === '') return DEFAULT_COVER_TITLE_SIZE;
   return clampInt(raw, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, DEFAULT_COVER_TITLE_SIZE);
 }
 
 function readCoverTitleOffset(key) {
-  const raw = getSetting(key);
+  const raw = uiSetting(key);
   if (raw === '') return 0;
   return clampInt(raw, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, 0);
 }
 
 function readCoverTitleColor() {
-  const raw = getSetting('ui_cover_title_color');
+  const raw = uiSetting('ui_cover_title_color');
   if (raw === '') return DEFAULT_COVER_TITLE_COLOR;
   return normalizeHexColor(raw, DEFAULT_COVER_TITLE_COLOR);
 }
 
 function readCoverTitleShadow() {
-  const raw = getSetting('ui_cover_title_shadow');
+  const raw = uiSetting('ui_cover_title_shadow');
   if (raw === '') return DEFAULT_COVER_TITLE_SHADOW;
   return clampInt(raw, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW);
 }
@@ -277,20 +283,20 @@ function hasCoverTitleSettingsConfigured() {
     'ui_cover_title_y',
     'ui_cover_title_color',
     'ui_cover_title_shadow',
-  ].some((key) => getSetting(key) !== '');
+  ].some((key) => uiSetting(key) !== '');
 }
 
 function readManuscriptFont() {
-  const raw = getSetting('ui_manuscript_font');
+  const raw = uiSetting('ui_manuscript_font');
   return COVER_TITLE_FONTS[raw] ? raw : DEFAULT_MANUSCRIPT_FONT;
 }
 
 function readManuscriptInk() {
-  return clampInt(getSetting('ui_manuscript_ink'), MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK);
+  return clampInt(uiSetting('ui_manuscript_ink'), MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK);
 }
 
 function readManuscriptSize() {
-  return clampInt(getSetting('ui_manuscript_size'), MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE);
+  return clampInt(uiSetting('ui_manuscript_size'), MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE);
 }
 
 function normalizeManuscriptText(raw) {
@@ -304,7 +310,7 @@ function normalizeManuscriptText(raw) {
 }
 
 function readManuscriptText() {
-  const raw = getSetting('ui_manuscript_text');
+  const raw = uiSetting('ui_manuscript_text');
   if (!raw) return '';
   const text = normalizeManuscriptText(raw);
   return text === DEFAULT_MANUSCRIPT_TEXT ? '' : text;
@@ -325,7 +331,7 @@ function hasManuscriptSettingsConfigured() {
     'ui_manuscript_ink',
     'ui_manuscript_size',
     'ui_manuscript_text',
-  ].some((key) => getSetting(key) !== '');
+  ].some((key) => uiSetting(key) !== '');
 }
 
 /** CSS variables for the background wash. Always emitted so defaults stay explicit. */
@@ -387,17 +393,22 @@ let _uiDirReady = false;
 
 function fileMtimeUrl(basePath, fileName) {
   const now = Date.now();
-  const cached = _uiFileUrlCache.get(fileName);
+  /* A theme set's file gets `&s=<set id>`: the URL names the exact bytes, so a picture cached under
+     one set is never answered with another set's file when the schedule switches. */
+  const { full, setId } = themeSetAssetPath(fileName);
+  const cacheKey = `${setId}:${fileName}`;
+  const cached = _uiFileUrlCache.get(cacheKey);
   if (cached && now - cached.at < UI_FILE_URL_TTL_MS) return cached.url;
-  const full = path.join(UI_DIR, fileName);
   let url = null;
   try {
-    const st = fs.statSync(full);
-    url = `${basePath}?v=${Math.trunc(st.mtimeMs)}`;
+    if (full) {
+      const st = fs.statSync(full);
+      url = `${basePath}?v=${Math.trunc(st.mtimeMs)}${setId ? `&s=${setId}` : ''}`;
+    }
   } catch {
     url = null;
   }
-  _uiFileUrlCache.set(fileName, { url, at: now });
+  _uiFileUrlCache.set(cacheKey, { url, at: now });
   return url;
 }
 
@@ -426,7 +437,7 @@ function detectFontExtension(buffer, originalName = '') {
 }
 
 function readCustomFontExt() {
-  const ext = getSetting('ui_custom_font_ext');
+  const ext = uiSetting('ui_custom_font_ext');
   return FONT_EXTENSIONS[ext] ? ext : '';
 }
 
@@ -445,74 +456,74 @@ function removeCustomFontFiles() {
 }
 
 function readFontFamilySetting() {
-  const raw = getSetting('ui_font_family');
+  const raw = uiSetting('ui_font_family');
   return UI_FONT_FAMILY_PRESETS.includes(raw) ? raw : (raw === '' ? 'inter' : 'inter');
 }
 
 function legacyFontSizeFromScale() {
-  const legacy = getSetting('ui_font_scale');
+  const legacy = uiSetting('ui_font_scale');
   if (legacy === 'small') return 13;
   if (legacy === 'large') return 16;
   return DEFAULT_FONT_SIZE_PX;
 }
 
 function readFontSizeSetting() {
-  const raw = getSetting('ui_font_size');
+  const raw = uiSetting('ui_font_size');
   if (raw !== '') return clampInt(raw, MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX, DEFAULT_FONT_SIZE_PX);
   return legacyFontSizeFromScale();
 }
 
 function isFontSizeCustomized() {
-  if (getSetting('ui_font_size') !== '') return true;
-  const legacy = getSetting('ui_font_scale');
+  if (uiSetting('ui_font_size') !== '') return true;
+  const legacy = uiSetting('ui_font_scale');
   return legacy === 'small' || legacy === 'large';
 }
 
 function readHeadingScale() {
-  const raw = getSetting('ui_heading_scale');
+  const raw = uiSetting('ui_heading_scale');
   if (raw === '') return DEFAULT_HEADING_SCALE;
   return clampInt(raw, MIN_HEADING_SCALE, MAX_HEADING_SCALE, DEFAULT_HEADING_SCALE);
 }
 
 function isHeadingScaleCustomized() {
-  const raw = getSetting('ui_heading_scale');
+  const raw = uiSetting('ui_heading_scale');
   return raw !== '' && clampInt(raw, MIN_HEADING_SCALE, MAX_HEADING_SCALE, DEFAULT_HEADING_SCALE) !== DEFAULT_HEADING_SCALE;
 }
 
 function readRadiusPreset() {
-  const raw = getSetting('ui_radius_preset');
+  const raw = uiSetting('ui_radius_preset');
   return UI_RADIUS_PRESETS.includes(raw) ? raw : 'rounded';
 }
 
 function readRadiusScale() {
-  const raw = getSetting('ui_radius_scale');
+  const raw = uiSetting('ui_radius_scale');
   if (raw === '') return DEFAULT_RADIUS_SCALE;
   return clampInt(raw, MIN_RADIUS_SCALE, MAX_RADIUS_SCALE, DEFAULT_RADIUS_SCALE);
 }
 
 function readBgSize() {
-  const raw = getSetting('ui_bg_size');
+  const raw = uiSetting('ui_bg_size');
   return BG_SIZE_PRESETS.includes(raw) ? raw : 'cover';
 }
 
 function readBgPosition() {
-  const raw = getSetting('ui_bg_position');
+  const raw = uiSetting('ui_bg_position');
   return BG_POSITION_PRESETS.includes(raw) ? raw : 'center';
 }
 
 function readHeaderHeight() {
-  const raw = getSetting('ui_header_height');
+  const raw = uiSetting('ui_header_height');
   if (raw === '') return DEFAULT_HEADER_HEIGHT;
   return clampInt(raw, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, DEFAULT_HEADER_HEIGHT);
 }
 
 function readHeaderPosition() {
-  const raw = getSetting('ui_header_position');
+  const raw = uiSetting('ui_header_position');
   return HEADER_POSITION_PRESETS.includes(raw) ? raw : 'center';
 }
 
 function readHeaderSize() {
-  const raw = getSetting('ui_header_size');
+  const raw = uiSetting('ui_header_size');
   return HEADER_SIZE_PRESETS.includes(raw) ? raw : DEFAULT_HEADER_SIZE;
 }
 
@@ -537,10 +548,10 @@ export function invalidateUiCustomizationCache() {
 }
 
 function readSurfaceOpacity() {
-  const unifiedRaw = getSetting('ui_surface_opacity');
+  const unifiedRaw = uiSetting('ui_surface_opacity');
   if (unifiedRaw !== '') return clampInt(unifiedRaw, 0, 100, 88);
   for (const key of ['ui_panel_opacity', 'ui_topbar_opacity', 'ui_sidebar_opacity']) {
-    const raw = getSetting(key);
+    const raw = uiSetting(key);
     if (raw !== '') return clampInt(raw, 0, 100, 88);
   }
   return 88;
@@ -551,12 +562,12 @@ function resolveThemeSurface(mode, glassColorFromForm) {
   const fallback = isDark ? LEGACY_SURFACE_DARK : LEGACY_SURFACE_LIGHT;
   if (hasUiDynamicThemeFromBg() && hasExtractedBgPalette()) {
     const key = isDark ? 'ui_bg_palette_dark' : 'ui_bg_palette_light';
-    return normalizeHexColor(getSetting(key), fallback);
+    return normalizeHexColor(uiSetting(key), fallback);
   }
   if (glassColorFromForm !== undefined && glassColorFromForm !== '') {
     return normalizeHexColor(glassColorFromForm, fallback);
   }
-  const raw = getSetting(isDark ? 'ui_glass_color_dark' : 'ui_glass_color_light');
+  const raw = uiSetting(isDark ? 'ui_glass_color_dark' : 'ui_glass_color_light');
   return normalizeHexColor(raw || fallback, fallback);
 }
 
@@ -571,11 +582,11 @@ function clearExtractedBgPalette() {
 }
 
 export function hasUiDynamicThemeFromBg() {
-  return getSetting('ui_dynamic_theme_from_bg') === '1';
+  return uiSetting('ui_dynamic_theme_from_bg') === '1';
 }
 
 export function hasExtractedBgPalette() {
-  return getSetting('ui_bg_palette_dark') !== '' && getSetting('ui_bg_palette_light') !== '';
+  return uiSetting('ui_bg_palette_dark') !== '' && uiSetting('ui_bg_palette_light') !== '';
 }
 
 function clearManualGlassTypographyColors() {
@@ -614,20 +625,20 @@ export function hasUiThemeConfigured() {
 
 export function hasUiThemeColorsConfigured() {
   if (hasUiDynamicThemeFromBg() && hasExtractedBgPalette()) return true;
-  const textDark = getSetting('ui_glass_text_dark');
-  const textLight = getSetting('ui_glass_text_light');
+  const textDark = uiSetting('ui_glass_text_dark');
+  const textLight = uiSetting('ui_glass_text_light');
   if (textDark !== '' || textLight !== '') return true;
-  const mutedDark = getSetting('ui_glass_muted_dark');
-  const mutedLight = getSetting('ui_glass_muted_light');
+  const mutedDark = uiSetting('ui_glass_muted_dark');
+  const mutedLight = uiSetting('ui_glass_muted_light');
   if (mutedDark !== '' || mutedLight !== '') return true;
-  const linkDark = getSetting('ui_glass_link_dark');
-  const linkLight = getSetting('ui_glass_link_light');
+  const linkDark = uiSetting('ui_glass_link_dark');
+  const linkLight = uiSetting('ui_glass_link_light');
   if (linkDark !== '' || linkLight !== '') return true;
-  const accentDark = getSetting('ui_accent_dark');
-  const accentLight = getSetting('ui_accent_light');
+  const accentDark = uiSetting('ui_accent_dark');
+  const accentLight = uiSetting('ui_accent_light');
   if (accentDark !== '' || accentLight !== '') return true;
-  const overlayDark = getSetting('ui_bg_overlay_color_dark');
-  const overlayLight = getSetting('ui_bg_overlay_color_light');
+  const overlayDark = uiSetting('ui_bg_overlay_color_dark');
+  const overlayLight = uiSetting('ui_bg_overlay_color_light');
   if (overlayDark !== '' || overlayLight !== '') return true;
   return hasCustomThemeSurface();
 }
@@ -635,8 +646,8 @@ export function hasUiThemeColorsConfigured() {
 /** A non-built-in panel/surface color (manual or extracted from the background). */
 export function hasCustomThemeSurface() {
   if (hasUiDynamicThemeFromBg() && hasExtractedBgPalette()) return true;
-  const dark = getSetting('ui_glass_color_dark');
-  const light = getSetting('ui_glass_color_light');
+  const dark = uiSetting('ui_glass_color_dark');
+  const light = uiSetting('ui_glass_color_light');
   if (dark !== '' && !isBuiltinSurface(dark, 'dark')) return true;
   if (light !== '' && !isBuiltinSurface(light, 'light')) return true;
   return false;
@@ -649,13 +660,13 @@ export function hasCustomThemeSurface() {
 export function detectActiveThemePreset() {
   if (hasUiDynamicThemeFromBg() && hasExtractedBgPalette()) return null;
   const roleKeys = ['ui_glass_text_dark', 'ui_glass_text_light', 'ui_glass_muted_dark', 'ui_glass_muted_light', 'ui_glass_link_dark', 'ui_glass_link_light'];
-  if (roleKeys.some((key) => getSetting(key) !== '')) return 'custom';
+  if (roleKeys.some((key) => uiSetting(key) !== '')) return 'custom';
   const surface = (mode) => canonicalSurface(
-    getSetting(mode === 'dark' ? 'ui_glass_color_dark' : 'ui_glass_color_light') || (mode === 'dark' ? LEGACY_SURFACE_DARK : LEGACY_SURFACE_LIGHT),
+    uiSetting(mode === 'dark' ? 'ui_glass_color_dark' : 'ui_glass_color_light') || (mode === 'dark' ? LEGACY_SURFACE_DARK : LEGACY_SURFACE_LIGHT),
     mode,
     mode === 'dark' ? LEGACY_SURFACE_DARK : LEGACY_SURFACE_LIGHT,
   );
-  const accent = (mode) => normalizeHexColor(getSetting(mode === 'dark' ? 'ui_accent_dark' : 'ui_accent_light'), '');
+  const accent = (mode) => normalizeHexColor(uiSetting(mode === 'dark' ? 'ui_accent_dark' : 'ui_accent_light'), '');
   const match = THEME_PRESETS.find((preset) => ['dark', 'light'].every((mode) => (
     canonicalSurface(preset[mode].surface, mode, '') === surface(mode)
     && normalizeHexColor(preset[mode].accent, '') === accent(mode)
@@ -673,7 +684,7 @@ const UI_PANEL_SLIDER_KEYS = [
 ];
 
 export function hasUiBackgroundSlidersConfigured() {
-  return UI_BACKGROUND_SLIDER_KEYS.some((key) => getSetting(key) !== '');
+  return UI_BACKGROUND_SLIDER_KEYS.some((key) => uiSetting(key) !== '');
 }
 
 /* Saving the appearance form used to store the defaults (88 / 0) too, which switched glass panels on
@@ -682,7 +693,7 @@ const UI_PANEL_SLIDER_DEFAULTS = { ui_surface_opacity: 88, ui_surface_blur: 0 };
 
 export function hasUiPanelSlidersConfigured() {
   return UI_PANEL_SLIDER_KEYS.some((key) => {
-    const raw = getSetting(key);
+    const raw = uiSetting(key);
     if (raw === '') return false;
     return !(key in UI_PANEL_SLIDER_DEFAULTS) || Number(raw) !== UI_PANEL_SLIDER_DEFAULTS[key];
   });
@@ -695,7 +706,8 @@ export function hasUiThemeSlidersConfigured() {
 /** Panel glass (opacity/blur) — needed with custom colors, custom panel sliders, or a background image. */
 export function hasUiBackgroundImage() {
   ensureUiDir();
-  return fs.existsSync(path.join(UI_DIR, 'background.webp'));
+  const { full } = themeSetAssetPath('background.webp');
+  return Boolean(full) && fs.existsSync(full);
 }
 
 /* Only a custom surface turns panels into glass: changing just the accent or the text keeps the
@@ -706,14 +718,14 @@ export function usesPanelGlass() {
 
 export function hasUiThemeShapeConfigured() {
   const keys = ['ui_radius_preset', 'ui_shadow_preset', 'ui_radius_scale'];
-  return keys.some((key) => getSetting(key) !== '');
+  return keys.some((key) => uiSetting(key) !== '');
 }
 
 export function hasUiThemeTypographyConfigured() {
   if (isFontSizeCustomized()) return true;
   if (isHeadingScaleCustomized()) return true;
-  if (getSetting('ui_density') !== '') return true;
-  if (getSetting('ui_font_family') !== '') return true;
+  if (uiSetting('ui_density') !== '') return true;
+  if (uiSetting('ui_font_family') !== '') return true;
   return hasCustomFontFile();
 }
 
@@ -793,48 +805,48 @@ export function getUiCustomization() {
     ensureUiDir();
     _uiDirReady = true;
   }
-  const blurRaw = getSetting('ui_bg_blur');
-  const overlayRaw = getSetting('ui_bg_overlay');
+  const blurRaw = uiSetting('ui_bg_blur');
+  const overlayRaw = uiSetting('ui_bg_overlay');
   const blur = blurRaw === '' ? 0 : clampInt(blurRaw, 0, 24, 0);
   const overlay = overlayRaw === '' ? BG_OVERLAY_DEFAULT_STRENGTH : clampInt(overlayRaw, 0, BG_OVERLAY_MAX, BG_OVERLAY_DEFAULT_STRENGTH);
   const bgContrast = bgContrastFromOverlayStrength(overlay);
   const surfaceOpacity = readSurfaceOpacity();
-  const surfaceBlurRaw = getSetting('ui_surface_blur');
+  const surfaceBlurRaw = uiSetting('ui_surface_blur');
   const surfaceBlur = surfaceBlurRaw === '' ? 0 : clampInt(surfaceBlurRaw, 0, 24, 0);
-  const showLogoOnLogin = getSetting('ui_show_logo_login') !== '0';
-  const showLogo = getSetting('ui_show_logo') !== '0';
-  const showHeader = getSetting('ui_show_header') !== '0';
-  const manuscriptWash = getSetting('ui_manuscript') !== '0';
-  const book3d = getSetting('ui_book_3d') !== '0';
-  const radiusPreset = getSetting('ui_radius_preset') || 'rounded';
-  const shadowPreset = getSetting('ui_shadow_preset') || 'normal';
+  const showLogoOnLogin = uiSetting('ui_show_logo_login') !== '0';
+  const showLogo = uiSetting('ui_show_logo') !== '0';
+  const showHeader = uiSetting('ui_show_header') !== '0';
+  const manuscriptWash = uiSetting('ui_manuscript') !== '0';
+  const book3d = uiSetting('ui_book_3d') !== '0';
+  const radiusPreset = uiSetting('ui_radius_preset') || 'rounded';
+  const shadowPreset = uiSetting('ui_shadow_preset') || 'normal';
   const fontSize = readFontSizeSetting();
-  const density = getSetting('ui_density') || 'normal';
+  const density = uiSetting('ui_density') || 'normal';
   let fontFamily = readFontFamilySetting();
   const customFontExt = readCustomFontExt();
-  const customFontName = getSetting('ui_custom_font_name') || 'Custom Font';
+  const customFontName = uiSetting('ui_custom_font_name') || 'Custom Font';
   const customFontFile = customFontFileName(customFontExt);
   const customFontUrl = customFontFile ? fileMtimeUrl('/custom/ui/font', customFontFile) : null;
   if (fontFamily === 'custom' && !customFontUrl) fontFamily = 'inter';
-  const glassColorDarkRaw = getSetting('ui_glass_color_dark');
-  const glassColorLightRaw = getSetting('ui_glass_color_light');
-  const glassTextDarkRaw = getSetting('ui_glass_text_dark');
-  const glassTextLightRaw = getSetting('ui_glass_text_light');
-  const glassMutedDarkRaw = getSetting('ui_glass_muted_dark');
-  const glassMutedLightRaw = getSetting('ui_glass_muted_light');
-  const glassLinkDarkRaw = getSetting('ui_glass_link_dark');
-  const glassLinkLightRaw = getSetting('ui_glass_link_light');
-  const accentDarkRaw = getSetting('ui_accent_dark');
-  const accentLightRaw = getSetting('ui_accent_light');
-  const overlayColorDarkRaw = getSetting('ui_bg_overlay_color_dark');
-  const overlayColorLightRaw = getSetting('ui_bg_overlay_color_light');
+  const glassColorDarkRaw = uiSetting('ui_glass_color_dark');
+  const glassColorLightRaw = uiSetting('ui_glass_color_light');
+  const glassTextDarkRaw = uiSetting('ui_glass_text_dark');
+  const glassTextLightRaw = uiSetting('ui_glass_text_light');
+  const glassMutedDarkRaw = uiSetting('ui_glass_muted_dark');
+  const glassMutedLightRaw = uiSetting('ui_glass_muted_light');
+  const glassLinkDarkRaw = uiSetting('ui_glass_link_dark');
+  const glassLinkLightRaw = uiSetting('ui_glass_link_light');
+  const accentDarkRaw = uiSetting('ui_accent_dark');
+  const accentLightRaw = uiSetting('ui_accent_light');
+  const overlayColorDarkRaw = uiSetting('ui_bg_overlay_color_dark');
+  const overlayColorLightRaw = uiSetting('ui_bg_overlay_color_light');
   const bgSize = readBgSize();
   const bgPosition = readBgPosition();
   const headingScale = readHeadingScale();
   const radiusScale = readRadiusScale();
   const dynamicThemeFromBg = hasUiDynamicThemeFromBg() && hasExtractedBgPalette();
-  const paletteDarkRaw = getSetting('ui_bg_palette_dark');
-  const paletteLightRaw = getSetting('ui_bg_palette_light');
+  const paletteDarkRaw = uiSetting('ui_bg_palette_dark');
+  const paletteLightRaw = uiSetting('ui_bg_palette_light');
   let displayDark;
   let displayLight;
   if (dynamicThemeFromBg) {
@@ -878,7 +890,7 @@ export function getUiCustomization() {
   const coverTitleX = readCoverTitleOffset('ui_cover_title_x');
   const coverTitleY = readCoverTitleOffset('ui_cover_title_y');
   const coverTitleColor = readCoverTitleColor();
-  const coverTitleColorSet = getSetting('ui_cover_title_color') !== '';
+  const coverTitleColorSet = uiSetting('ui_cover_title_color') !== '';
   const coverTitleShadow = readCoverTitleShadow();
   const manuscriptFont = readManuscriptFont();
   const manuscriptInk = readManuscriptInk();
@@ -1077,8 +1089,8 @@ export function getThemePreviewFromDraft(draft = {}) {
   let darkSurface;
   let lightSurface;
   if (useExtractedPalette) {
-    darkSurface = normalizeHexColor(getSetting('ui_bg_palette_dark'), LEGACY_SURFACE_DARK);
-    lightSurface = normalizeHexColor(getSetting('ui_bg_palette_light'), LEGACY_SURFACE_LIGHT);
+    darkSurface = normalizeHexColor(uiSetting('ui_bg_palette_dark'), LEGACY_SURFACE_DARK);
+    lightSurface = normalizeHexColor(uiSetting('ui_bg_palette_light'), LEGACY_SURFACE_LIGHT);
   } else {
     darkSurface = normalizeHexColor(draftStr(draft.glassColorDark, saved.glassColorDark), LEGACY_SURFACE_DARK);
     lightSurface = canonicalSurface(draftStr(draft.glassColorLight, saved.glassColorLight), 'light', LEGACY_SURFACE_LIGHT);
@@ -1306,7 +1318,7 @@ export function saveUiSettings({
     setSetting('ui_dynamic_theme_from_bg', enabled ? '1' : '0');
     if (enabled) clearManualGlassSurfaceColors();
   }
-  const dynamicActive = getSetting('ui_dynamic_theme_from_bg') === '1';
+  const dynamicActive = uiSetting('ui_dynamic_theme_from_bg') === '1';
   if (bgBlur !== undefined) {
     setSetting('ui_bg_blur', String(clampInt(bgBlur, 0, 24, 0)));
   }
@@ -1660,7 +1672,7 @@ export function removeUiAsset(asset) {
     removeCustomFontFiles();
     setSetting('ui_custom_font_ext', '');
     setSetting('ui_custom_font_name', '');
-    if (getSetting('ui_font_family') === 'custom') setSetting('ui_font_family', '');
+    if (uiSetting('ui_font_family') === 'custom') setSetting('ui_font_family', '');
     invalidateUiCustomizationCache();
     return;
   }
@@ -1688,7 +1700,8 @@ export function removeUiAsset(asset) {
   invalidateUiCustomizationCache();
 }
 
-export function serveUiAsset(asset, res) {
+/** `setId` = the `?s=` of the URL (a theme set's file); empty = whatever the site shows now. */
+export function serveUiAsset(asset, res, setId = '') {
   if (asset === 'font') {
     const ext = readCustomFontExt();
     const fileName = customFontFileName(ext);
@@ -1702,8 +1715,8 @@ export function serveUiAsset(asset, res) {
   }
   const spec = SERVE_MAP[asset];
   if (!spec) return false;
-  const full = path.join(UI_DIR, spec.file);
-  if (!fs.existsSync(full)) return false;
+  const { full } = themeSetAssetPath(spec.file, /^[a-f0-9]{8}$/.test(String(setId)) ? String(setId) : '');
+  if (!full || !fs.existsSync(full)) return false;
   res.type(spec.type);
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.sendFile(full);
@@ -1786,7 +1799,7 @@ export function getUiAppearanceFormState() {
 
 export function getPublicUiSettingsJson() {
   const ui = getUiCustomization();
-  const siteName = String(getSetting('site_name') || '').trim();
+  const siteName = String(uiSetting('site_name') || '').trim();
   const pair = ui.themePair;
   const mapAppPalette = (p) => ({
     /* Additive: accent as text (AA), text on an accent / link fill. Older apps ignore them. */
