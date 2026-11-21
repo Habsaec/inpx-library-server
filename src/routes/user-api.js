@@ -10,7 +10,7 @@ import {
   getEreaderEmail, setEreaderEmail, setUserAccountEmail, getSmtpSettings, getUserByUsername, isEreaderEmailAllowedForUser,
   getMeta, setMeta, createAppPairingToken, consumeAppPairingToken,
   resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser,
-  getUserReadingStats, setReadingGoal, setBookRating, removeBookRating, getBookRating,
+  getUserReadingStats, getUserYearReview, setReadingGoal, setBookRating, removeBookRating, getBookRating,
 } from '../db.js';
 import { resolvePublicBaseUrl } from '../services/password-reset.js';
 import { isPairingRedeemRateLimited, registerPairingRedeemAttempt } from '../services/rate-limiter.js';
@@ -40,6 +40,7 @@ import { getUserHomeLayout, orderShelves } from '../home-layout.js';
 import { normalizeBatchIdsParam, resolveAdhocBookIdsFromClientList, resolveBatchScopeBookIds } from './download.js';
 import { decodeBookRef } from '../utils/book-ref.js';
 import { asyncHandler } from '../utils/async-handler.js';
+import { attachCoverTones } from '../services/cover-tones.js';
 
 /**
  * User-facing API routes: bookmarks, shelves, favorites, e-reader, history.
@@ -249,6 +250,13 @@ export function registerUserApiRoutes(app, deps) {
   /* Reading statistics + yearly goal (web profile renders the same data server-side). */
   app.get('/api/reading-stats', requireApiAuth, (req, res) => {
     res.json(getUserReadingStats(req.user.username));
+  });
+
+  /* «Итоги года»: GET /api/reading-stats/year?year= (default this year). Books carry cover tones. */
+  app.get('/api/reading-stats/year', requireApiAuth, (req, res) => {
+    const review = getUserYearReview(req.user.username, Number(req.query.year) || new Date().getFullYear());
+    attachCoverTones([...review.covers, review.first, review.last, review.favorite].filter(Boolean));
+    res.json(review);
   });
 
   app.post('/api/reading-goal', requireApiAuth, (req, res) => {

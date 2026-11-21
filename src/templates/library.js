@@ -2531,6 +2531,95 @@ export function renderReaderBookmarksPage({ items = [], total = 0, page = 1, pag
   });
 }
 
+const YEAR_TONE_RE = /^#[0-9a-f]{6}$/;
+const YEAR_LQIP_RE = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/;
+
+/** One cover of the year mosaic: thumb over its tone / blurred placeholder, a link to the book. */
+function yearCoverTile(book, extraClass = '') {
+  const tone = YEAR_TONE_RE.test(String(book.coverColor || '')) ? `background-color:${book.coverColor};` : '';
+  const lqip = YEAR_LQIP_RE.test(String(book.coverLqip || '')) ? `background-image:url(${book.coverLqip});` : '';
+  return `<a class="year-cover${extraClass}" href="${bookPagePath(book.id)}" title="${escapeHtml(book.title)}"${tone || lqip ? ` style="${tone}${lqip}"` : ''}><img src="${escapeHtml(apiBookPath(book.id, 'cover-thumb'))}" alt="${escapeHtml(book.title)}" loading="lazy" draggable="false" onerror="this.remove()"></a>`;
+}
+
+/** «Итоги года»: /library/year?year= (data: getUserYearReview, same as GET /api/reading-stats/year). */
+export function renderYearReview({ review, user, stats, indexStatus, csrfToken = '' }) {
+  const year = Number(review.year) || new Date().getFullYear();
+  const total = Math.max(0, Number(review.total) || 0);
+  const count = (n) => countLabel('book', n);
+  const monthName = (m) => new Date(2000, m - 1, 1).toLocaleString(getLocale(), { month: 'long' });
+  const monthShort = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleString(getLocale(), { month: 'short' }));
+  const years = [...new Set([year, ...(review.years || [])])].sort((a, b) => b - a);
+  const yearNav = years.length > 1
+    ? `<nav class="year-switch" aria-label="${escapeHtml(t('yearReview.years'))}">${years.map((y) => (y === year
+      ? `<span class="year-switch-item is-active" aria-current="page">${y}</span>`
+      : `<a class="year-switch-item" href="/library/year?year=${y}">${y}</a>`)).join('')}</nav>`
+    : '';
+
+  if (!total) {
+    const content = `
+      <section class="page-intro page-intro-slim"><div class="page-intro-copy"><h1>${escapeHtml(tp('yearReview.title', { year }))}</h1></div></section>
+      ${yearNav}
+      ${renderEmptyState({ kind: 'books', title: tp('yearReview.emptyTitle', { year }), text: t('yearReview.emptyText'), actionHref: '/library/continue', actionLabel: t('yearReview.emptyAction') })}`;
+    return pageShell({ title: tp('yearReview.title', { year }), content, user, stats, indexStatus, csrfToken, breadcrumbs: [{ label: t('nav.myLibrary'), href: '/library/my' }, { label: tp('yearReview.title', { year }) }], currentPath: '/library/my' });
+  }
+
+  const goal = Math.max(0, Number(review.goal) || 0);
+  const goalLine = goal
+    ? (total >= goal
+      ? tp('yearReview.goalDone', { goal: count(goal) })
+      : tp('yearReview.goalProgress', { pct: Math.round((total / goal) * 100), goal: count(goal) }))
+    : '';
+  const byMonth = Array.isArray(review.byMonth) ? review.byMonth : [];
+  const maxMonth = Math.max(1, ...byMonth.map((n) => Number(n) || 0));
+  const monthBars = `
+      <div class="profile-months year-months" aria-label="${escapeHtml(tp('profile.goal.byMonth', { year }))}">
+        ${byMonth.map((n, i) => `<div class="profile-month${review.busiestMonth === i + 1 ? ' is-peak' : ''}" title="${escapeHtml(`${monthShort[i]}: ${count(n)}`)}">
+          <span class="profile-month-bar"><span style="height:${n ? Math.max(6, Math.round(((Number(n) || 0) / maxMonth) * 100)) : 0}%"></span></span>
+          <span class="profile-month-label">${escapeHtml(monthShort[i])}</span>
+        </div>`).join('')}
+      </div>`;
+
+  const bookLine = (book) => (book
+    ? `<a href="${bookPagePath(book.id)}">${escapeHtml(book.title)}</a>${book.authors ? `<span class="muted"> · ${escapeHtml(formatAuthorLabel(book.authors))}</span>` : ''}`
+    : '');
+  const facts = [
+    review.busiestMonth ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.busiestMonth'))}</span><strong>${escapeHtml(monthName(review.busiestMonth))}</strong><span class="muted">${escapeHtml(count(byMonth[review.busiestMonth - 1] || 0))}</span></div>` : '',
+    review.first ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.firstBook'))}</span>${bookLine(review.first)}</div>` : '',
+    review.last && review.last.id !== review.first?.id ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.lastBook'))}</span>${bookLine(review.last)}</div>` : '',
+    review.favorite ? `<div class="year-fact year-fact-favorite">${yearCoverTile(review.favorite, ' year-cover-favorite')}<div><span class="year-fact-label">${escapeHtml(t('yearReview.favorite'))}</span>${bookLine(review.favorite)}</div></div>` : '',
+    review.averageRating ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.averageRating'))}</span><strong>${escapeHtml(String(review.averageRating))} ★</strong><span class="muted">${escapeHtml(tp('yearReview.ratedCount', { n: review.ratedCount }))}</span></div>` : '',
+  ].filter(Boolean).join('');
+
+  const topList = (title, items, hrefOf, labelOf) => (items?.length
+    ? `<section class="year-top"><h3>${escapeHtml(title)}</h3><ol>${items.map((it) => `<li><a href="${hrefOf(it)}">${escapeHtml(labelOf(it))}</a><span class="muted">${escapeHtml(count(it.count))}</span></li>`).join('')}</ol></section>`
+    : '');
+  const tops = [
+    topList(t('yearReview.topAuthors'), review.topAuthors, (a) => `/facet/authors/${encodeURIComponent(a.name)}`, (a) => formatAuthorLabel(a.displayName || a.name)),
+    topList(t('yearReview.topGenres'), review.topGenres, (g) => `/facet/genres/${encodeURIComponent(g.name)}`, (g) => localizeGenreLabel(g.name, g.displayName)),
+    topList(t('yearReview.topSeries'), review.topSeries, (s) => `/facet/series/${encodeURIComponent(s.name)}`, (s) => s.displayName || s.name),
+  ].filter(Boolean).join('');
+
+  const covers = (review.covers || []).map((b) => yearCoverTile(b)).join('');
+  const content = `
+    <section class="year-hero">
+      <p class="year-hero-kicker">${escapeHtml(tp('yearReview.title', { year }))}</p>
+      <h1 class="year-hero-number">${formatLocaleInt(total)}</h1>
+      <p class="year-hero-caption">${escapeHtml(tp('yearReview.booksRead', { books: plural('book', total) }))}</p>
+      ${goalLine ? `<p class="year-hero-goal">${escapeHtml(goalLine)}</p>` : ''}
+      ${yearNav}
+    </section>
+    <section class="year-mosaic" aria-label="${escapeHtml(t('yearReview.mosaic'))}">${covers}</section>
+    ${total > (review.covers || []).length ? `<p class="muted year-mosaic-more"><a href="/library/read">${escapeHtml(tp('yearReview.allRead', { n: formatLocaleInt(total) }))}</a></p>` : ''}
+    <section class="year-panel">${monthBars}</section>
+    ${facts ? `<section class="year-facts">${facts}</section>` : ''}
+    ${tops ? `<section class="year-tops">${tops}</section>` : ''}`;
+  return pageShell({
+    title: tp('yearReview.title', { year }), content, user, stats, indexStatus, csrfToken,
+    breadcrumbs: [{ label: t('nav.myLibrary'), href: '/library/my' }, { label: tp('yearReview.title', { year }) }],
+    currentPath: '/library/my',
+  });
+}
+
 export function renderReaderNotesPage({
   items = [], total = 0, page = 1, pageSize = 50, filter = {}, facets = null, user, stats, indexStatus, csrfToken = ''
 }) {
@@ -2748,6 +2837,7 @@ export function renderProfile({ user, stats, indexStatus, userStats, readingStat
           : escapeHtml(tp('profile.goal.noGoal', { read: count(readThisYear) }))}</p>
         ${goal ? `<div class="profile-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(readThisYear, goal)}"><span style="width:${goalPct}%"></span></div>` : ''}
         ${monthBars}
+        ${readThisYear ? `<p class="profile-goal-review"><a class="button" href="/library/year?year=${year}">${escapeHtml(tp('yearReview.open', { year }))}</a></p>` : ''}
         <form method="post" action="/profile/reading-goal" class="profile-goal-form">
           ${csrfHiddenField(csrfToken)}
           <input type="hidden" name="year" value="${year}">

@@ -5474,6 +5474,96 @@ export function getUserReadingStats(username) {
   };
 }
 
+let _yearReviewStmts = null;
+const YEAR_REVIEW_COVERS = 60;
+
+/**
+ * «Итоги года» (web /library/year, Android profile): what one user read in `year` — read_books of one
+ * user, a small set, every query starts from `rb.username`. Books are plain `{ id, title, authors }`;
+ * the caller adds cover tones.
+ */
+export function getUserYearReview(username, year = new Date().getFullYear()) {
+  const y = String(Math.trunc(Number(year)) || new Date().getFullYear());
+  _yearReviewStmts ??= {
+    books: db.prepare(`
+      SELECT b.id AS id, b.title AS title, b.authors AS authors, rb.created_at AS readAt
+      FROM read_books rb
+      JOIN active_books b ON b.id = rb.book_id
+      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      ORDER BY rb.created_at DESC, b.id
+    `),
+    authors: db.prepare(`
+      SELECT a.name AS name, COALESCE(a.display_name, a.name) AS displayName, COUNT(*) AS count
+      FROM read_books rb
+      JOIN active_books b ON b.id = rb.book_id
+      JOIN book_authors ba ON ba.book_id = rb.book_id
+      JOIN authors a ON a.id = ba.author_id
+      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      GROUP BY a.id ORDER BY count DESC, a.name LIMIT 5
+    `),
+    genres: db.prepare(`
+      SELECT g.name AS name, COUNT(*) AS count
+      FROM read_books rb
+      JOIN active_books b ON b.id = rb.book_id
+      JOIN book_genres bg ON bg.book_id = rb.book_id
+      JOIN genres_catalog g ON g.id = bg.genre_id
+      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      GROUP BY g.id ORDER BY count DESC, g.name LIMIT 5
+    `),
+    series: db.prepare(`
+      SELECT sc.name AS name, COALESCE(sc.display_name, sc.name) AS displayName, COUNT(*) AS count
+      FROM read_books rb
+      JOIN active_books b ON b.id = rb.book_id
+      JOIN book_series bs ON bs.book_id = rb.book_id
+      JOIN series_catalog sc ON sc.id = bs.series_id
+      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      GROUP BY sc.id HAVING count > 1 ORDER BY count DESC, sc.name LIMIT 3
+    `),
+    ratings: db.prepare(`
+      SELECT br.book_id AS id, br.rating AS rating
+      FROM read_books rb
+      JOIN active_books b ON b.id = rb.book_id
+      JOIN book_ratings br ON br.username = rb.username AND br.book_id = rb.book_id
+      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      ORDER BY br.rating DESC, rb.created_at DESC
+    `),
+    years: db.prepare(`
+      SELECT DISTINCT substr(rb.created_at, 1, 4) AS year
+      FROM read_books rb
+      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'
+      ORDER BY year DESC
+      LIMIT 20
+    `),
+  };
+  const books = _yearReviewStmts.books.all(username, y);
+  const byMonth = Array.from({ length: 12 }, () => 0);
+  for (const book of books) {
+    const month = Number(String(book.readAt || '').slice(5, 7));
+    if (month >= 1 && month <= 12) byMonth[month - 1] += 1;
+  }
+  const busiest = byMonth.reduce((best, n, i) => (n > byMonth[best] ? i : best), 0);
+  const ratings = _yearReviewStmts.ratings.all(username, y);
+  const brief = (b) => (b ? { id: b.id, title: b.title, authors: b.authors || '' } : null);
+  const byId = new Map(books.map((b) => [b.id, b]));
+  return {
+    year: Number(y),
+    total: books.length,
+    goal: getReadingGoal(username, Number(y)),
+    byMonth,
+    busiestMonth: books.length ? busiest + 1 : null,
+    first: brief(books[books.length - 1]),
+    last: brief(books[0]),
+    covers: books.slice(0, YEAR_REVIEW_COVERS).map(brief),
+    topAuthors: _yearReviewStmts.authors.all(username, y),
+    topGenres: withGenreNameEn(_yearReviewStmts.genres.all(username, y).map((g) => ({ ...g, displayName: formatGenreLabel(g.name) }))),
+    topSeries: _yearReviewStmts.series.all(username, y),
+    ratedCount: ratings.length,
+    averageRating: ratings.length ? Math.round((ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length) * 10) / 10 : null,
+    favorite: ratings.length && ratings[0].rating >= 4 ? brief(byId.get(ratings[0].id)) : null,
+    years: _yearReviewStmts.years.all(username).map((r) => Number(r.year)),
+  };
+}
+
 let _stmtReadByMonth = null;
 let _stmtGetReadingGoal = null;
 let _stmtSetReadingGoal = null;

@@ -28,7 +28,8 @@ export {
   renderProfileSettings,
   renderMyLibrary,
   renderReaderBookmarksPage,
-  renderReaderNotesPage
+  renderReaderNotesPage,
+  renderYearReview
 } from './templates/library.js';
 
 // Admin templates

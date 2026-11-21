@@ -45,8 +45,9 @@ import {
   getUserShelves, getShelfById, getShelfBooks, setShelfOnHome, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats,
   getAllReaderBookmarksPage, queryReaderAnnotations, getReaderAnnotationFacets,
   getUserByUsername, resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser,
-  getBookRating
+  getBookRating, getUserYearReview
 } from '../db.js';
+import { attachCoverTones } from '../services/cover-tones.js';
 import { parseNotesFilter } from '../services/reader-notes.js';
 import { isListBrowseView, resolveAuthorFacetView, resolveFacetBookLayout } from '../browse-view-prefs.js';
 import { effectiveContentLangs, resolveContentLangFilter, contentLangCacheKey, listEnabledContentLangs } from '../user-content-langs.js';
@@ -394,7 +395,7 @@ export function registerLibraryRoutes(app, deps) {
       renderHome, renderCatalog, renderLibraryView, renderBrowsePage,
       renderFacetBooks, renderAuthorFacetPage, renderAuthorOutsideSeriesPage,
       renderBook, renderFavorites, renderShelves, renderShelfDetail, renderReader,
-      renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage
+      renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage, renderYearReview
     }
   } = deps;
 
@@ -1257,6 +1258,15 @@ export function registerLibraryRoutes(app, deps) {
     res.send(renderReaderBookmarksPage({
       items: result.items, total: result.total, page, pageSize,
       user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
+    }));
+  });
+
+  /* «Итоги года» (web): the same data as GET /api/reading-stats/year. */
+  app.get('/library/year', requireWebAuth, (req, res) => {
+    const review = getUserYearReview(req.user.username, Number(req.query.year) || new Date().getFullYear());
+    attachCoverTones([...review.covers, review.first, review.last, review.favorite].filter(Boolean));
+    res.send(renderYearReview({
+      review, user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
     }));
   });
 

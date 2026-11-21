@@ -3574,6 +3574,171 @@ html[data-eink="1"] .ui-decor {
   display: none !important;
 }
 
+/* ── «Итоги года» (/library/year) ── */
+.year-hero {
+  text-align: center;
+  padding: 28px 16px 20px;
+}
+
+.year-hero-kicker {
+  margin: 0;
+  color: var(--accent-text, var(--accent));
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: var(--font-size-sm, 0.85rem);
+}
+
+.year-hero-number {
+  margin: 4px 0 0;
+  font-family: var(--font-display, inherit);
+  font-size: clamp(3.5rem, 12vw, 6.5rem);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, var(--text) 30%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.year-hero-caption {
+  margin: 6px 0 0;
+  font-size: 1.15rem;
+  color: var(--muted);
+}
+
+.year-hero-goal {
+  margin: 10px 0 0;
+  font-weight: 600;
+}
+
+.year-switch {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.year-switch-item {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.year-switch-item.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.year-mosaic {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+
+.year-cover {
+  display: block;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: var(--surface-hover);
+  background-size: 100% 100%;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.year-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.year-mosaic-more {
+  text-align: right;
+  margin: 0 0 16px;
+}
+
+.year-panel,
+.year-facts,
+.year-tops {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.year-months .profile-month.is-peak .profile-month-bar > span {
+  background: var(--accent);
+}
+
+.year-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.year-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.year-fact-label {
+  color: var(--muted);
+  font-size: var(--font-size-sm, 0.85rem);
+}
+
+.year-fact-favorite {
+  flex-direction: row;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.year-cover-favorite {
+  flex: 0 0 56px;
+  width: 56px;
+}
+
+.year-tops {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.year-top h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.year-top ol {
+  margin: 0;
+  padding-left: 1.3em;
+  display: grid;
+  gap: 4px;
+}
+
+/* keep list-item display (flex would drop the numbers); the count floats right */
+.year-top li > .muted {
+  float: right;
+  margin-left: 8px;
+}
+
+.profile-goal-review {
+  margin: 12px 0 0;
+}
+
+html[data-eink="1"] .year-hero-number {
+  background: none;
+  color: #000;
+}
+
 /* ── Genre rows: a patterned tile per genre group (renderGenreSwatch; same motifs in the Android app) ── */
 .genre-swatch {
   --gc: hsla(var(--gh), 45%, 55%, 0.6);
