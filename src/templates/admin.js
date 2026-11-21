@@ -2290,12 +2290,17 @@ export function renderAdminAppearance({
           <span class="admin-field-hint">${escapeHtml(t('admin.ui.coverDimHint'))}</span>
         </div>
         <div class="admin-field-group admin-field-group--compact">
-          <label for="ui-decor">${escapeHtml(t('admin.ui.decor'))}</label>
-          <select id="ui-decor" name="decor" form="ui-main-form">
-            <option value=""${!ui.decor ? ' selected' : ''}>${escapeHtml(t('admin.ui.decorNone'))}</option>
-            <option value="snow"${ui.decor === 'snow' ? ' selected' : ''}>${escapeHtml(t('admin.ui.decorSnow'))}</option>
-            <option value="leaves"${ui.decor === 'leaves' ? ' selected' : ''}>${escapeHtml(t('admin.ui.decorLeaves'))}</option>
-          </select>
+          <span class="admin-field-label">${escapeHtml(t('admin.ui.decor'))}</span>
+          <div class="ui-decor-options">
+            ${['snow', 'leaves', 'garland', 'drifts'].map((v) => {
+    const name = `decor${v[0].toUpperCase()}${v.slice(1)}`;
+    const on = String(ui.decor || '').split(',').includes(v);
+    return `<label class="admin-checkbox-label">
+              <input type="checkbox" form="ui-main-form" name="${name}" value="1" ${on ? 'checked' : ''}>
+              ${escapeHtml(t(`admin.ui.decor${v[0].toUpperCase()}${v.slice(1)}`))}
+            </label>`;
+  }).join('')}
+          </div>
           <span class="admin-field-hint">${escapeHtml(t('admin.ui.decorHint'))}</span>
         </div>
         <hr class="admin-divider">

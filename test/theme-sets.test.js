@@ -175,6 +175,9 @@ test('seasonal decoration is an appearance setting carried by theme sets', async
   saveUiSettings({ decor: 'snow' });
   invalidateUiCustomizationCache();
   assert.equal(getUiCustomization().decor, 'snow');
+  saveUiSettings({ decor: 'drifts, snow,garland,bogus' });
+  invalidateUiCustomizationCache();
+  assert.equal(getUiCustomization().decor, 'snow,garland,drifts', 'any combination, canonical order, unknown names dropped');
   saveUiSettings({ decor: '<script>' });
   invalidateUiCustomizationCache();
   assert.equal(getUiCustomization().decor, '', 'unknown values are dropped');

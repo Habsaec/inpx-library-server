@@ -1,13 +1,17 @@
 /*
- * Seasonal decoration (Admin → Appearance → Effects «Сезонное украшение», html[data-ui-decor]).
- * Canvas particles under the page content (.ui-decor, z −1):
- *   snow   — soft flakes on three depth layers (near = bigger, softer, faster), each swaying at its own
- *            rate, a smoothly gusting wind; the nearest few are six-armed crystals;
- *   leaves — maple / oak / elm silhouettes with veins and a stalk in autumn colours, tumbling: they spin,
- *            flip over (the underside is paler) and swing like a pendulum while drifting with the wind.
+ * Seasonal decoration (Admin → Appearance → Effects «Сезонное украшение»). html[data-ui-decor] is a
+ * space-separated list — any combination of:
+ *   snow    — canvas (.ui-decor, z −1 under the content): soft flakes on depth layers (near = bigger,
+ *             softer, faster), each swaying at its own rate in a gusting wind; the nearest are crystals;
+ *   leaves  — the same canvas: maple / oak / elm silhouettes with veins and a stalk in autumn colours,
+ *             tumbling (spin, flip with a paler underside, pendulum swing) while drifting with the wind;
+ *   garland — an SVG string of C9 bulbs hung under the top bar ([data-topbar]): a twisted wire sagging
+ *             between clips, glass with a radial gradient, a soft halo; bulbs sway and their light runs
+ *             in a wave with jitter (CSS animations; still with reduced motion);
+ *   drifts  — CSS only (styles.css «Snow drifts»): snow caps on the top edges of cards and panels.
  * Sprites are drawn once; the particle count follows the screen area; DPR ≤ 1.5; paused in a hidden tab;
- * nothing runs while the attribute is absent (a MutationObserver waits for the admin live preview),
- * with prefers-reduced-motion or in E-Ink mode.
+ * nothing runs while no effect is on (a MutationObserver follows the admin live preview); no canvas with
+ * prefers-reduced-motion; nothing at all in E-Ink mode.
  */
 (() => {
   'use strict';
@@ -17,24 +21,31 @@
   let canvas = null;
   let ctx = null;
   let raf = 0;
-  let mode = '';
-  let particles = [];
+  let active = { snow: false, leaves: false };
+  let flakes = [];
+  let leaves = [];
   let sprites = null;
   let width = 0;
   let height = 0;
   let dpr = 1;
   let last = 0;
   let clock = 0;
+  let garland = null;
+  let garlandWidth = 0;
+  let garlandObserver = null;
 
   const rand = (a, b) => a + Math.random() * (b - a);
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
-  function wantedMode() {
-    const value = root.getAttribute('data-ui-decor') || '';
-    if (value !== 'snow' && value !== 'leaves') return '';
-    if (root.getAttribute('data-eink') === '1') return '';
-    if (reduceMotion && reduceMotion.matches) return '';
-    return value;
+  function wanted() {
+    const tokens = new Set(String(root.getAttribute('data-ui-decor') || '').split(/\s+/).filter(Boolean));
+    const eink = root.getAttribute('data-eink') === '1';
+    const motion = !eink && !(reduceMotion && reduceMotion.matches);
+    return {
+      snow: motion && tokens.has('snow'),
+      leaves: motion && tokens.has('leaves'),
+      garland: !eink && tokens.has('garland'),
+    };
   }
 
   /* ── Sprites ── */
@@ -170,28 +181,31 @@
     return c;
   }
 
-  function buildSprites(kind) {
+  function buildSprites(want) {
     const light = root.getAttribute('data-theme') === 'light';
-    if (kind === 'snow') {
-      return {
-        light,
+    const out = { light, snow: null, leaves: null };
+    if (want.snow) {
+      out.snow = {
         flakes: [1, 1.6, 2.3, 3.2, 4.4].map((r) => flakeSprite(r, light)),
         crystals: [6, 8, 10].map((r) => crystalSprite(r, light)),
       };
     }
-    const leaves = [];
-    for (let s = 0; s < LEAF_SHAPES.length; s += 1) {
-      for (const colors of LEAF_COLORS) leaves.push({ front: leafSprite(s, colors, false), back: leafSprite(s, colors, true) });
+    if (want.leaves) {
+      out.leaves = [];
+      for (let s = 0; s < LEAF_SHAPES.length; s += 1) {
+        for (const colors of LEAF_COLORS) out.leaves.push({ front: leafSprite(s, colors, false), back: leafSprite(s, colors, true) });
+      }
     }
-    return { light, leaves };
+    return out;
   }
 
   /* ── Particles ── */
 
   function spawnFlake(anyY) {
+    const set = sprites.snow;
     const z = Math.pow(Math.random(), 1.6); // most flakes far away
     const crystal = z > 0.93 && Math.random() < 0.6;
-    const sprite = crystal ? pick(sprites.crystals) : sprites.flakes[Math.min(sprites.flakes.length - 1, Math.floor(z * sprites.flakes.length))];
+    const sprite = crystal ? pick(set.crystals) : set.flakes[Math.min(set.flakes.length - 1, Math.floor(z * set.flakes.length))];
     return {
       x: rand(-40, width + 40),
       y: anyY ? rand(-height * 0.1, height) : rand(-60, -10),
@@ -210,12 +224,11 @@
 
   function spawnLeaf(anyY) {
     const z = rand(0.45, 1);
-    const sprite = pick(sprites.leaves);
     return {
       x: rand(-60, width + 60),
       y: anyY ? rand(-height * 0.2, height) : rand(-120, -40),
       z,
-      sprite,
+      sprite: pick(sprites.leaves),
       size: (24 + Math.random() * 24) * (0.65 + z * 0.5),
       vy: 26 + z * 34 + rand(-6, 6),
       swing: rand(22, 55),
@@ -229,11 +242,9 @@
     };
   }
 
-  function targetCount() {
-    const area = width * height;
-    return mode === 'snow'
-      ? Math.round(Math.min(130, Math.max(28, area / 12000)))
-      : Math.round(Math.min(26, Math.max(7, area / 52000)));
+  function fill(list, want, spawn) {
+    while (list.length < want) list.push(spawn(true));
+    if (list.length > want) list.length = want;
   }
 
   function resize() {
@@ -246,10 +257,11 @@
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const want = targetCount();
-    const spawn = mode === 'snow' ? spawnFlake : spawnLeaf;
-    while (particles.length < want) particles.push(spawn(true));
-    if (particles.length > want) particles.length = want;
+    const area = width * height;
+    /* both at once: a little thinner each, so the page does not turn into a blizzard */
+    const both = active.snow && active.leaves;
+    if (active.snow) fill(flakes, Math.round(Math.min(130, Math.max(28, area / 12000)) * (both ? 0.7 : 1)), spawnFlake);
+    if (active.leaves) fill(leaves, Math.round(Math.min(26, Math.max(7, area / 52000)) * (both ? 0.7 : 1)), spawnLeaf);
   }
 
   /** Wind in px/s: two slow sines plus a rarer gust, smooth everywhere. */
@@ -259,102 +271,223 @@
     return base + gust;
   }
 
+  function drawFlakes(dt, w) {
+    for (let i = 0; i < flakes.length; i += 1) {
+      let p = flakes[i];
+      p.y += p.vy * dt;
+      p.x += (w * (0.35 + p.z * 0.65)) * dt + Math.cos(clock * p.freq + p.phase) * p.sway * dt;
+      if (p.y - 20 > height || p.x < -80 || p.x > width + 80) {
+        p = flakes[i] = spawnFlake(false);
+        if (w > 8) p.x = rand(-80, width * 0.8);
+      }
+      const s = p.sprite;
+      ctx.globalAlpha = p.alpha;
+      if (p.crystal) {
+        p.angle += p.spin * dt;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.drawImage(s, -s.width / 2, -s.height / 2);
+        ctx.restore();
+      } else {
+        ctx.drawImage(s, p.x - s.width / 2, p.y - s.height / 2);
+      }
+    }
+  }
+
+  function drawLeaves(dt, w) {
+    for (let i = 0; i < leaves.length; i += 1) {
+      let p = leaves[i];
+      const swing = Math.sin(clock * p.swingFreq + p.phase);
+      const swingCos = Math.cos(clock * p.swingFreq + p.phase);
+      /* pendulum: sideways speed peaks mid-swing, the fall slows at the ends of the swing */
+      p.x += (w * (0.5 + p.z * 0.5) + swingCos * p.swing * p.swingFreq) * dt;
+      p.y += p.vy * (0.75 + 0.25 * Math.abs(swingCos)) * dt;
+      p.angle += (p.spin + swing * 0.6) * dt;
+      if (p.y - p.size > height || p.x < -120 || p.x > width + 120) {
+        p = leaves[i] = spawnLeaf(false);
+        if (w > 10) p.x = rand(-120, width * 0.7);
+      }
+      const flip = Math.cos(clock * p.flipFreq + p.flipPhase);
+      const sprite = flip >= 0 ? p.sprite.front : p.sprite.back;
+      ctx.globalAlpha = p.alpha;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.angle + swing * 0.35);
+      ctx.scale(Math.max(0.12, Math.abs(flip)), 1);
+      ctx.drawImage(sprite, -p.size / 2, -p.size / 2, p.size, p.size);
+      ctx.restore();
+    }
+  }
+
   function frame(now) {
     raf = 0;
-    if (!mode) return;
+    if (!canvas) return;
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016);
     last = now;
     clock += dt;
     const w = wind(clock);
     ctx.clearRect(0, 0, width, height);
-    if (mode === 'snow') {
-      for (let i = 0; i < particles.length; i += 1) {
-        let p = particles[i];
-        p.y += p.vy * dt;
-        p.x += (w * (0.35 + p.z * 0.65)) * dt + Math.cos(clock * p.freq + p.phase) * p.sway * dt;
-        if (p.y - 20 > height || p.x < -80 || p.x > width + 80) {
-          p = particles[i] = spawnFlake(false);
-          if (w > 8) p.x = rand(-80, width * 0.8);
-        }
-        const s = p.sprite;
-        ctx.globalAlpha = p.alpha;
-        if (p.crystal) {
-          p.angle += p.spin * dt;
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate(p.angle);
-          ctx.drawImage(s, -s.width / 2, -s.height / 2);
-          ctx.restore();
-        } else {
-          ctx.drawImage(s, p.x - s.width / 2, p.y - s.height / 2);
-        }
-      }
-    } else {
-      for (let i = 0; i < particles.length; i += 1) {
-        let p = particles[i];
-        const swing = Math.sin(clock * p.swingFreq + p.phase);
-        /* pendulum: sideways speed peaks mid-swing, the fall slows at the ends of the swing */
-        p.x += (w * (0.5 + p.z * 0.5) + Math.cos(clock * p.swingFreq + p.phase) * p.swing * p.swingFreq) * dt;
-        p.y += p.vy * (0.75 + 0.25 * Math.abs(Math.cos(clock * p.swingFreq + p.phase))) * dt;
-        p.angle += (p.spin + swing * 0.6) * dt;
-        if (p.y - p.size > height || p.x < -120 || p.x > width + 120) {
-          p = particles[i] = spawnLeaf(false);
-          if (w > 10) p.x = rand(-120, width * 0.7);
-        }
-        const flip = Math.cos(clock * p.flipFreq + p.flipPhase);
-        const sprite = flip >= 0 ? p.sprite.front : p.sprite.back;
-        const sx = Math.max(0.12, Math.abs(flip));
-        ctx.globalAlpha = p.alpha;
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle + swing * 0.35);
-        ctx.scale(sx, 1);
-        ctx.drawImage(sprite, -p.size / 2, -p.size / 2, p.size, p.size);
-        ctx.restore();
-      }
-    }
+    if (active.leaves) drawLeaves(dt, w);
+    if (active.snow) drawFlakes(dt, w);
     ctx.globalAlpha = 1;
     if (!document.hidden) raf = requestAnimationFrame(frame);
   }
 
-  function start(kind) {
+  function startCanvas(want) {
     const host = document.querySelector('.ui-decor');
     if (!host) return;
-    stop();
-    mode = kind;
-    sprites = buildSprites(kind);
+    stopCanvas();
+    active = { snow: want.snow, leaves: want.leaves };
+    sprites = buildSprites(want);
     canvas = document.createElement('canvas');
     canvas.className = 'ui-decor-canvas';
     canvas.setAttribute('aria-hidden', 'true');
     host.appendChild(canvas);
     ctx = canvas.getContext('2d');
-    particles = [];
+    flakes = [];
+    leaves = [];
     resize();
     last = 0;
     raf = requestAnimationFrame(frame);
   }
 
-  function stop() {
-    mode = '';
+  function stopCanvas() {
+    active = { snow: false, leaves: false };
     if (raf) cancelAnimationFrame(raf);
     raf = 0;
-    particles = [];
+    flakes = [];
+    leaves = [];
     sprites = null;
     if (canvas) canvas.remove();
     canvas = null;
     ctx = null;
   }
 
-  function sync() {
-    const want = wantedMode();
-    const theme = root.getAttribute('data-theme');
-    if (want === mode && (!sprites || sprites.light === (theme === 'light'))) return;
-    if (want) start(want); else stop();
+  /* ── Garland ── */
+
+  /* [glass base, light centre, deep edge] per bulb colour */
+  const BULB_COLORS = [
+    ['#ff3b3b', '#ffc2b8', '#a30d16'],
+    ['#ffc21a', '#fff1b3', '#b07400'],
+    ['#2fd36b', '#c4ffd8', '#0b7a35'],
+    ['#2e9bff', '#c2e4ff', '#0b4fa8'],
+    ['#ff5ccf', '#ffd0f2', '#a3127c'],
+    ['#ff8a1f', '#ffd9b0', '#b04a00'],
+  ];
+
+  /**
+   * One SVG per width. Hooks (small clips) every ~200 px, a twisted two-strand wire sagging between
+   * them, a C9 bulb every ~32 px hanging from it: metal socket, glass teardrop with a radial gradient
+   * and a shine, a soft halo (radial gradient, no blur filter). Bulbs sway a little and their light runs
+   * in a wave along the string with some jitter (CSS animations, per-bulb --t / --d / --s).
+   */
+  function garlandSvg(totalWidth) {
+    const spans = Math.max(2, Math.round(totalWidth / 200));
+    const spanW = totalWidth / spans;
+    const sag = 15;
+    const top = 4;
+    const height = top + sag * 2 + 34;
+    let wire = `M0 ${top}`;
+    for (let i = 0; i < spans; i += 1) {
+      const x0 = i * spanW;
+      wire += ` Q${(x0 + spanW / 2).toFixed(1)} ${top + sag * 2} ${(x0 + spanW).toFixed(1)} ${top}`;
+    }
+    let defs = '<linearGradient id="gl-cap" x1="0" y1="0" x2="1" y2="0">'
+      + '<stop offset="0" stop-color="#5d636b"/><stop offset=".45" stop-color="#d9dde2"/><stop offset="1" stop-color="#4a4f56"/></linearGradient>';
+    BULB_COLORS.forEach(([base, light, deep], i) => {
+      defs += `<radialGradient id="gl-b${i}" cx=".38" cy=".32" r=".75">`
+        + `<stop offset="0" stop-color="${light}"/><stop offset=".45" stop-color="${base}"/><stop offset="1" stop-color="${deep}"/></radialGradient>`
+        + `<radialGradient id="gl-h${i}"><stop offset="0" stop-color="${light}" stop-opacity=".7"/>`
+        + `<stop offset=".22" stop-color="${base}" stop-opacity=".42"/><stop offset=".55" stop-color="${base}" stop-opacity=".12"/>`
+        + `<stop offset="1" stop-color="${base}" stop-opacity="0"/></radialGradient>`;
+    });
+    const perSpan = Math.max(4, Math.round(spanW / 32));
+    let bulbs = '';
+    let hooks = '';
+    let n = 0;
+    for (let i = 0; i <= spans; i += 1) {
+      const x = (i * spanW).toFixed(1);
+      hooks += `<g class="ui-garland-hook" transform="translate(${x} ${top})"><rect x="-2.5" y="-3" width="5" height="5" rx="1.5"/><circle cy="-3" r="1.4"/></g>`;
+    }
+    for (let i = 0; i < spans; i += 1) {
+      for (let k = 1; k < perSpan; k += 1) {
+        const tt = k / perSpan;
+        const x = i * spanW + tt * spanW;
+        const y = top + sag * 2 * 2 * tt * (1 - tt);
+        const c = n % BULB_COLORS.length;
+        /* hang along the wire's slope, then let gravity win a little */
+        const slope = Math.atan2(sag * 4 * (1 - 2 * tt), spanW) * 57.3;
+        const tilt = (slope * 0.45 + (Math.random() - 0.5) * 10).toFixed(1);
+        const t = (2.6 + Math.random() * 1.4).toFixed(2);
+        const d = (n * 0.17 - Math.random() * 0.5).toFixed(2);
+        const s = (3.2 + Math.random() * 2.4).toFixed(2);
+        bulbs += `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${tilt})">`
+          + `<g class="ui-garland-bulb" style="--t:${t}s;--d:${d}s;--s:${s}s">`
+          + `<circle class="ui-garland-halo" cx="0" cy="14" r="20" fill="url(#gl-h${c})"/>`
+          + '<path class="ui-garland-socket" d="M-2.8 0h5.6v5.2a1.2 1.2 0 0 1-1.2 1.2h-3.2a1.2 1.2 0 0 1-1.2-1.2z" fill="url(#gl-cap)"/>'
+          + `<path class="ui-garland-glass" d="M-3.4 6C-6.2 10-6 17 0 22C6 17 6.2 10 3.4 6Z" fill="url(#gl-b${c})"/>`
+          + '<path class="ui-garland-shine" d="M-2.1 9C-3.3 11.5-3.2 14-2.2 16" />'
+          + '</g></g>';
+        n += 1;
+      }
+    }
+    return `<svg width="${totalWidth}" height="${height}" viewBox="0 0 ${totalWidth} ${height}" aria-hidden="true" focusable="false">`
+      + `<defs>${defs}</defs>`
+      + `<path class="ui-garland-wire" d="${wire}"/><path class="ui-garland-wire-twist" d="${wire}"/>`
+      + `${bulbs}${hooks}</svg>`;
   }
 
-  window.addEventListener('resize', () => { if (mode) resize(); }, { passive: true });
+  function layoutGarland() {
+    if (!garland) return;
+    const w = Math.round(garland.parentElement ? garland.parentElement.clientWidth : window.innerWidth);
+    if (!w || w === garlandWidth) return;
+    garlandWidth = w;
+    garland.innerHTML = garlandSvg(w);
+  }
+
+  function startGarland() {
+    const bar = document.querySelector('[data-topbar]');
+    if (!bar || garland) return;
+    garland = document.createElement('div');
+    garland.className = 'ui-garland';
+    garland.setAttribute('aria-hidden', 'true');
+    bar.appendChild(garland);
+    garlandWidth = 0;
+    layoutGarland();
+    /* the bar's width changes without a window resize too (sidebar, zoom, scrollbar) */
+    if (window.ResizeObserver) {
+      garlandObserver = new ResizeObserver(layoutGarland);
+      garlandObserver.observe(bar);
+    }
+  }
+
+  function stopGarland() {
+    if (garlandObserver) garlandObserver.disconnect();
+    garlandObserver = null;
+    if (garland) garland.remove();
+    garland = null;
+    garlandWidth = 0;
+  }
+
+  /* ── Control ── */
+
+  function sync() {
+    const want = wanted();
+    const light = root.getAttribute('data-theme') === 'light';
+    const canvasWanted = want.snow || want.leaves;
+    const same = canvas && active.snow === want.snow && active.leaves === want.leaves && sprites && sprites.light === light;
+    if (!canvasWanted) stopCanvas();
+    else if (!same) startCanvas(want);
+    if (want.garland) startGarland(); else stopGarland();
+  }
+
+  window.addEventListener('resize', () => {
+    if (canvas) resize();
+    layoutGarland();
+  }, { passive: true });
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && mode && !raf) { last = 0; raf = requestAnimationFrame(frame); }
+    if (!document.hidden && canvas && !raf) { last = 0; raf = requestAnimationFrame(frame); }
   });
   if (reduceMotion && reduceMotion.addEventListener) reduceMotion.addEventListener('change', sync);
   new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ['data-ui-decor', 'data-theme', 'data-eink'] });

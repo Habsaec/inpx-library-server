@@ -53,7 +53,7 @@ import {
   resetUiThemeShape, resetUiThemeTypography,
   saveUiShapeSettings, saveUiTypographySettings,
   refreshBgThemePaletteForAdmin, refreshBgThemePaletteFromFile,
-  getPublicUiSettingsJson, getThemePreviewFromDraft, getUiAppearanceFormState
+  getPublicUiSettingsJson, getThemePreviewFromDraft, getUiAppearanceFormState, decorFromFlags
 } from '../services/ui-customization.js';
 import {
   baseAppearanceMiddleware, listThemeSets, getThemeSchedule, saveThemeSchedule,
@@ -886,7 +886,12 @@ export function registerAdminRoutes(app, deps) {
         manuscriptWash: isFormFlagEnabled(req.body.manuscriptWash),
         book3d: isFormFlagEnabled(req.body.book3d),
         pageTransitions: isFormFlagEnabled(req.body.pageTransitions),
-        decor: lastFormFieldValue(req.body.decor) ?? '',
+        decor: decorFromFlags({
+          decorSnow: isFormFlagEnabled(req.body.decorSnow),
+          decorLeaves: isFormFlagEnabled(req.body.decorLeaves),
+          decorGarland: isFormFlagEnabled(req.body.decorGarland),
+          decorDrifts: isFormFlagEnabled(req.body.decorDrifts),
+        }),
         coverDim: isFormFlagEnabled(req.body.coverDim),
       });
       saveCoverFallbackSettings({

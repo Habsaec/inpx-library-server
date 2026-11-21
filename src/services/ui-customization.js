@@ -543,12 +543,24 @@ function hasCustomFontFile() {
 }
 
 /** Совместимость: раньше был in-process кэш, теперь читаем файлы с диска каждый раз. */
-/** Seasonal decoration over the page background ('' = none); part of theme sets (THEME_SET_KEYS). */
-export const UI_DECOR_PRESETS = ['snow', 'leaves'];
+/**
+ * Seasonal decoration: any combination of these effects, stored as a comma list in canonical order
+ * ('' = none; old single values 'snow' / 'leaves' are valid lists). Part of theme sets (THEME_SET_KEYS).
+ */
+export const UI_DECOR_PRESETS = ['snow', 'leaves', 'garland', 'drifts'];
 function normalizeDecor(raw) {
-  const value = String(raw || '').trim();
-  return UI_DECOR_PRESETS.includes(value) ? value : '';
+  const values = new Set(String(raw || '').split(/[\s,]+/).map((v) => v.trim()).filter(Boolean));
+  return UI_DECOR_PRESETS.filter((v) => values.has(v)).join(',');
 }
+
+/** Decoration list from the four admin checkboxes (form / live preview draft fields decorSnow …). */
+function decorFromFlags(flags) {
+  return normalizeDecor(UI_DECOR_PRESETS.filter((v) => {
+    const raw = flags[`decor${v[0].toUpperCase()}${v.slice(1)}`];
+    return raw === true || raw === '1' || raw === 1;
+  }).join(','));
+}
+export { decorFromFlags };
 
 export function invalidateUiCustomizationCache() {
   _uiFileUrlCache.clear();
@@ -1241,7 +1253,7 @@ export function getThemePreviewFromDraft(draft = {}) {
   const book3d = draft.book3d !== undefined
     ? draftStr(draft.book3d) !== '0'
     : saved.book3d !== false;
-  const decor = draft.decor !== undefined ? normalizeDecor(draftStr(draft.decor)) : saved.decor;
+  const decor = draft.decorSnow !== undefined ? decorFromFlags(draft) : saved.decor;
   const coverDim = draft.coverDim !== undefined ? draftStr(draft.coverDim) !== '0' : saved.coverDim !== false;
   const manuscriptFont = COVER_TITLE_FONTS[draftStr(draft.manuscriptFont, saved.manuscriptFont)]
     ? draftStr(draft.manuscriptFont, saved.manuscriptFont)

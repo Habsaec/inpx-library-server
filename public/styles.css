@@ -3483,14 +3483,134 @@ html[data-theme="dark"]:not([data-ui-cover-dim="0"]) .card:hover .cover::after {
   display: none;
 }
 
-html[data-ui-decor="snow"] .ui-decor,
-html[data-ui-decor="leaves"] .ui-decor {
+html[data-ui-decor~="snow"] .ui-decor,
+html[data-ui-decor~="leaves"] .ui-decor {
   display: block;
   position: fixed;
   inset: 0;
   z-index: -1;
   overflow: hidden;
   pointer-events: none;
+}
+
+/* Garland (decor.js builds the SVG under the top bar): a twisted wire on clips, C9 bulbs with a metal
+   socket, gradient glass and a soft halo; they sway a little and their light runs along the string. */
+.ui-garland {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% - 6px);
+  z-index: 1;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ui-garland svg {
+  display: block;
+  overflow: visible;
+}
+
+.ui-garland-wire {
+  fill: none;
+  stroke: #1c2618;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.ui-garland-wire-twist {
+  fill: none;
+  stroke: #40583a;
+  stroke-width: 1.1;
+  stroke-dasharray: 3.2 2.4;
+  stroke-linecap: round;
+}
+
+.ui-garland-hook rect { fill: #2a3424; }
+.ui-garland-hook circle { fill: #59654f; }
+
+.ui-garland-shine {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.75);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+.ui-garland-bulb {
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation: ui-garland-sway var(--s, 4s) ease-in-out infinite alternate;
+}
+
+.ui-garland-halo {
+  animation: ui-garland-glow var(--t, 3s) ease-in-out var(--d, 0s) infinite;
+}
+
+.ui-garland-glass {
+  animation: ui-garland-glass var(--t, 3s) ease-in-out var(--d, 0s) infinite;
+}
+
+@keyframes ui-garland-sway {
+  from { transform: rotate(-3deg); }
+  to { transform: rotate(3deg); }
+}
+
+/* a lamp is mostly lit, dims for a moment, then flares back up */
+@keyframes ui-garland-glow {
+  0%, 100% { opacity: 0.9; }
+  45% { opacity: 0.15; }
+  60% { opacity: 1; }
+}
+
+@keyframes ui-garland-glass {
+  0%, 100% { opacity: 1; }
+  45% { opacity: 0.55; }
+  60% { opacity: 1; }
+}
+
+html[data-theme="light"] .ui-garland-halo {
+  /* on parchment a wide halo looks like a stain: keep it tight */
+  transform-box: fill-box;
+  transform-origin: center;
+  scale: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-garland-bulb,
+  .ui-garland-halo,
+  .ui-garland-glass {
+    animation: none;
+  }
+}
+
+/* ── Snow drifts: a snow cap on the top edge of cards and panels (CSS only, no motion) ──
+   Four repeating SVG layers of different widths — a lumpy cap with an overhanging lip and a blue-grey
+   underside, extra mounds, glassy icicles of different lengths, a faint snow texture — so the edge never
+   shows a period; the ends round off (clip-path). */
+html[data-ui-decor~="drifts"]:not([data-eink="1"]) :is(.admin-card, .book-detail-main, .profile-identity, .profile-section, .year-panel, .year-facts, .year-tops, .page-intro, .library-shelf) {
+  position: relative;
+}
+
+html[data-ui-decor~="drifts"]:not([data-eink="1"]) :is(.admin-card, .book-detail-main, .profile-identity, .profile-section, .year-panel, .year-facts, .year-tops, .page-intro, .library-shelf)::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  right: -5px;
+  top: -13px;
+  height: 34px;
+  z-index: 3;
+  pointer-events: none;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='149' height='34' viewBox='0 0 149 34'%3E%3Cg fill='%238aa6c8' fill-opacity='.35'%3E%3Ccircle cx='12' cy='15' r='.7'/%3E%3Ccircle cx='31' cy='12' r='.5'/%3E%3Ccircle cx='54' cy='17' r='.6'/%3E%3Ccircle cx='77' cy='13' r='.5'/%3E%3Ccircle cx='96' cy='18' r='.7'/%3E%3Ccircle cx='118' cy='14' r='.5'/%3E%3Ccircle cx='139' cy='16' r='.6'/%3E%3C/g%3E%3Cg fill='%23ffffff'%3E%3Ccircle cx='44' cy='9' r='.9'/%3E%3Ccircle cx='108' cy='8' r='.8'/%3E%3C/g%3E%3C/svg%3E") repeat-x 11px 0 / 149px 34px,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='283' height='34' viewBox='0 0 283 34'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23ffffff'/%3E%3Cstop offset='.5' stop-color='%23f5f9fd'/%3E%3Cstop offset='.8' stop-color='%23dde8f4'/%3E%3Cstop offset='1' stop-color='%23b4c9e1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23b)' d='M14 16C22 6 42 1 58 5C70 8 76 13 74 20H14Z M112 17C122 9 138 7 150 9C160 11 166 15 164 20H112Z M196 16C206 4 228 0 244 4C256 7 262 13 260 20H196Z'/%3E%3C/svg%3E") repeat-x 67px 0 / 283px 34px,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='34' viewBox='0 0 200 34'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23ffffff'/%3E%3Cstop offset='.5' stop-color='%23f5f9fd'/%3E%3Cstop offset='.8' stop-color='%23dde8f4'/%3E%3Cstop offset='1' stop-color='%23b4c9e1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23a)' d='M0 14C12 9 24 7 36 9C46 10 52 6 64 5C78 4 86 10 100 10C112 10 118 5 132 4C146 3 154 9 166 10C178 11 188 9 200 11L200 20C190 21 182 20 172 22C164 23 158 21 148 21C136 21 128 23 118 22C106 21 96 20 84 22C74 23 66 21 54 21C42 21 32 23 20 22C12 21 6 20 0 20Z'/%3E%3Cpath fill='none' stroke='%23ffffff' stroke-width='1' stroke-linecap='round' d='M8 11.6C18 8.6 28 7.6 36 9.2M70 5.2C80 5.6 88 9.6 100 10M138 4.4C148 4.6 156 8.8 166 10'/%3E%3C/svg%3E") repeat-x 0 0 / 200px 34px,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='337' height='34' viewBox='0 0 337 34'%3E%3Cdefs%3E%3ClinearGradient id='c' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23ffffff' stop-opacity='.95'/%3E%3Cstop offset='.6' stop-color='%23d4e7f7' stop-opacity='.8'/%3E%3Cstop offset='1' stop-color='%239cc1e3' stop-opacity='.55'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg fill='url(%23c)'%3E%3Cpath d='M28 19h7l-3 14z'/%3E%3Cpath d='M38 19h4.5l-2 8z'/%3E%3Cpath d='M101 20h6l-2.6 11z'/%3E%3Cpath d='M168 19h8l-3.4 15z'/%3E%3Cpath d='M179 19h4l-1.8 6z'/%3E%3Cpath d='M244 20h6.5l-2.8 12z'/%3E%3Cpath d='M300 19h5l-2.2 8.5z'/%3E%3C/g%3E%3Cg stroke='%23ffffff' stroke-opacity='.8' stroke-width='.7' stroke-linecap='round'%3E%3Cpath d='M30 21v6'/%3E%3Cpath d='M170.6 21v7'/%3E%3Cpath d='M246 22v5'/%3E%3C/g%3E%3C/svg%3E") repeat-x 29px 0 / 337px 34px;
+  /* the snow rounds off at the ends like a real cap instead of being cut straight */
+  clip-path: inset(0 round 16px 16px 6px 6px);
+  filter: drop-shadow(0 2px 2px rgba(10, 20, 35, 0.38));
+}
+
+html[data-theme="light"][data-ui-decor~="drifts"]:not([data-eink="1"]) :is(.admin-card, .book-detail-main, .profile-identity, .profile-section, .year-panel, .year-facts, .year-tops, .page-intro, .library-shelf)::after {
+  filter: drop-shadow(0 1.5px 1.5px rgba(60, 85, 120, 0.5)) drop-shadow(0 0 0.6px rgba(60, 85, 120, 0.5));
 }
 
 .ui-decor-canvas {
@@ -15215,4 +15335,12 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
   .topbar-user-chip {
     padding: 0 4px;
   }
+}
+
+/* Admin → Effects: the seasonal decoration checkboxes in a row */
+.ui-decor-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 6px 0 4px;
 }

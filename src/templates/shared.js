@@ -1682,7 +1682,8 @@ function uiHtmlRootAttrs() {
   if (ui.manuscriptWash === false) attrs += ' data-ui-manuscript="0"';
   if (ui.book3d === false) attrs += ' data-ui-book3d="0"';
   if (ui.pageTransitions === false) attrs += ' data-ui-transitions="0"';
-  if (ui.decor) attrs += ` data-ui-decor="${escapeHtml(ui.decor)}"`;
+  /* space-separated, so CSS can test each effect with [data-ui-decor~="…"] */
+  if (ui.decor) attrs += ` data-ui-decor="${escapeHtml(String(ui.decor).split(',').join(' '))}"`;
   if (ui.coverDim === false) attrs += ' data-ui-cover-dim="0"';
   if (hasUiThemeShapeConfigured()) attrs += ' data-ui-shape="1"';
   if (hasUiThemeTypographyConfigured()) attrs += ' data-ui-typography="1"';
