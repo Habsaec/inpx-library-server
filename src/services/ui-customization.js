@@ -10,6 +10,7 @@ import {
   LEGACY_SURFACE_DARK,
   LEGACY_SURFACE_LIGHT,
   buildThemePair,
+  paletteInk,
   adjustLightTextForGlassOpacity,
   themePairToCssVars,
   deriveGlassTheme,
@@ -1788,6 +1789,8 @@ export function getPublicUiSettingsJson() {
   const siteName = String(getSetting('site_name') || '').trim();
   const pair = ui.themePair;
   const mapAppPalette = (p) => ({
+    /* Additive: accent as text (AA), text on an accent / link fill. Older apps ignore them. */
+    ...paletteInk(p),
     bg: p.bg || p.shellBg,
     surface: p.surface,
     surfaceHover: p.surfaceHover,

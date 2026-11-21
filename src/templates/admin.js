@@ -51,7 +51,7 @@ import {
   TELEGRAM_DEFAULT_WELCOME_BUTTONS,
   TELEGRAM_DEFAULT_ANNOUNCE_BUTTONS,
 } from '../telegram-bot-defaults.js';
-import { buildGlassPanelBackground, adjustLightTextForGlassOpacity, DEFAULT_GLASS_LIGHT, DEFAULT_GLASS_DARK, MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX, MIN_HEADING_SCALE, MAX_HEADING_SCALE, MIN_RADIUS_SCALE, MAX_RADIUS_SCALE, THEME_PRESETS } from '../services/theme-engine.js';
+import { buildGlassPanelBackground, adjustLightTextForGlassOpacity, GLASS_WARNING_OPACITY, DEFAULT_GLASS_LIGHT, DEFAULT_GLASS_DARK, MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX, MIN_HEADING_SCALE, MAX_HEADING_SCALE, MIN_RADIUS_SCALE, MAX_RADIUS_SCALE, THEME_PRESETS } from '../services/theme-engine.js';
 import { COVER_TITLE_FONTS, MIN_COVER_TITLE_SIZE, MAX_COVER_TITLE_SIZE, MIN_COVER_TITLE_OFFSET, MAX_COVER_TITLE_OFFSET, MIN_COVER_TITLE_SHADOW, MAX_COVER_TITLE_SHADOW, DEFAULT_COVER_TITLE_SHADOW, MIN_HEADER_HEIGHT, MAX_HEADER_HEIGHT, MIN_MANUSCRIPT_INK, MAX_MANUSCRIPT_INK, DEFAULT_MANUSCRIPT_INK, MIN_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_SIZE, DEFAULT_MANUSCRIPT_SIZE, MAX_MANUSCRIPT_TEXT, DEFAULT_MANUSCRIPT_FONT } from '../services/ui-customization.js';
 export function renderOperations({ user, stats = {}, indexStatus = {}, operations = {}, defaultLocale = 'auto', flash = '', dbMemory = null, csrfToken = '' }) {
   /* Сплошной цвет по тому же градиенту (для одиночных элементов — donut, иконки и т.п.).
@@ -1758,10 +1758,12 @@ export function renderAdminAppearance({
     ? `<div class="ui-font-preview">${escapeHtml(t('admin.ui.fontPreviewSample'))}</div>`
     : `<span class="muted">${escapeHtml(t('admin.ui.fontCustomEmpty'))}</span>`;
 
-  const contrastBadge = (ratio) => {
+  /* `min` per role: text / muted / link 4.5 (AA), the accent as a fill 3 (WCAG 1.4.11). */
+  const contrastBadge = (ratio, min = 4.5) => {
     if (!Number.isFinite(Number(ratio))) return '<span class="ui-contrast-badge" data-ui-contrast hidden></span>';
-    const low = Number(ratio) < 4.5;
-    return `<span class="ui-contrast-badge${low ? ' is-low' : ''}" data-ui-contrast title="${escapeHtml(t(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk'))}">${escapeHtml(String(ratio))}:1</span>`;
+    const low = Number(ratio) < min;
+    const title = t(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk').split('{{min}}').join(String(min));
+    return `<span class="ui-contrast-badge${low ? ' is-low' : ''}" data-ui-contrast title="${escapeHtml(title)}">${escapeHtml(String(ratio))}:1</span>`;
   };
 
   /* One color role of a theme mode: picker + hex + contrast with the surface + «Авто». */
@@ -1774,7 +1776,7 @@ export function renderAdminAppearance({
         <div class="ui-color-row-value">
           <input type="color" id="${id}" name="${name}" form="ui-main-form" value="${escapeHtml(value)}" data-ui-color-input${role === 'surface' ? ` data-ui-glass-color="${theme}"` : ''}${disabled ? ' disabled' : ''}${locked && lockedTitle ? ` title="${escapeHtml(lockedTitle)}"` : ''}>
           <code data-ui-color-hex>${escapeHtml(value)}</code>
-          ${role === 'surface' ? '' : contrastBadge(contrast)}
+          ${role === 'surface' ? '' : contrastBadge(contrast, role === 'accent' ? 3 : 4.5)}
         </div>
         ${autoName ? `<label class="admin-checkbox-label ui-color-row-auto">
           <input type="checkbox" data-ui-color-auto ${auto ? 'checked' : ''}>
@@ -1830,6 +1832,7 @@ export function renderAdminAppearance({
         })}
       </div>
       <span class="admin-field-hint">${escapeHtml(ui.dynamicThemeFromBg ? t('admin.ui.glassBaseColorLockedHint') : t('admin.ui.colorRolesHint'))}</span>
+      <span class="admin-field-hint ui-glass-contrast-warning" data-ui-glass-warning${ui.hasBackground && panelOpacity < GLASS_WARNING_OPACITY ? '' : ' hidden'}>${escapeHtml(t('admin.ui.glassContrastWarning').split('{{n}}').join(String(panelOpacity)))}</span>
     </div>`;
   };
 

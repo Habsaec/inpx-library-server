@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildThemePalette,
   contrastRatio,
+  paletteInk,
   ensureContrast,
   isBuiltinSurface,
   THEME_PRESETS,
@@ -65,9 +66,12 @@ test('every preset gives readable auto text, muted text, links and accent in bot
   for (const preset of THEME_PRESETS) {
     for (const mode of ['dark', 'light']) {
       const p = buildThemePalette(preset[mode].surface, '', preset[mode].accent);
-      for (const role of ['text', 'muted', 'link', 'accent']) {
+      for (const role of ['text', 'muted', 'link']) {
         assert.ok(contrastRatio(p[role], p.surface) >= 4.5, `${preset.id} ${mode} ${role}`);
       }
+      /* The accent fill needs 3:1; where the accent is a text color, `accentText` gives AA. */
+      assert.ok(contrastRatio(p.accent, p.surface) >= 3, `${preset.id} ${mode} accent`);
+      assert.ok(contrastRatio(paletteInk(p).accentText, p.surface) >= 4.5, `${preset.id} ${mode} accentText`);
     }
   }
 });

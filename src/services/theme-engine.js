@@ -92,6 +92,58 @@ function hslToHex(h, s, l) {
   return rgbToHex(r * 255, g * 255, b * 255);
 }
 
+/* ── OKLCH (Björn Ottosson's Oklab in polar form) ──
+   Lightness steps in OKLCH look even across hues, unlike HSL, where the same step turns a yellow
+   almost white and barely moves a blue. Used for contrast nudges and hover shifts. */
+const srgbToLinear = (c) => {
+  c /= 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+};
+const linearToSrgb = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
+
+function hexToOklch(hex) {
+  const [r, g, b] = hexToRgb(hex).map(srgbToLinear);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const L = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+  const A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+  const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+  return { l: L, c: Math.hypot(A, B), h: Math.atan2(B, A) };
+}
+
+/** OKLCH → linear sRGB channels (may fall outside 0…1 = out of gamut). */
+function oklchToLinear(L, C, h) {
+  const A = C * Math.cos(h);
+  const B = C * Math.sin(h);
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+  ];
+}
+
+/** OKLCH → hex; chroma is reduced (hue and lightness kept) until the color fits sRGB. */
+function oklchToHex(L, C, h) {
+  const lightness = Math.min(1, Math.max(0, L));
+  const inGamut = (c) => oklchToLinear(lightness, c, h).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
+  let chroma = Math.max(0, C);
+  if (!inGamut(chroma)) {
+    let lo = 0;
+    let hi = chroma;
+    for (let i = 0; i < 18; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (inGamut(mid)) lo = mid; else hi = mid;
+    }
+    chroma = lo;
+  }
+  const rgb = oklchToLinear(lightness, chroma, h).map((v) => linearToSrgb(Math.min(1, Math.max(0, v))) * 255);
+  return rgbToHex(...rgb);
+}
+
 /** WCAG contrast ratio of two hex colors (1–21). */
 export function contrastRatio(aHex, bHex) {
   const a = relativeLuminance(...hexToRgb(aHex));
@@ -109,21 +161,37 @@ export function isDarkSurface(hex) {
   return contrastRatio('#ffffff', bg) >= contrastRatio('#000000', bg);
 }
 
+/** Lowest contrast of `fgHex` against any of `bgs` (hex colors). */
+export function minContrast(fgHex, bgs) {
+  return Math.min(...bgs.map((bg) => contrastRatio(fgHex, bg)));
+}
+
 /**
- * Nudge `fgHex` lighter (dark surface) or darker (light surface) until it reaches `min`
- * contrast against `bgHex`, keeping hue and saturation. Returns the input when it already passes.
+ * Nudge `fgHex` lighter (dark surface) or darker (light surface) in OKLCH lightness — hue kept,
+ * chroma only reduced where sRGB requires — until it reaches `min` contrast against `bgHex`
+ * (a hex or an array of hexes: every one must pass; the direction comes from the first).
+ * Returns the input when it already passes.
  */
 export function ensureContrast(fgHex, bgHex, min = MIN_TEXT_CONTRAST) {
   const fg = normalizeHexColor(fgHex, '#000000');
-  const bg = normalizeHexColor(bgHex, '#000000');
-  if (contrastRatio(fg, bg) >= min) return fg;
-  const towardLight = isDarkSurface(bg);
-  const { h, s, l } = hexToHsl(fg);
-  for (let step = 1; step <= 100; step += 1) {
-    const next = hslToHex(h, s, towardLight ? l + step : l - step);
-    if (contrastRatio(next, bg) >= min) return next;
+  const bgs = (Array.isArray(bgHex) ? bgHex : [bgHex]).map((bg) => normalizeHexColor(bg, '#000000'));
+  if (minContrast(fg, bgs) >= min) return fg;
+  const towardLight = isDarkSurface(bgs[0]);
+  const { l, c, h } = hexToOklch(fg);
+  for (let step = 1; step <= 200; step += 1) {
+    const next = oklchToHex(towardLight ? l + step * 0.005 : l - step * 0.005, c, h);
+    if (minContrast(next, bgs) >= min) return next;
   }
   return towardLight ? '#ffffff' : '#000000';
+}
+
+/**
+ * Text color for a solid `fillHex` (a button filled with the accent or the link color):
+ * warm off-white / off-black like the built-in palette, nudged to `min`.
+ */
+export function onFillColor(fillHex, min = MIN_TEXT_CONTRAST) {
+  const fill = normalizeHexColor(fillHex, '#000000');
+  return ensureContrast(isDarkSurface(fill) ? '#fffdf8' : '#1a1612', fill, min);
 }
 
 /** True when `hex` is the built-in surface of that mode (the hand-tuned palette in styles.css). */
@@ -150,11 +218,17 @@ function pickAutoText(surfaceHex) {
   return ensureContrast(isDarkSurface(surfaceHex) ? '#ece6dc' : '#2a2218', surfaceHex, AUTO_TEXT_CONTRAST);
 }
 
-/** Shift a hex color's lightness for a hover variant (lighter on dark, darker on light). */
+/**
+ * Shift a hex color's lightness for a hover variant (lighter on dark, darker on light).
+ * `deltaL` is in the old HSL points (±6, ±8); applied in OKLCH so every hue moves by the same visible step.
+ */
 function shiftLightness(hex, deltaL) {
-  const { h, s, l } = hexToHsl(hex);
-  return hslToHex(h, s, Math.min(100, Math.max(0, l + deltaL)));
+  const { l, c, h } = hexToOklch(hex);
+  return oklchToHex(l + deltaL * 0.0075, c, h);
 }
+
+/** Minimum contrast of an accent used as a fill / icon / border (WCAG 1.4.11 non-text: 3:1). */
+export const MIN_UI_CONTRAST = 3;
 
 /**
  * Build full semantic palette for one theme mode from a surface tint.
@@ -183,9 +257,9 @@ function rgbaOf(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** Link derived from the accent: same hue, a touch brighter (dark) / deeper (light), readable on the surface. */
-function linkFromAccent(accent, surface, isDark) {
-  const link = ensureContrast(shiftLightness(accent, isDark ? 6 : -6), surface);
+/** Link derived from the accent: same hue, a touch brighter (dark) / deeper (light), readable on `readOn` (hex or list). */
+function linkFromAccent(accent, readOn, isDark) {
+  const link = ensureContrast(shiftLightness(accent, isDark ? 6 : -6), readOn);
   return { link, linkHover: shiftLightness(link, isDark ? 8 : -8) };
 }
 
@@ -272,11 +346,11 @@ function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
     if (accent) {
       palette.accent = accent;
       palette.accentHover = shiftLightness(accent, isDark ? 8 : -8);
-      Object.assign(palette, linkFromAccent(accent, palette.surface, isDark));
+      Object.assign(palette, linkFromAccent(accent, [palette.surface, palette.surfaceHover, palette.bg], isDark));
     }
     if (hasTextOverride) {
       palette.text = normalizeHexColor(textOverride, palette.text);
-      palette.muted = ensureContrast(mixHex(palette.text, palette.surface, isDark ? 0.36 : 0.32), palette.surface);
+      palette.muted = ensureContrast(mixHex(palette.text, palette.surface, isDark ? 0.36 : 0.32), [palette.surface, palette.surfaceHover, palette.bg]);
     }
     return { ...palette, ...flags };
   }
@@ -285,36 +359,73 @@ function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
   const { h, s } = hexToHsl(surface);
   const hue = s < 8 ? 38 : h;
 
+  /* Same structure as the hand-tuned built-in palette (builtinTokens), derived from the surface:
+     page / shell / sidebar step darker (dark) or toward the text (light), the topbar is translucent,
+     dark-mode borders and fills are tinted by the accent. A custom surface one notch away from the
+     built-in one looks like it instead of switching to a flat «surface everywhere» look. */
+  /* A shade of the surface toward `target`; on a mid-tone surface (little contrast headroom) a step
+     toward the text would leave no readable color at all, so the shade goes the other way there. */
+  const extremeInk = isDark ? '#ffffff' : '#000000';
+  const awayFromInk = isDark ? '#000000' : '#ffffff';
+  const shade = (target, weight) => {
+    const v = mixHex(surface, target, weight);
+    return contrastRatio(extremeInk, v) >= MIN_TEXT_CONTRAST ? v : mixHex(surface, awayFromInk, weight);
+  };
+  const surfaceHover = shade(text, 0.06);
+  const pageBg = isDark ? mixHex(surface, '#000000', 0.22) : shade(text, 0.045);
+  /* Text sits on the panel, its hover and the page (cards are close to it): every one must pass. */
+  const readOn = [surface, surfaceHover, pageBg];
+
   const accent = hasAccentOverride
     ? normalizeHexColor(accentOverride, '')
-    : ensureContrast(hslToHex(hue, Math.min(42, s + 12), isDark ? 58 : 42), surface);
+    : ensureContrast(hslToHex(hue, Math.min(42, s + 12), isDark ? 58 : 42), surface, MIN_UI_CONTRAST);
   const accentHover = hasAccentOverride
     ? shiftLightness(accent, isDark ? 8 : -8)
     : hslToHex(hue, Math.min(48, s + 18), isDark ? 52 : 36);
   const { link, linkHover } = hasAccentOverride
-    ? linkFromAccent(accent, surface, isDark)
+    ? linkFromAccent(accent, readOn, isDark)
     : {
-      link: ensureContrast(hslToHex(hue, Math.min(55, s + 22), isDark ? 68 : 34), surface),
+      link: ensureContrast(hslToHex(hue, Math.min(55, s + 22), isDark ? 68 : 34), readOn),
       linkHover: hslToHex(hue, Math.min(60, s + 28), isDark ? 74 : 28),
     };
-  const muted = ensureContrast(mixHex(text, surface, isDark ? 0.42 : 0.38), surface);
-  const surfaceHover = isDark ? mixHex(surface, '#ffffff', 0.12) : mixHex(surface, '#000000', 0.06);
-  const shellBg = isDark ? mixHex(surface, '#000000', 0.15) : mixHex(surface, '#ffffff', 0.08);
-  const borderMix = isDark ? 'rgba(255,255,255,0.11)' : `color-mix(in srgb, ${text} 14%, transparent)`;
-  const fieldBg = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.72)';
-  const panelSoftBg = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(255,255,255,0.52)';
-  const buttonBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.58)';
-  const buttonBgHover = isDark ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.78)';
-  const buttonBorderHover = isDark ? 'rgba(255,255,255,0.16)' : `color-mix(in srgb, ${text} 18%, transparent)`;
-  const cardBg = isDark
-    ? `color-mix(in srgb, ${surface} 82%, ${accent} 6%)`
-    : `color-mix(in srgb, ${surface} 48%, white 52%)`;
-  const cardBgHover = isDark
-    ? `color-mix(in srgb, ${surface} 78%, ${accent} 10%)`
-    : `color-mix(in srgb, ${surface} 40%, white 60%)`;
+  const muted = ensureContrast(mixHex(text, surface, isDark ? 0.42 : 0.38), readOn);
   const coverA = isDark ? mixHex(surface, '#000000', 0.2) : mixHex(surface, '#ffffff', 0.15);
   const coverB = isDark ? mixHex(surface, '#000000', 0.45) : mixHex(surface, '#000000', 0.08);
 
+  if (isDark) {
+    const tint = (a) => rgbaOf(accent, a);
+    const sidebarBg = mixHex(surface, '#000000', 0.3);
+    return {
+      surface,
+      text,
+      muted,
+      accent,
+      accentHover,
+      link,
+      linkHover,
+      surfaceHover,
+      bg: pageBg,
+      shellBg: mixHex(surface, '#000000', 0.15),
+      bgOverlayColor: surface,
+      sidebarBg,
+      topbarBg: rgbaOf(sidebarBg, 0.82),
+      border: tint(0.12),
+      sidebarBrandBorder: tint(0.10),
+      topbarBorder: tint(0.10),
+      fieldBg: tint(0.05),
+      panelSoftBg: tint(0.07),
+      buttonBg: tint(0.08),
+      buttonBgHover: tint(0.16),
+      buttonBorderHover: tint(0.28),
+      cardBg: tint(0.03),
+      cardBgHover: tint(0.07),
+      cardCoverBg: `linear-gradient(145deg, ${coverA} 0%, ${coverB} 100%)`,
+      cardCoverFallbackBg: `linear-gradient(180deg, ${coverA} 0%, ${coverB} 100%)`,
+      cardCoverBorder: tint(0.12),
+      ...flags,
+    };
+  }
+  const ink = (a) => rgbaOf(text, a);
   return {
     surface,
     text,
@@ -324,36 +435,74 @@ function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
     link,
     linkHover,
     surfaceHover,
-    bg: shellBg,
-    shellBg,
+    bg: pageBg,
+    shellBg: shade(text, 0.06),
     bgOverlayColor: surface,
-    sidebarBg: surface,
-    topbarBg: surface,
-    border: borderMix,
-    sidebarBrandBorder: borderMix,
-    topbarBorder: borderMix,
-    fieldBg,
-    panelSoftBg,
-    buttonBg,
-    buttonBgHover,
-    buttonBorderHover,
-    cardBg,
-    cardBgHover,
-    cardCoverBg: `linear-gradient(135deg, ${coverA} 0%, ${coverB} 100%)`,
+    sidebarBg: shade(text, 0.1),
+    topbarBg: rgbaOf(surface, 0.78),
+    border: ink(0.12),
+    sidebarBrandBorder: ink(0.10),
+    topbarBorder: ink(0.10),
+    fieldBg: 'rgba(255, 255, 255, 0.88)',
+    panelSoftBg: 'rgba(255, 255, 255, 0.55)',
+    buttonBg: 'rgba(255, 255, 255, 0.88)',
+    buttonBgHover: surfaceHover,
+    buttonBorderHover: ink(0.18),
+    cardBg: 'rgba(255, 255, 255, 0.45)',
+    cardBgHover: 'rgba(255, 255, 255, 0.78)',
+    cardCoverBg: `linear-gradient(145deg, ${coverA} 0%, ${coverB} 100%)`,
     cardCoverFallbackBg: `linear-gradient(180deg, ${coverA} 0%, ${coverB} 100%)`,
-    cardCoverBorder: isDark ? 'rgba(255,255,255,0.1)' : `color-mix(in srgb, ${text} 12%, transparent)`,
+    cardCoverBorder: ink(0.10),
     ...flags,
   };
 }
 
-/** Contrast of the readable roles against the surface (admin badges). */
+/**
+ * Ink derived from the final palette (after admin overrides of muted / link), so call it on what is
+ * actually rendered: `accentText` = the accent when it is used as a text color (≥ 4.5:1 on the surface
+ * and its hover; the fill itself only needs 3:1), `accentOn` / `linkOn` = text on a solid accent /
+ * link fill (badges, active tabs, primary buttons).
+ */
+const _inkMemo = new Map();
+export function paletteInk(palette) {
+  const surface = normalizeHexColor(palette.surface, DEFAULT_GLASS_DARK);
+  const readOn = [surface, normalizeHexColor(palette.surfaceHover, surface), normalizeHexColor(palette.bg, surface)];
+  const memoKey = `${readOn.join('|')}|${palette.accent}|${palette.link}`;
+  let ink = _inkMemo.get(memoKey);
+  if (!ink) {
+    ink = {
+      accentText: ensureContrast(palette.accent, readOn),
+      accentOn: onFillColor(palette.accent),
+      linkOn: onFillColor(palette.link),
+    };
+    if (_inkMemo.size >= PALETTE_MEMO_MAX) _inkMemo.delete(_inkMemo.keys().next().value);
+    _inkMemo.set(memoKey, ink);
+  }
+  return { ...ink };
+}
+
+/** Per-role minimum shown by the admin badges: text roles AA (4.5), the accent as a fill 3:1. */
+export const PALETTE_CONTRAST_MIN = Object.freeze({
+  text: MIN_TEXT_CONTRAST, muted: MIN_TEXT_CONTRAST, link: MIN_TEXT_CONTRAST, accent: MIN_UI_CONTRAST,
+});
+
+/**
+ * Contrast of the readable roles (admin badges): the worst of the surface, its hover and the page
+ * background — text sits on all three (cards and rows are close to the page color). The accent is
+ * checked as a fill against the surface. `min` = per-role threshold, `accentOn` = text on an accent fill.
+ */
 export function paletteContrast(palette) {
-  const round = (v) => Math.round(v * 10) / 10;
+  const round = (v) => Math.floor(v * 10) / 10;
+  const surface = normalizeHexColor(palette.surface, DEFAULT_GLASS_DARK);
+  const backs = [surface, normalizeHexColor(palette.surfaceHover, surface), normalizeHexColor(palette.bg, surface)];
+  const accent = normalizeHexColor(palette.accent, '#000000');
   return {
-    text: round(contrastRatio(palette.text, palette.surface)),
-    muted: round(contrastRatio(palette.muted, palette.surface)),
-    link: round(contrastRatio(palette.link, palette.surface)),
-    accent: round(contrastRatio(palette.accent, palette.surface)),
+    text: round(minContrast(normalizeHexColor(palette.text, '#000000'), backs)),
+    muted: round(minContrast(normalizeHexColor(palette.muted, '#000000'), backs)),
+    link: round(minContrast(normalizeHexColor(palette.link, '#000000'), backs)),
+    accent: round(contrastRatio(accent, surface)),
+    accentOn: round(contrastRatio(onFillColor(accent), accent)),
+    min: PALETTE_CONTRAST_MIN,
   };
 }
 
@@ -377,6 +526,12 @@ export function buildThemePair(darkSurface, lightSurface, darkText = '', lightTe
     light: buildThemePalette(lightSurface || DEFAULT_GLASS_LIGHT, lightText, lightAccent),
   };
 }
+
+/**
+ * Below this panel opacity (with a background picture) the admin color card warns that the contrast
+ * badges, measured against the panel color, may be optimistic: the picture shows through the text.
+ */
+export const GLASS_WARNING_OPACITY = 70;
 
 /** Perceived fill strength differs by surface luminance; light tints need lower mix %. */
 export function effectiveGlassFillOpacity(surfaceHex, surfaceOpacity) {
@@ -686,8 +841,13 @@ export function densityToCssVars(preset) {
 /** Flat CSS custom properties for injection on :root */
 export function themePairToCssVars(pair) {
   const prefix = (mode, key, value) => `--ui-theme-${mode}-${key}:${value}`;
-  const mapMode = (mode, palette) => [
+  const mapMode = (mode, palette) => {
+    const ink = paletteInk(palette);
+    return [
     prefix(mode, 'surface', palette.surface),
+    prefix(mode, 'accent-text', ink.accentText),
+    prefix(mode, 'accent-on', ink.accentOn),
+    prefix(mode, 'link-on', ink.linkOn),
     prefix(mode, 'text', palette.text),
     prefix(mode, 'muted', palette.muted),
     prefix(mode, 'accent', palette.accent),
@@ -713,7 +873,8 @@ export function themePairToCssVars(pair) {
     prefix(mode, 'card-cover-bg', palette.cardCoverBg),
     prefix(mode, 'card-cover-fallback-bg', palette.cardCoverFallbackBg),
     prefix(mode, 'card-cover-border', palette.cardCoverBorder),
-  ];
+    ];
+  };
   return [
     ...mapMode('dark', pair.dark),
     ...mapMode('light', pair.light),
@@ -742,11 +903,11 @@ const RAW_THEME_PRESETS = [
   { id: 'copper', dark: { surface: '#231812', accent: '#ea580c' }, light: { surface: '#fdf4ee', accent: '#c2410c' } },
 ];
 
-/** Preset accents nudged to AA contrast on their own surface (several light accents were ~3:1). */
+/** Preset accents nudged to the 3:1 fill minimum on their own surface (where the accent is text, `accentText` gives AA). */
 export const THEME_PRESETS = RAW_THEME_PRESETS.map((preset) => {
   const fix = (mode) => ({
     surface: preset[mode].surface,
-    accent: preset[mode].accent ? ensureContrast(preset[mode].accent, preset[mode].surface) : '',
+    accent: preset[mode].accent ? ensureContrast(preset[mode].accent, preset[mode].surface, MIN_UI_CONTRAST) : '',
   });
   return { id: preset.id, dark: fix('dark'), light: fix('light') };
 });

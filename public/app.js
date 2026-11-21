@@ -6309,7 +6309,8 @@ function attachUiAppearanceUpload() {
     if (input) input.disabled = auto;
   }
 
-  function setRowContrast(row, ratio) {
+  /* `min` per role from the preview API (`contrast.min`): text roles 4.5, the accent fill 3. */
+  function setRowContrast(row, ratio, min = 4.5) {
     const badge = row?.querySelector('[data-ui-contrast]');
     if (!badge) return;
     const value = Number(ratio);
@@ -6317,11 +6318,23 @@ function attachUiAppearanceUpload() {
       badge.hidden = true;
       return;
     }
-    const low = value < 4.5;
+    const low = value < min;
     badge.hidden = false;
     badge.textContent = `${value}:1`;
     badge.classList.toggle('is-low', low);
-    badge.title = uiT(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk');
+    badge.title = uiTp(low ? 'admin.ui.contrastLow' : 'admin.ui.contrastOk', { min });
+  }
+
+  /* Same threshold as GLASS_WARNING_OPACITY in theme-engine.js. */
+  const GLASS_WARNING_OPACITY = 70;
+  function syncGlassWarning(theme) {
+    const warning = page.querySelector(`[data-ui-glass-card="${theme}"] [data-ui-glass-warning]`);
+    if (!warning) return;
+    const bgSection = page.querySelector('[data-ui-bg-section]');
+    const hasBackground = Boolean(bgSection && !bgSection.hidden);
+    const opacity = readSurfaceOpacity();
+    warning.hidden = !(hasBackground && opacity < GLASS_WARNING_OPACITY);
+    warning.textContent = uiTp('admin.ui.glassContrastWarning', { n: opacity });
   }
 
   function syncGlassPreview(theme) {
@@ -6345,6 +6358,7 @@ function attachUiAppearanceUpload() {
     if (link) link.style.color = roleColor('link') || '';
     const accent = panel.querySelector('[data-ui-preview-role="accent"]');
     if (accent) accent.style.setProperty('--preview-accent', roleColor('accent') || '');
+    syncGlassWarning(theme);
   }
 
   function applyPreviewPalettes(palettes) {
@@ -6358,7 +6372,7 @@ function attachUiAppearanceUpload() {
         if (!row) continue;
         const input = row.querySelector('[data-ui-color-input]');
         if (role === 'surface' ? input?.disabled : rowIsAuto(row)) setRowColor(row, palette[role]);
-        if (role !== 'surface') setRowContrast(row, palette.contrast?.[role]);
+        if (role !== 'surface') setRowContrast(row, palette.contrast?.[role], palette.contrast?.min?.[role] ?? 4.5);
       }
       syncGlassPreview(theme);
     }

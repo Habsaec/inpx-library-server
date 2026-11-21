@@ -9,6 +9,10 @@
   --muted: #a89884;
   --accent: #c4a35a;
   --accent-hover: #d4b56e;
+  /* Accent used as a text color (AA); text on a solid accent / link fill. Themes override them. */
+  --accent-text: var(--accent);
+  --accent-contrast: #1a1612;
+  --link-contrast: #1a1612;
   --link: #d4b06a;
   --link-hover: #e8c984;
   --danger: #d6453d;
@@ -79,6 +83,9 @@ html[data-theme="light"] {
   --muted: #6b5a48;
   --accent: #8a6230;
   --accent-hover: #6e4c24;
+  --accent-text: var(--accent);
+  --accent-contrast: #fffdf8;
+  --link-contrast: #fffdf8;
   --link: #7a5218;
   --link-hover: #5c3c10;
   --danger: #b53848;
@@ -573,7 +580,7 @@ a.table-row-link:active {
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--accent-contrast, #1a1612);
+  color: var(--accent-contrast);
   font-size: 0.6875rem;
   font-weight: 700;
   line-height: 1.5;
@@ -1422,7 +1429,7 @@ form.is-dirty button[type="submit"] {
 
 form.is-dirty button[type="submit"]::after {
   content: '*';
-  color: var(--accent, #4a90d9);
+  color: var(--accent-text, var(--accent, #4a90d9));
   margin-left: 4px;
   font-weight: bold;
 }
@@ -1735,7 +1742,7 @@ form.is-dirty button[type="submit"]::after {
 
   .topbar-search[data-gooey-search].is-open .gooey-search-orb,
   .topbar-search[data-gooey-search] .gooey-search-orb:hover {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   /* Свёрнутая капсула блестит целиком (слой выше) — глобальный блик кнопки на кружке не нужен. */
@@ -2036,7 +2043,7 @@ form.is-dirty button[type="submit"]::after {
 
 .topbar-user-chip.is-active {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .topbar-user-initial {
@@ -2047,7 +2054,7 @@ form.is-dirty button[type="submit"]::after {
   height: 30px;
   border-radius: 50%;
   background: var(--accent);
-  color: var(--accent-contrast, #1a1612);
+  color: var(--accent-contrast);
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -2061,7 +2068,7 @@ form.is-dirty button[type="submit"]::after {
 
 .topbar-search-toggle[aria-expanded="true"] {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .topbar-desktop-tools {
@@ -3040,7 +3047,7 @@ textarea:focus-visible {
   font-weight: 650;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .hero-card-title {
@@ -3118,7 +3125,7 @@ textarea:focus-visible {
 .actions-primary .button-primary {
   background: var(--link);
   border-color: var(--link);
-  color: #1a1612;
+  color: var(--link-contrast);
   font-weight: 600;
 }
 
@@ -3127,19 +3134,19 @@ textarea:focus-visible {
 .actions-primary .button-primary:hover {
   background: var(--btn-primary-hover);
   border-color: var(--btn-primary-hover);
-  color: #1a1612;
+  color: var(--link-contrast);
 }
 
 html[data-theme="light"] .premium-hero-card .button-primary,
 html[data-theme="light"] .card-actions-read .button-primary,
 html[data-theme="light"] .actions-primary .button-primary {
-  color: #fffdf8;
+  color: var(--link-contrast);
 }
 
 html[data-theme="light"] .premium-hero-card .button-primary:hover,
 html[data-theme="light"] .card-actions-read .button-primary:hover,
 html[data-theme="light"] .actions-primary .button-primary:hover {
-  color: #fffdf8;
+  color: var(--link-contrast);
 }
 
 .premium-hero-card .button-secondary {
@@ -4855,7 +4862,7 @@ body:has(.bottom-nav) .batch-fab {
   box-sizing: border-box;
   width: 6px;
   height: 12px;
-  border: 2px solid #fff;
+  border: 2px solid var(--accent-contrast);
   border-top: 0;
   border-left: 0;
   transform: rotate(45deg) scale(0.5);
@@ -4903,7 +4910,7 @@ body:has(.bottom-nav) .batch-fab {
   padding: 2px 7px;
   border-radius: 999px;
   background: rgba(74, 198, 148, 0.1);
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   font-size: 0.625rem;
   border: 1px solid rgba(74, 198, 148, 0.2);
 }
@@ -5010,13 +5017,13 @@ body:has(.bottom-nav) .batch-fab {
 
 .page-link-active {
   background: var(--accent);
-  color: #1a1612 !important;
+  color: var(--accent-contrast) !important;
   border-color: var(--accent);
   font-weight: 600;
 }
 
 html[data-theme="light"] .page-link-active {
-  color: #fff !important;
+  color: var(--accent-contrast) !important;
 }
 
 .page-link-prev,
@@ -5204,7 +5211,7 @@ html[data-theme="light"] .page-link-active {
 
 .profile-settings-tab.is-active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border-color: var(--accent);
 }
 
@@ -6065,7 +6072,7 @@ html[data-theme="light"] .page-link-active {
   font-size: 0.625rem;
   text-transform: uppercase;
   letter-spacing: 0.02em;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   border: 1px solid rgba(180, 145, 80, 0.25);
   background: rgba(180, 145, 80, 0.08);
 }
@@ -6929,7 +6936,7 @@ html[data-theme="light"] .page-link-active {
   cursor: pointer;
   padding: 6px 12px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .book-detail-annotation--html details > div {
@@ -7678,7 +7685,7 @@ html[data-theme="light"] .page-link-active {
   background: transparent;
   border: none;
   box-shadow: none;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .book-detail-bookmark-action.is-active svg,
@@ -8208,7 +8215,7 @@ html[data-theme="light"] .alert-info {
 
 .login-card .brand h1,
 .login-card .brand h2 {
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .login-card .brand h1 {
@@ -8359,7 +8366,7 @@ html[data-theme="light"] .alert-info {
   display: block;
   font-size: 1.125rem;
   margin-top: 4px;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .sidebar .kpi {
@@ -8486,7 +8493,7 @@ html[data-theme="light"] .alert-info {
   cursor: pointer;
   font-weight: 600;
   font-size: 0.875rem;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   border-radius: var(--radius-lg);
 }
 
@@ -9975,7 +9982,7 @@ html[data-theme="light"] .sidebar-overlay {
 
 .modal-shelf-done {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border-color: var(--accent);
 }
 
@@ -10066,7 +10073,7 @@ html[data-theme="light"] .sidebar-overlay {
 
 .confirm-modal-ok {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border-color: var(--accent);
 }
 
@@ -10150,7 +10157,7 @@ form[data-shelf-create].is-open .shelf-create-toggle {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   transform: none;
 }
 
@@ -10223,12 +10230,12 @@ form[data-shelf-create].is-open input:focus {
   display: inline-flex;
   align-items: center;
   margin-right: 6px;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   vertical-align: -2px;
 }
 
 .shelf-smart-hint .shelf-smart-icon {
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   vertical-align: -3px;
 }
 
@@ -10255,7 +10262,7 @@ form[data-shelf-create].is-open input:focus {
 }
 
 .shelf-home-toggle.is-active {
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   background-color: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
@@ -10986,6 +10993,9 @@ html[data-ui-theme="1"][data-theme="dark"] {
   --muted: var(--ui-theme-dark-muted, #a89888);
   --accent: var(--ui-theme-dark-accent, #9a8e7e);
   --accent-hover: var(--ui-theme-dark-accent-hover, #a1671b);
+  --accent-text: var(--ui-theme-dark-accent-text, var(--accent));
+  --accent-contrast: var(--ui-theme-dark-accent-on, #1a1612);
+  --link-contrast: var(--ui-theme-dark-link-on, #1a1612);
   --link: var(--ui-theme-dark-link, #d4ac5c);
   --link-hover: var(--ui-theme-dark-link-hover, #efc06f);
   --surface: var(--ui-theme-dark-surface, #141210);
@@ -11018,6 +11028,9 @@ html[data-ui-theme="1"][data-theme="light"] {
   --muted: var(--ui-theme-light-muted, #6e5e4c);
   --accent: var(--ui-theme-light-accent, #7a6a58);
   --accent-hover: var(--ui-theme-light-accent-hover, #a1671b);
+  --accent-text: var(--ui-theme-light-accent-text, var(--accent));
+  --accent-contrast: var(--ui-theme-light-accent-on, #fffdf8);
+  --link-contrast: var(--ui-theme-light-link-on, #fffdf8);
   --link: var(--ui-theme-light-link, #8b5a12);
   --link-hover: var(--ui-theme-light-link-hover, #a86a0a);
   --surface: var(--ui-theme-light-surface, #f7f4ef);
@@ -11837,7 +11850,7 @@ html[data-ui-typography="1"] .login-card {
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px dashed var(--accent);
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -11909,7 +11922,7 @@ html[data-ui-typography="1"] .login-card {
 .admin-appearance-save-btn.button-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fffdf8;
+  color: var(--accent-contrast);
 }
 
 .admin-appearance-save-btn.button-primary:hover {
@@ -11942,6 +11955,9 @@ html[data-eink="1"] {
   --link-hover: #000000;
   --accent: #000000;
   --accent-hover: #000000;
+  --accent-text: #000000;
+  --accent-contrast: #ffffff;
+  --link-contrast: #ffffff;
   --border: #000000;
   --ui-surface-blur: 0px;
   --ui-bg-blur: 0px;
@@ -13609,7 +13625,7 @@ html[data-eink="1"] :is(.button, button) {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 /* Карточки админки без инлайновых отступов не должны слипаться. */
@@ -14465,7 +14481,7 @@ html[data-ui-typography="1"] .admin-appearance-layout .admin-tab-panel {
 
 /* ── «Скрыть прочитанное» toggle ── */
 .hide-read-toggle.is-active {
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: color-mix(in srgb, var(--accent) 12%, var(--button-bg));
 }

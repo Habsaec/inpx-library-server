@@ -410,7 +410,10 @@ test('getPublicUiSettingsJson app palette matches the resolved site theme', () =
   assert.equal(json.appPaletteDark.accent, '#1122ff');
   assert.equal(json.appPaletteDark.link, '#22cc66');
   assert.equal(json.appPaletteDark.text, ui.themePair.dark.text);
-  assert.equal(json.appPaletteDark.bg, ui.themePair.dark.shellBg);
+  assert.equal(json.appPaletteDark.bg, ui.themePair.dark.bg);
+  /* Additive ink for Android: text on its link-filled buttons. */
+  assert.match(json.appPaletteDark.linkOn, /^#[0-9a-f]{6}$/);
+  assert.match(json.appPaletteDark.accentText, /^#[0-9a-f]{6}$/);
 });
 
 test('getPublicUiSettingsJson returns glass theme fields', () => {
