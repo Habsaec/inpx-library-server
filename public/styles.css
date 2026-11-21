@@ -3574,6 +3574,32 @@ html[data-eink="1"] .ui-decor {
   display: none !important;
 }
 
+/* ── Genre rows: a patterned tile per genre group (renderGenreSwatch; same motifs in the Android app) ── */
+.genre-swatch {
+  --gc: hsla(var(--gh), 45%, 55%, 0.6);
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-right: 12px;
+  border-radius: 7px;
+  background-color: hsla(var(--gh), 40%, 50%, 0.16);
+}
+
+.genre-swatch.gm-0 { background-image: repeating-linear-gradient(45deg, var(--gc) 0 3px, transparent 3px 7px); }
+.genre-swatch.gm-1 { background-image: radial-gradient(var(--gc) 1.4px, transparent 1.7px); background-size: 6px 6px; }
+.genre-swatch.gm-2 { background-image: linear-gradient(var(--gc) 1px, transparent 1px), linear-gradient(90deg, var(--gc) 1px, transparent 1px); background-size: 6px 6px; }
+.genre-swatch.gm-3 { background-image: radial-gradient(circle at 50% 0, transparent 3px, var(--gc) 3.5px 4.5px, transparent 5px); background-size: 8px 6px; }
+.genre-swatch.gm-4 { background-image: linear-gradient(135deg, var(--gc) 25%, transparent 25%), linear-gradient(225deg, var(--gc) 25%, transparent 25%); background-size: 8px 8px; }
+.genre-swatch.gm-5 { background-image: conic-gradient(var(--gc) 25%, transparent 0 50%, var(--gc) 0 75%, transparent 0); background-size: 8px 8px; }
+.genre-swatch.gm-6 { background-image: repeating-radial-gradient(circle at 30% 30%, var(--gc) 0 1.2px, transparent 1.2px 4px); }
+.genre-swatch.gm-7 { background-image: repeating-linear-gradient(45deg, var(--gc) 0 1px, transparent 1px 5px), repeating-linear-gradient(-45deg, var(--gc) 0 1px, transparent 1px 5px); }
+
+html[data-eink="1"] .genre-swatch {
+  background-color: transparent;
+  border: 1px solid #000;
+  --gc: #000;
+}
+
 /* ── Author page without a portrait: a fan of the author's covers ── */
 .book-detail-cover.has-cover-fan .cover {
   overflow: visible;

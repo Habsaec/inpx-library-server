@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { formatAuthorLabel, authorInitials, localizeGenreLabel, formatLanguageLabel, parseGenreCodes } from '../genre-map.js';
+import { formatAuthorLabel, authorInitials, localizeGenreLabel, formatLanguageLabel, parseGenreCodes, getGenreGroup } from '../genre-map.js';
 import { getAvailableDownloadFormats, getConfiguredDownloadFormats, FORMAT_LABELS, isDownloadFormatEnabled } from '../conversion.js';
 import { resolveTelegramRuntimeConfig, getUserDownloadFormat } from '../db.js';
 import { config } from '../config.js';
@@ -1172,6 +1172,22 @@ export function renderFavoriteBookGrid(items = [], { batchSelect = false, user =
     </div>`;
 }
 
+/** Stable djb2-xor hash over code points; the Android app's `genrePatternHash` is the same function. */
+export function genreSwatchHash(name) {
+  let h = 5381;
+  for (const ch of String(name || '')) h = ((h * 33) ^ ch.codePointAt(0)) >>> 0;
+  return h;
+}
+
+/**
+ * Patterned tile of a genre row: motif (8 kinds, `.genre-swatch.gm-N` in styles.css) and hue from the
+ * genre's group, so the genres of one group share a look. Android draws the same tiles on its groups.
+ */
+export function renderGenreSwatch(genreCode) {
+  const h = genreSwatchHash(getGenreGroup(genreCode) || genreCode);
+  return `<span class="genre-swatch gm-${h % 8}" style="--gh:${h % 360}" aria-hidden="true"></span>`;
+}
+
 export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', emptyText = null, readSeriesNames = null) {
   const empty = emptyText ?? t('browse.empty');
   if (!items.length) {
@@ -1183,6 +1199,7 @@ export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', e
   const isSeries = facetBasePath.includes('series');
   const seriesBadge = (name) => isSeries && readSeriesNames && readSeriesNames.has(name) ? `<span class="read-series-badge">${READ_CHECK_SVG}</span>` : '';
   const isAuthors = facetBasePath.includes('/authors');
+  const isGenres = facetBasePath.includes('/genres');
   return `
     <div class="table-list entity-list">
       ${items.map((item) => {
@@ -1191,6 +1208,7 @@ export function renderEntityGrid(items = [], facetBasePath = '/facet/authors', e
         return `
         <a class="table-row table-row-link" href="${facetBasePath}/${encodeURIComponent(item.name)}">
           <div style="display:flex;align-items:center">
+            ${isGenres ? renderGenreSwatch(item.name) : ''}
             <span><strong>${escapeHtml(label)}</strong><br>
             <span class="muted">${countLabel('book', item.bookCount)} ${escapeHtml(t('entity.inLibrary'))}</span></span>
             ${seriesBadge(item.name)}
