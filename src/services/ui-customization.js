@@ -818,6 +818,7 @@ export function getUiCustomization() {
   const showHeader = uiSetting('ui_show_header') !== '0';
   const manuscriptWash = uiSetting('ui_manuscript') !== '0';
   const book3d = uiSetting('ui_book_3d') !== '0';
+  const pageTransitions = uiSetting('ui_page_transitions') !== '0';
   const radiusPreset = uiSetting('ui_radius_preset') || 'rounded';
   const shadowPreset = uiSetting('ui_shadow_preset') || 'normal';
   const fontSize = readFontSizeSetting();
@@ -907,6 +908,7 @@ export function getUiCustomization() {
     showHeader,
     manuscriptWash,
     book3d,
+    pageTransitions,
     manuscriptFont,
     manuscriptInk,
     manuscriptSize,
@@ -1311,6 +1313,7 @@ export function saveUiSettings({
   showLogoOnLogin,
   manuscriptWash,
   book3d,
+  pageTransitions,
   dynamicThemeFromBg,
 } = {}) {
   if (dynamicThemeFromBg !== undefined) {
@@ -1441,6 +1444,9 @@ export function saveUiSettings({
   }
   if (book3d !== undefined) {
     setSetting('ui_book_3d', book3d ? '1' : '0');
+  }
+  if (pageTransitions !== undefined) {
+    setSetting('ui_page_transitions', pageTransitions ? '1' : '0');
   }
   invalidateUiCustomizationCache();
 }

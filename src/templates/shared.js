@@ -1635,6 +1635,7 @@ function uiHtmlRootAttrs() {
   if (ui.showLogo === false) attrs += ' data-ui-logo="0"';
   if (ui.manuscriptWash === false) attrs += ' data-ui-manuscript="0"';
   if (ui.book3d === false) attrs += ' data-ui-book3d="0"';
+  if (ui.pageTransitions === false) attrs += ' data-ui-transitions="0"';
   if (hasUiThemeShapeConfigured()) attrs += ' data-ui-shape="1"';
   if (hasUiThemeTypographyConfigured()) attrs += ' data-ui-typography="1"';
   const coverPair = coverFallbackPair();
@@ -1654,6 +1655,37 @@ function renderThemeBootScript() {
       } catch {
         document.documentElement.dataset.theme = 'dark';
       }
+      /* Page transitions (CSS @view-transition, Chrome 126+): a cover flies from its card to the book page
+         and back. Must be registered before the first render (pagereveal), hence here in <head>. Off with
+         the admin switch (data-ui-transitions="0"), in E-Ink mode and with reduced motion (CSS). */
+      const vtOff = () => document.documentElement.dataset.uiTransitions === '0' || document.documentElement.dataset.eink === '1';
+      const pathOf = (url) => { try { return new URL(url, location.href).pathname; } catch { return ''; } };
+      const coverFor = (path) => [...document.querySelectorAll('a.cover[href]')].find((a) => pathOf(a.href) === path);
+      const clearNames = () => document.querySelectorAll('a.cover[style*="view-transition-name"]').forEach((a) => { a.style.viewTransitionName = ''; });
+      window.addEventListener('pageswap', (e) => {
+        if (!e.viewTransition) return;
+        if (vtOff()) { e.viewTransition.skipTransition(); return; }
+        clearNames();
+        const to = pathOf(e.activation && e.activation.entry ? e.activation.entry.url : '');
+        if (to.startsWith('/book/') && !location.pathname.startsWith('/book/')) {
+          const a = coverFor(to);
+          if (a) a.style.viewTransitionName = 'book-cover';
+        }
+      });
+      window.addEventListener('pagereveal', (e) => {
+        if (!e.viewTransition) return;
+        if (vtOff()) { e.viewTransition.skipTransition(); return; }
+        clearNames();
+        const nav = window.navigation;
+        const from = pathOf(nav && nav.activation && nav.activation.from ? nav.activation.from.url : '');
+        if (from.startsWith('/book/') && !location.pathname.startsWith('/book/')) {
+          const a = coverFor(from);
+          if (a) {
+            a.style.viewTransitionName = 'book-cover';
+            e.viewTransition.finished.finally(() => { a.style.viewTransitionName = ''; });
+          }
+        }
+      });
     })();
   </script>`;
 }

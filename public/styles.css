@@ -3464,6 +3464,34 @@ html[data-theme="light"] .cover {
   opacity: 1;
 }
 
+/* ── Page transitions (cross-document View Transitions, Chrome 126+) ──
+   The book page cover is always named; the list card is named by the head boot script (pageswap /
+   pagereveal) only for the one book being opened or returned to. Browsers without support ignore all of
+   it. Off with reduced motion here, and via skipTransition() for the admin switch and E-Ink mode. */
+@view-transition {
+  navigation: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: none;
+  }
+}
+
+.book-detail-shell:not(.series-facet-hero):not(.author-facet-hero) .book-detail-cover .cover {
+  view-transition-name: book-cover;
+}
+
+::view-transition-group(book-cover) {
+  animation-duration: 0.38s;
+  animation-timing-function: cubic-bezier(0.2, 0.75, 0.2, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.2s;
+}
+
 /* Blurred 8×12 placeholder (cover tones): above the leather plate, under the real image. The browser's
    smooth upscaling is the blur; no `filter` — dozens of filtered layers per page cost weak GPUs. */
 .cover-lqip {

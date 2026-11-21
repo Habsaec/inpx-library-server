@@ -2275,6 +2275,13 @@ export function renderAdminAppearance({
           </label>
           <span class="admin-field-hint">${escapeHtml(t('admin.ui.book3dHint'))}</span>
         </div>
+        <div class="admin-field-group admin-field-group--compact">
+          <label class="admin-checkbox-label ui-asset-checkbox">
+            <input type="checkbox" form="ui-main-form" name="pageTransitions" value="1" ${ui.pageTransitions !== false ? 'checked' : ''}>
+            ${escapeHtml(t('admin.ui.pageTransitions'))}
+          </label>
+          <span class="admin-field-hint">${escapeHtml(t('admin.ui.pageTransitionsHint'))}</span>
+        </div>
         <hr class="admin-divider">
         <label class="admin-checkbox-label">
           <input type="checkbox" form="ui-main-form" name="manuscriptWash" value="1" ${ui.manuscriptWash !== false ? 'checked' : ''}>
