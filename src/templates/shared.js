@@ -1636,6 +1636,7 @@ function uiHtmlRootAttrs() {
   if (ui.manuscriptWash === false) attrs += ' data-ui-manuscript="0"';
   if (ui.book3d === false) attrs += ' data-ui-book3d="0"';
   if (ui.pageTransitions === false) attrs += ' data-ui-transitions="0"';
+  if (ui.decor) attrs += ` data-ui-decor="${escapeHtml(ui.decor)}"`;
   if (hasUiThemeShapeConfigured()) attrs += ' data-ui-shape="1"';
   if (hasUiThemeTypographyConfigured()) attrs += ' data-ui-typography="1"';
   const coverPair = coverFallbackPair();
@@ -1889,6 +1890,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
   </style>
 </head>
 <body data-download-allowed="${canDownloadInUi(user) ? '1' : '0'}" data-batch-zip-max="${BATCH_ZIP_MAX}">
+<div class="ui-decor" aria-hidden="true"></div>
   <div class="nav-progress" id="nav-progress"></div>
   <script>!function(){var b=document.getElementById('nav-progress');if(!b)return;function done(){b.classList.remove('active')}done();window.addEventListener('pageshow',done);window.addEventListener('popstate',done);document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.charAt(0)==='#'||a.target==='_blank'||e.ctrlKey||e.metaKey||e.shiftKey)return;b.classList.add('active')});document.addEventListener('submit',function(){b.classList.add('active')})}()</script>
   <script src="${clientI18nScriptUrl()}" defer></script>

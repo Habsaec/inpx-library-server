@@ -167,3 +167,15 @@ test('set file names pass the portable-backup file filter (flat data/ui files)',
   const UI_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
   assert.ok(UI_FILE_RE.test(themeSetFileName('0a1b2c3d', 'favicon-192.png')));
 });
+
+test('seasonal decoration is an appearance setting carried by theme sets', async () => {
+  const { THEME_SET_KEYS } = await import('../src/services/theme-sets.js');
+  assert.ok(THEME_SET_KEYS.includes('ui_decor'));
+  const { saveUiSettings } = await import('../src/services/ui-customization.js');
+  saveUiSettings({ decor: 'snow' });
+  invalidateUiCustomizationCache();
+  assert.equal(getUiCustomization().decor, 'snow');
+  saveUiSettings({ decor: '<script>' });
+  invalidateUiCustomizationCache();
+  assert.equal(getUiCustomization().decor, '', 'unknown values are dropped');
+});

@@ -43,6 +43,7 @@ export const THEME_SET_KEYS = Object.freeze([
   'ui_bg_blur', 'ui_bg_overlay', 'ui_bg_size', 'ui_bg_position',
   'ui_surface_opacity', 'ui_surface_blur', 'ui_panel_opacity', 'ui_topbar_opacity', 'ui_sidebar_opacity',
   'ui_header_height', 'ui_header_position', 'ui_header_size', 'ui_show_header',
+  'ui_decor',
 ]);
 /** Only with «включая логотип и иконку». */
 export const THEME_SET_LOGO_KEYS = Object.freeze(['ui_show_logo']);

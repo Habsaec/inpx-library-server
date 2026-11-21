@@ -2282,6 +2282,15 @@ export function renderAdminAppearance({
           </label>
           <span class="admin-field-hint">${escapeHtml(t('admin.ui.pageTransitionsHint'))}</span>
         </div>
+        <div class="admin-field-group admin-field-group--compact">
+          <label for="ui-decor">${escapeHtml(t('admin.ui.decor'))}</label>
+          <select id="ui-decor" name="decor" form="ui-main-form">
+            <option value=""${!ui.decor ? ' selected' : ''}>${escapeHtml(t('admin.ui.decorNone'))}</option>
+            <option value="snow"${ui.decor === 'snow' ? ' selected' : ''}>${escapeHtml(t('admin.ui.decorSnow'))}</option>
+            <option value="leaves"${ui.decor === 'leaves' ? ' selected' : ''}>${escapeHtml(t('admin.ui.decorLeaves'))}</option>
+          </select>
+          <span class="admin-field-hint">${escapeHtml(t('admin.ui.decorHint'))}</span>
+        </div>
         <hr class="admin-divider">
         <label class="admin-checkbox-label">
           <input type="checkbox" form="ui-main-form" name="manuscriptWash" value="1" ${ui.manuscriptWash !== false ? 'checked' : ''}>

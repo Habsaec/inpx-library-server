@@ -886,6 +886,7 @@ export function registerAdminRoutes(app, deps) {
         manuscriptWash: isFormFlagEnabled(req.body.manuscriptWash),
         book3d: isFormFlagEnabled(req.body.book3d),
         pageTransitions: isFormFlagEnabled(req.body.pageTransitions),
+        decor: lastFormFieldValue(req.body.decor) ?? '',
       });
       saveCoverFallbackSettings({
         coverTitleFont: lastFormFieldValue(req.body.coverTitleFont),
