@@ -25,6 +25,8 @@ import {
   runWithThemeSetPreview,
   currentThemeSetPreview,
   THEME_SET_ALL_KEYS,
+  setThemeSetFile,
+  themeSetFilePath,
 } from '../src/services/theme-sets.js';
 import { getUiCustomization, getPublicUiSettingsJson, invalidateUiCustomizationCache, saveUiSettings, serveUiAsset } from '../src/services/ui-customization.js';
 
@@ -58,7 +60,7 @@ test('month-day parsing accepts DD.MM and MM-DD, rejects impossible dates', () =
 });
 
 test('schedule is clamped and defaults to off', () => {
-  assert.deepEqual({ ...normalizeThemeSchedule({}) }, { mode: 'off', every: 3, unit: 'days', includeBase: true });
+  assert.deepEqual({ ...normalizeThemeSchedule({}) }, { mode: 'off', every: 3, unit: 'days', includeBase: true, offset: 0 });
   assert.equal(normalizeThemeSchedule({ mode: 'rotate', every: 9999, unit: 'hours' }).every, 168);
   assert.equal(normalizeThemeSchedule({ mode: 'rotate', every: 0 }).every, 1);
   assert.equal(normalizeThemeSchedule({ mode: 'x' }).mode, 'off');
@@ -234,5 +236,45 @@ test('an admin preview of a set wins over the schedule, but not in the admin (ba
     runWithBaseAppearance(() => assert.equal(themeSetSetting('ui_accent_dark'), '#112233'));
   });
   assert.equal(currentThemeSetPreview(), null);
+  resetAll();
+});
+
+test('rotation: saving, deleting or moving a set never switches the look on the spot', () => {
+  resetAll();
+  const shownId = () => (resolveThemeSetAt(new Date())?.id || null);
+  const a = createThemeSetFromCurrent({ name: 'A' });
+  saveThemeSchedule({ mode: 'rotate', every: 1, unit: 'hours', includeBase: true });
+  for (let i = 0; i < 6; i += 1) {
+    const before = shownId();
+    createThemeSetFromCurrent({ name: `N${i}` });
+    assert.equal(shownId(), before, `adding set #${i + 2} keeps what the site shows`);
+  }
+  const before = shownId();
+  const sets = listThemeSets();
+  moveThemeSet(sets[sets.length - 1].id, 'up');
+  assert.equal(shownId(), before, 'moving keeps it');
+  const other = listThemeSets().find((s) => s.id !== before && s.id !== a.id);
+  deleteThemeSet(other.id);
+  assert.equal(shownId(), before, 'deleting another set keeps it');
+  saveThemeSchedule({ mode: 'rotate', every: 3, unit: 'days', includeBase: true });
+  assert.equal(shownId(), before, 'changing the period keeps it too');
+  resetAll();
+});
+
+test('a set picture uploaded into the set never touches the main look', () => {
+  resetAll();
+  fs.writeFileSync(path.join(uiDir, 'background.webp'), Buffer.from('main-bg'));
+  const set = createThemeSetFromCurrent({ name: 'Bg' });
+  fs.writeFileSync(themeSetFilePath(set.id, 'background.webp'), Buffer.from('set-bg'));
+  const withBg = setThemeSetFile(set.id, 'background.webp', true, { ui_bg_palette_dark: '#123456' });
+  assert.ok(withBg.files.includes('background.webp'));
+  assert.equal(withBg.settings.ui_bg_palette_dark, '#123456');
+  assert.equal(fs.readFileSync(path.join(uiDir, 'background.webp'), 'utf8'), 'main-bg', 'main background untouched');
+  const header = setThemeSetFile(set.id, 'header.webp', false);
+  assert.ok(!header.files.includes('header.webp'));
+  const noBg = setThemeSetFile(set.id, 'background.webp', false);
+  assert.ok(!noBg.files.includes('background.webp'));
+  assert.equal(fs.existsSync(themeSetFilePath(set.id, 'background.webp')), false);
+  assert.equal(fs.readFileSync(path.join(uiDir, 'background.webp'), 'utf8'), 'main-bg');
   resetAll();
 });

@@ -54,13 +54,13 @@ import {
   saveUiShapeSettings, saveUiTypographySettings,
   refreshBgThemePaletteForAdmin, refreshBgThemePaletteFromFile,
   getPublicUiSettingsJson, getThemePreviewFromDraft, getUiAppearanceFormState, decorFromFlags,
-  invalidateUiCustomizationCache,
+  invalidateUiCustomizationCache, bgPaletteFromFile,
 } from '../services/ui-customization.js';
 import {
   baseAppearanceMiddleware, listThemeSets, getThemeSchedule, saveThemeSchedule,
   createThemeSetFromCurrent, updateThemeSet, replaceThemeSetFromCurrent, deleteThemeSet, moveThemeSet,
   applyThemeSetToBase, resolveThemeSetAt, upcomingThemeSetChanges, getThemeSet,
-  THEME_SET_ALL_KEYS, THEME_SET_PREVIEW_COOKIE,
+  THEME_SET_ALL_KEYS, THEME_SET_PREVIEW_COOKIE, THEME_SET_UPLOAD_ASSETS, setThemeSetFile, themeSetFilePath,
 } from '../services/theme-sets.js';
 import {
   setSetting, getSetting, dryRunSettings, encryptValue, decryptValue, getSources, getSourceById,
@@ -1116,6 +1116,46 @@ export function registerAdminRoutes(app, deps) {
       res.redirect('/admin/appearance?flash=' + encodeURIComponent(uiAdminFlashMessage(error)));
     }
   });
+
+  /* A theme set's own background / header: written into the set only, the main look stays as it is. */
+  app.post('/api/admin/ui/sets/:id/upload', requireAdminApi, parseUiUploadBody, asyncHandler(async (req, res) => {
+    const id = String(req.params.id || '');
+    const asset = String(req.query.asset || '').trim();
+    const fileName = THEME_SET_UPLOAD_ASSETS[asset];
+    try {
+      if (!fileName) throw new Error('admin.ui.errorUnknownAsset');
+      const set = getThemeSet(id);
+      if (!set) throw new Error('admin.ui.sets.errorNotFound');
+      const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+      await saveUiAsset(asset, buffer, { target: (name) => themeSetFilePath(id, name) });
+      let settings = null;
+      if (asset === 'background' && set.settings.ui_dynamic_theme_from_bg === '1') {
+        const palette = await bgPaletteFromFile(themeSetFilePath(id, fileName)).catch(() => null);
+        if (palette) settings = { ui_bg_palette_dark: palette.dark, ui_bg_palette_light: palette.light };
+      }
+      const updated = setThemeSetFile(id, fileName, true, settings);
+      invalidateUiCustomizationCache();
+      clearPageDataCache();
+      logSystemEvent('info', 'settings', 'ui theme set picture uploaded', { actor: req.user.username, id, asset, size: buffer.length });
+      res.json({ ok: true, url: `/custom/ui/${asset}?s=${id}&v=${encodeURIComponent(updated.updatedAt)}` });
+    } catch (error) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, uiAdminFlashMessage(error));
+    }
+  }));
+
+  app.post('/api/admin/ui/sets/:id/remove', requireAdminApi, asyncHandler(async (req, res) => {
+    const id = String(req.params.id || '');
+    const fileName = THEME_SET_UPLOAD_ASSETS[String(req.query.asset || req.body?.asset || '').trim()];
+    try {
+      if (!fileName) throw new Error('admin.ui.errorUnknownAsset');
+      setThemeSetFile(id, fileName, false);
+      invalidateUiCustomizationCache();
+      clearPageDataCache();
+      res.json({ ok: true });
+    } catch (error) {
+      return apiFail(res, 400, ApiErrorCode.VALIDATION, uiAdminFlashMessage(error));
+    }
+  }));
 
   app.post('/api/admin/ui/upload', requireAdminApi, parseUiUploadBody, asyncHandler(async (req, res) => {
     const asset = String(req.query.asset || req.headers['x-ui-asset'] || '').trim();

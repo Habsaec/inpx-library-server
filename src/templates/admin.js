@@ -1772,7 +1772,7 @@ function renderThemeSetsPanel({ sets = [], schedule = {}, active = null, upcomin
   const thumb = (set) => {
     const asset = set.files.includes('header.webp') ? 'header' : (set.files.includes('background.webp') ? 'background' : '');
     return asset
-      ? `<img class="ui-theme-set-thumb" src="/custom/ui/${asset}?s=${escapeHtml(set.id)}&amp;v=${encodeURIComponent(set.updatedAt || set.createdAt)}" alt="" loading="lazy">`
+      ? `<img class="ui-theme-set-thumb" data-set-thumb="${asset}" src="/custom/ui/${asset}?s=${escapeHtml(set.id)}&amp;v=${encodeURIComponent(set.updatedAt || set.createdAt)}" alt="" loading="lazy">`
       : `<span class="ui-theme-set-thumb ui-theme-set-thumb--empty">${escapeHtml(t('admin.ui.sets.noHeader'))}</span>`;
   };
   const action = (set, name, label, cls = 'button') => `
@@ -1807,6 +1807,16 @@ function renderThemeSetsPanel({ sets = [], schedule = {}, active = null, upcomin
           </div>
           <span class="admin-field-hint">${escapeHtml(set.includeLogo ? t('admin.ui.sets.withLogo') : t('admin.ui.sets.withoutLogo'))}</span>
         </form>
+        <div class="ui-theme-set-pics" data-set-pics="${escapeHtml(set.id)}">
+          ${[['background', 'background.webp'], ['header', 'header.webp']].map(([asset, file]) => {
+    const has = set.files.includes(file);
+    return `<span class="ui-theme-set-pic">
+            <span>${escapeHtml(t(`admin.ui.sets.pic_${asset}`))}: <strong data-set-pic-state="${asset}">${escapeHtml(t(has ? 'admin.ui.sets.picOwn' : 'admin.ui.sets.picNone'))}</strong></span>
+            <label class="button">${escapeHtml(t('admin.ui.sets.picUpload'))}<input type="file" accept="image/*" hidden data-set-upload="${asset}"></label>
+            <button type="button" class="button" data-set-remove="${asset}"${has ? '' : ' hidden'}>${escapeHtml(t('admin.ui.sets.picRemove'))}</button>
+          </span>`;
+  }).join('')}
+        </div>
         <div class="ui-theme-set-actions">
           ${index > 0 ? action(set, 'up', '↑') : ''}
           ${index < sets.length - 1 ? action(set, 'down', '↓') : ''}

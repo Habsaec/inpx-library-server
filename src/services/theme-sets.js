@@ -173,7 +173,9 @@ function saveThemeSets(list) {
   setSetting(THEME_SETS_SETTING, list.length ? JSON.stringify(list) : '');
 }
 
-export const DEFAULT_THEME_SCHEDULE = Object.freeze({ mode: 'off', every: 3, unit: 'days', includeBase: true });
+/* `offset` shifts the rotation so that adding / deleting / moving a set (which changes the cycle length)
+   or changing the period never switches the look on the spot — see keepShownSet(). */
+export const DEFAULT_THEME_SCHEDULE = Object.freeze({ mode: 'off', every: 3, unit: 'days', includeBase: true, offset: 0 });
 
 let _scheduleMemo = { raw: null, value: DEFAULT_THEME_SCHEDULE };
 export function getThemeSchedule() {
@@ -194,14 +196,55 @@ export function normalizeThemeSchedule(input = {}) {
   const n = Math.trunc(Number(input.every));
   const every = Number.isFinite(n) ? Math.min(max, Math.max(1, n)) : DEFAULT_THEME_SCHEDULE.every;
   const includeBase = input.includeBase !== false && input.includeBase !== '0' && input.includeBase !== 0;
-  return Object.freeze({ mode, every, unit, includeBase });
+  const o = Math.trunc(Number(input.offset));
+  const offset = Number.isFinite(o) && o > 0 ? Math.min(o, 100_000) : 0;
+  return Object.freeze({ mode, every, unit, includeBase, offset });
 }
 
-export function saveThemeSchedule(input) {
-  const value = normalizeThemeSchedule(input);
+function storeThemeSchedule(value) {
   setSetting(THEME_SCHEDULE_SETTING, value.mode === 'off' && value.every === DEFAULT_THEME_SCHEDULE.every
-    && value.unit === DEFAULT_THEME_SCHEDULE.unit && value.includeBase ? '' : JSON.stringify(value));
+    && value.unit === DEFAULT_THEME_SCHEDULE.unit && value.includeBase && !value.offset ? '' : JSON.stringify(value));
   return value;
+}
+
+/**
+ * Saves the schedule form. In rotation the look shown right now stays (the offset is re-anchored), so
+ * switching to «По кругу» or changing the period never jumps to another set; the next change comes at
+ * the next period boundary.
+ */
+export function saveThemeSchedule(input) {
+  const now = new Date();
+  const shown = resolveThemeSetAt(now);
+  const value = normalizeThemeSchedule({ ...input, offset: 0 });
+  return storeThemeSchedule(anchoredSchedule(value, shown, now, listThemeSets()));
+}
+
+/** `schedule` with the offset that makes `shown` (set or null = main look) the one at `date`, if it is in the cycle. */
+function anchoredSchedule(schedule, shown, date, sets) {
+  if (schedule.mode !== 'rotate' || !sets.length) return schedule;
+  const cycle = rotationCycle(schedule, sets);
+  const idx = cycle.findIndex((s) => (s?.id || null) === (shown?.id || null));
+  if (idx < 0) return schedule;
+  const len = cycle.length;
+  const offset = (((idx - rotationSlot(schedule, date)) % len) + len) % len;
+  return offset === schedule.offset ? schedule : Object.freeze({ ...schedule, offset });
+}
+
+/**
+ * Runs a change of the set list (create / delete / move) so that the look shown right now stays: the
+ * rotation cycle length changes with the list, and without re-anchoring a new set could take over the
+ * site the moment it was saved.
+ */
+function keepShownSet(mutate) {
+  const now = new Date();
+  const schedule = getThemeSchedule();
+  const shown = resolveThemeSetAt(now, schedule);
+  const result = mutate();
+  if (schedule.mode === 'rotate') {
+    const next = anchoredSchedule(schedule, shown, now, listThemeSets());
+    if (next !== schedule) storeThemeSchedule(next);
+  }
+  return result;
 }
 
 /* ── Resolution (pure: schedule + sets + time) ── */
@@ -245,7 +288,7 @@ export function resolveThemeSetAt(date = new Date(), schedule = getThemeSchedule
     return sets.find((s) => monthDayInRange(md, s.from, s.to)) || null;
   }
   const cycle = rotationCycle(schedule, sets);
-  const slot = rotationSlot(schedule, date);
+  const slot = rotationSlot(schedule, date) + (schedule.offset || 0);
   return cycle[((slot % cycle.length) + cycle.length) % cycle.length];
 }
 
@@ -267,7 +310,8 @@ export function upcomingThemeSetChanges(date = new Date(), count = 3, schedule =
       /* back from local wall-clock ms to a real instant (DST: offset of that instant) */
       const guess = new Date(localStart);
       const at = new Date(localStart + guess.getTimezoneOffset() * 60_000);
-      out.push({ at, set: cycle[slot % cycle.length] });
+      const idx = slot + (schedule.offset || 0);
+      out.push({ at, set: cycle[((idx % cycle.length) + cycle.length) % cycle.length] });
     }
     return out;
   }
@@ -379,6 +423,10 @@ function removeSetFiles(id) {
  * Throws `admin.ui.sets.errorLimit` at MAX_THEME_SETS.
  */
 export function createThemeSetFromCurrent({ name = '', includeLogo = false, from = '', to = '', settings = null } = {}) {
+  return keepShownSet(() => createThemeSetNow({ name, includeLogo, from, to, settings }));
+}
+
+function createThemeSetNow({ name, includeLogo, from, to, settings }) {
   const list = listThemeSets();
   if (list.length >= MAX_THEME_SETS) throw new Error('admin.ui.sets.errorLimit');
   const now = new Date().toISOString();
@@ -428,8 +476,42 @@ export function replaceThemeSetFromCurrent(id, { settings = null } = {}) {
   return updated[idx];
 }
 
+/** Pictures a set can have its own of, uploaded straight into the set (never into the main look). */
+export const THEME_SET_UPLOAD_ASSETS = Object.freeze({ background: 'background.webp', header: 'header.webp' });
+
+/** Full path of a set's own copy of `fileName`. */
+export function themeSetFilePath(id, fileName) {
+  return path.join(UI_DIR, themeSetFileName(id, fileName));
+}
+
+/**
+ * After a picture was written to / removed from a set's own files: records it in the set (`files`)
+ * and merges `settings` (e.g. the palette of the new background). The main look is not touched.
+ */
+export function setThemeSetFile(id, fileName, present, settings = null) {
+  const list = listThemeSets();
+  const idx = list.findIndex((s) => s.id === id);
+  if (idx < 0) throw new Error('admin.ui.sets.errorNotFound');
+  if (!present) fs.rmSync(themeSetFilePath(id, fileName), { force: true });
+  const files = new Set(list[idx].files);
+  if (present) files.add(fileName); else files.delete(fileName);
+  const updated = [...list];
+  updated[idx] = sanitizeSet({
+    ...list[idx],
+    files: [...files],
+    settings: settings ? { ...list[idx].settings, ...settings } : list[idx].settings,
+    updatedAt: new Date().toISOString(),
+  });
+  saveThemeSets(updated);
+  return updated[idx];
+}
+
 /** Moves a set one step up / down in the list (rotation order, calendar priority). */
 export function moveThemeSet(id, direction) {
+  keepShownSet(() => moveThemeSetNow(id, direction));
+}
+
+function moveThemeSetNow(id, direction) {
   const list = [...listThemeSets()];
   const idx = list.findIndex((s) => s.id === id);
   const to = direction === 'up' ? idx - 1 : idx + 1;
@@ -439,6 +521,10 @@ export function moveThemeSet(id, direction) {
 }
 
 export function deleteThemeSet(id) {
+  keepShownSet(() => deleteThemeSetNow(id));
+}
+
+function deleteThemeSetNow(id) {
   const list = listThemeSets();
   if (!list.some((s) => s.id === id)) throw new Error('admin.ui.sets.errorNotFound');
   removeSetFiles(id);

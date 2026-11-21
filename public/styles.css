@@ -11937,6 +11937,21 @@ html:not([data-theme="light"]) .ui-contrast-badge.is-low {
   width: auto;
 }
 
+.ui-theme-set-pics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 8px 0;
+}
+
+.ui-theme-set-pic {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .ui-theme-set-decor {
   display: flex;
   flex-wrap: wrap;

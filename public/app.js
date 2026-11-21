@@ -3816,6 +3816,66 @@ function attachConfirmedButtonSubmits() {
   }
 }
 
+/**
+ * Admin → Appearance → Наборы: a set's own background / header, uploaded straight into the set
+ * (POST /api/admin/ui/sets/:id/upload|remove) — the main look and the unsaved preview stay as they are,
+ * so the row is updated in place instead of reloading the page.
+ */
+function attachThemeSetPictures() {
+  for (const row of document.querySelectorAll('[data-set-pics]')) {
+    const id = row.getAttribute('data-set-pics');
+    const item = row.closest('.ui-theme-set');
+    const setState = (asset, has, url) => {
+      const state = row.querySelector(`[data-set-pic-state="${asset}"]`);
+      if (state) state.textContent = uiT(has ? 'admin.ui.sets.picOwn' : 'admin.ui.sets.picNone');
+      const remove = row.querySelector(`[data-set-remove="${asset}"]`);
+      if (remove) remove.hidden = !has;
+      const thumb = item?.querySelector('.ui-theme-set-thumb');
+      if (has && url && thumb && (asset === 'header' || thumb.getAttribute('data-set-thumb') !== 'header')) {
+        const img = thumb.tagName === 'IMG' ? thumb : document.createElement('img');
+        img.className = 'ui-theme-set-thumb';
+        img.setAttribute('data-set-thumb', asset);
+        img.src = url;
+        if (img !== thumb) thumb.replaceWith(img);
+      }
+    };
+    const call = async (url, body, headers) => {
+      const csrf = getCsrfTokenFromPage();
+      const resp = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { ...headers, ...(csrf ? { 'X-CSRF-Token': csrf } : {}) }, body });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) throw new Error(data.error || uiT('admin.ui.uploadFailed'));
+      return data;
+    };
+    row.querySelectorAll('[data-set-upload]').forEach((input) => {
+      input.addEventListener('change', async () => {
+        const asset = input.getAttribute('data-set-upload');
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return;
+        try {
+          const data = await call(`/api/admin/ui/sets/${encodeURIComponent(id)}/upload?asset=${encodeURIComponent(asset)}`, file, { 'Content-Type': file.type || 'application/octet-stream' });
+          setState(asset, true, data.url);
+          showToast(uiT('admin.ui.sets.picSaved'), 'success');
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      });
+    });
+    row.querySelectorAll('[data-set-remove]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const asset = btn.getAttribute('data-set-remove');
+        try {
+          await call(`/api/admin/ui/sets/${encodeURIComponent(id)}/remove?asset=${encodeURIComponent(asset)}`, '{}', { 'Content-Type': 'application/json' });
+          setState(asset, false);
+          showToast(uiT('admin.ui.sets.picRemoved'), 'success');
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      });
+    });
+  }
+}
+
 /** Add inline btn-spinner to all regular form submit buttons (forms without data-confirm). */
 function attachFormSubmitSpinners() {
   const forms = [...document.querySelectorAll('form[action][method="post"], form[action][method="POST"]')];
@@ -8437,6 +8497,7 @@ attachLoadMore();
 attachBatchDownloadSelection();
 attachConfirmedFormSubmits();
 attachConfirmedButtonSubmits();
+attachThemeSetPictures();
 attachFormSubmitSpinners();
 attachShelfActions();
 attachAddToShelfButtons();

@@ -621,6 +621,12 @@ function clearManualGlassTypographyColors() {
   setSetting('ui_glass_link_light', '');
 }
 
+/** Surfaces sampled from a background file (a theme set's own picture): { dark, light } or null. */
+export async function bgPaletteFromFile(filePath) {
+  const palette = await extractThemeFromImageFile(filePath);
+  return palette ? { dark: palette.darkSurface, light: palette.lightSurface } : null;
+}
+
 export async function refreshBgThemePaletteFromFile({ resetTypography = false } = {}) {
   ensureUiDir();
   const filePath = path.join(UI_DIR, 'background.webp');
@@ -1627,8 +1633,14 @@ export function saveUiTypographySettings({
   invalidateUiCustomizationCache();
 }
 
+/**
+ * `options.target(fileName)` → full path to write instead of `data/ui/<fileName>` (a theme set's own
+ * picture); then the main look's derived values (background palette) are left alone.
+ */
 export async function saveUiAsset(asset, buffer, options = {}) {
   if (!VALID_ASSETS.has(asset)) throw new Error('admin.ui.errorUnknownAsset');
+  const target = typeof options.target === 'function' ? options.target : (fileName) => path.join(UI_DIR, fileName);
+  const forMainLook = typeof options.target !== 'function';
   if (!buffer || !buffer.length) throw new Error('admin.ui.errorEmptyFile');
   if (asset === 'font') {
     await saveUiFontFile(buffer, options.originalName || '');
@@ -1649,20 +1661,20 @@ export async function saveUiAsset(asset, buffer, options = {}) {
       .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
       .png({ compressionLevel: 9 })
       .toBuffer();
-    fs.writeFileSync(path.join(UI_DIR, 'logo.png'), out);
+    fs.writeFileSync(target('logo.png'), out);
   } else if (asset === 'favicon') {
     const png32 = await image.clone().resize(32, 32, { fit: 'cover' }).png().toBuffer();
     const png192 = await image.clone().resize(192, 192, { fit: 'cover' }).png().toBuffer();
-    fs.writeFileSync(path.join(UI_DIR, 'favicon-32.png'), png32);
-    fs.writeFileSync(path.join(UI_DIR, 'favicon-192.png'), png192);
+    fs.writeFileSync(target('favicon-32.png'), png32);
+    fs.writeFileSync(target('favicon-192.png'), png192);
   } else if (asset === 'background') {
     const out = await image
       .clone()
       .resize(2560, 2560, { fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 82 })
       .toBuffer();
-    fs.writeFileSync(path.join(UI_DIR, 'background.webp'), out);
-    if (hasUiDynamicThemeFromBg()) {
+    fs.writeFileSync(target('background.webp'), out);
+    if (forMainLook && hasUiDynamicThemeFromBg()) {
       await refreshBgThemePaletteFromFile();
     }
   } else if (asset === 'header') {
@@ -1676,7 +1688,7 @@ export async function saveUiAsset(asset, buffer, options = {}) {
       .resize(2560, 1400, { fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 84 })
       .toBuffer();
-    fs.writeFileSync(path.join(UI_DIR, 'header.webp'), out);
+    fs.writeFileSync(target('header.webp'), out);
   } else if (asset === 'cover') {
     const out = await image
       .clone()
