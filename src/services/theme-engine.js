@@ -100,6 +100,16 @@ export function contrastRatio(aHex, bHex) {
 }
 
 /**
+ * True when light text reads better than dark text on `hex`: white beats black in WCAG contrast.
+ * The crossover is at relative luminance ≈ 0.18 (a mid grey such as #808080 takes dark text);
+ * the older `luminance < 0.45` split gave mid-tone surfaces light text at 2–3:1.
+ */
+export function isDarkSurface(hex) {
+  const bg = normalizeHexColor(hex, '#000000');
+  return contrastRatio('#ffffff', bg) >= contrastRatio('#000000', bg);
+}
+
+/**
  * Nudge `fgHex` lighter (dark surface) or darker (light surface) until it reaches `min`
  * contrast against `bgHex`, keeping hue and saturation. Returns the input when it already passes.
  */
@@ -107,7 +117,7 @@ export function ensureContrast(fgHex, bgHex, min = MIN_TEXT_CONTRAST) {
   const fg = normalizeHexColor(fgHex, '#000000');
   const bg = normalizeHexColor(bgHex, '#000000');
   if (contrastRatio(fg, bg) >= min) return fg;
-  const towardLight = relativeLuminance(...hexToRgb(bg)) < 0.45;
+  const towardLight = isDarkSurface(bg);
   const { h, s, l } = hexToHsl(fg);
   for (let step = 1; step <= 100; step += 1) {
     const next = hslToHex(h, s, towardLight ? l + step : l - step);
@@ -131,8 +141,13 @@ export function canonicalSurface(hex, mode, fallback) {
   return value;
 }
 
+/**
+ * Auto text: warm off-white / off-black, aimed at 7:1 (AAA). On mid-tone surfaces it ends at pure
+ * white / black (which always reach ≥ 4.58:1), so it stays stronger than `muted` (AA).
+ */
+const AUTO_TEXT_CONTRAST = 7;
 function pickAutoText(surfaceHex) {
-  return relativeLuminance(...hexToRgb(surfaceHex)) < 0.45 ? '#ece6dc' : '#2a2218';
+  return ensureContrast(isDarkSurface(surfaceHex) ? '#ece6dc' : '#2a2218', surfaceHex, AUTO_TEXT_CONTRAST);
 }
 
 /** Shift a hex color's lightness for a hover variant (lighter on dark, darker on light). */
@@ -244,7 +259,7 @@ const HEX_RE = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
 
 function computeThemePalette(surfaceHex, textHex = '', accentHex = '') {
   const surface = normalizeHexColor(surfaceHex, DEFAULT_GLASS_DARK);
-  const isDark = relativeLuminance(...hexToRgb(surface)) < 0.45;
+  const isDark = isDarkSurface(surface);
   const textOverride = String(textHex || '').trim();
   const hasTextOverride = HEX_RE.test(textOverride);
   const accentOverride = String(accentHex || '').trim();
@@ -384,7 +399,7 @@ export function buildGlassPanelBackground(surfaceHex, surfaceOpacity, fallback =
 export function adjustLightTextForGlassOpacity(palette, surfaceOpacity) {
   const opacity = Math.min(100, Math.max(0, Number(surfaceOpacity)));
   if (!Number.isFinite(opacity) || opacity >= 58) return palette;
-  if (relativeLuminance(...hexToRgb(palette.surface)) < 0.45) return palette;
+  if (isDarkSurface(palette.surface)) return palette;
   const factor = (58 - opacity) / 58;
   return {
     ...palette,

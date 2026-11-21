@@ -9,6 +9,8 @@ import {
   themePairToCssVars,
   hexToRgb,
   relativeLuminance,
+  isDarkSurface,
+  paletteContrast,
   DEFAULT_GLASS_DARK,
   DEFAULT_GLASS_LIGHT,
   fontSizeToCssVars,
@@ -22,6 +24,25 @@ test('buildThemePalette derives contrasting text and harmonized link', () => {
   const light = buildThemePalette('#f7f4ef');
   assert.equal(light.text, '#2a2218');
   assert.notEqual(light.link, dark.link);
+});
+
+test('isDarkSurface splits where white and black text have equal contrast', () => {
+  assert.equal(isDarkSurface('#000000'), true);
+  assert.equal(isDarkSurface('#1a1612'), true);
+  assert.equal(isDarkSurface('#5a5a5a'), true);
+  assert.equal(isDarkSurface('#808080'), false);
+  assert.equal(isDarkSurface('#b0a090'), false);
+  assert.equal(isDarkSurface('#fff9f0'), false);
+});
+
+test('buildThemePalette keeps auto text, muted and link at AA on mid-tone surfaces', () => {
+  for (const surface of ['#808080', '#6a7f8e', '#9a8c7a', '#b0a090', '#767676', '#777777', '#5e6a72', '#8a5a5a']) {
+    const c = paletteContrast(buildThemePalette(surface));
+    for (const role of ['text', 'muted', 'link', 'accent']) {
+      assert.ok(c[role] >= 4.5, `${surface} ${role} = ${c[role]}`);
+    }
+    assert.ok(c.text >= c.muted, `${surface}: muted (${c.muted}) must not beat text (${c.text})`);
+  }
 });
 
 test('buildThemePalette uses surface color for bg overlay tint', () => {

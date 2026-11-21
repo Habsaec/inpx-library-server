@@ -16,6 +16,7 @@ import {
   normalizeHexColor,
   hexToRgb,
   relativeLuminance,
+  isDarkSurface,
   radiusPresetToCssVars,
   customRadiusToCssVars,
   shadowPresetToCssVars,
@@ -60,6 +61,7 @@ export {
   normalizeHexColor,
   hexToRgb,
   relativeLuminance,
+  isDarkSurface,
   radiusPresetToCssVars,
   customRadiusToCssVars,
   shadowPresetToCssVars,
@@ -728,7 +730,7 @@ export function resetUiThemeColors() {
 }
 
 function deriveLinkHover(linkHex, surfaceHex) {
-  const isDark = relativeLuminance(...hexToRgb(surfaceHex)) < 0.45;
+  const isDark = isDarkSurface(surfaceHex);
   const [r, g, b] = hexToRgb(linkHex);
   const shift = isDark ? 18 : -14;
   const clamp = (v) => Math.min(255, Math.max(0, v + shift));
