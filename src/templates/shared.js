@@ -693,9 +693,36 @@ export function renderSkeletonGrid(_count = 8) {
   return `<div class="grid skeleton-grid" data-skeleton-grid></div>`;
 }
 
+/* Badge icons of the empty-state illustration (24×24 paths, drawn inside the badge circle). */
+const EMPTY_STATE_BADGES = {
+  books: '<path d="M4 6.5c2.5-1 5-1 8 1 3-2 5.5-2 8-1V18c-2.5-1-5-1-8 1-3-2-5.5-2-8-1z"/><path d="M12 7.5V19"/>',
+  search: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4.5 4.5"/>',
+  heart: '<path d="M12 19.5s-7-4.3-7-9a3.9 3.9 0 0 1 7-2.4 3.9 3.9 0 0 1 7 2.4c0 4.7-7 9-7 9z"/>',
+  shelf: '<path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.8L6 20V5a1 1 0 0 1 1-1z"/>',
+};
+
+/**
+ * A small library scene — a shelf with three books, one leaning — and a round badge with the meaning of
+ * the screen (`kind`: books | search | heart | shelf). Colors come from the theme (`currentColor` = muted,
+ * books tinted by the accent); the Android app draws the same scene in `ui/EmptyState.tsx`.
+ */
+export function renderEmptyStateIllustration(kind = 'books') {
+  const badge = EMPTY_STATE_BADGES[kind] || EMPTY_STATE_BADGES.books;
+  return `<svg class="empty-state-art" viewBox="0 0 120 96" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <ellipse class="ei-shadow" cx="58" cy="84" rx="44" ry="5" stroke="none"/>
+    <path d="M14 80h88"/>
+    <rect class="ei-book ei-b1" x="24" y="36" width="14" height="44" rx="2"/>
+    <rect class="ei-book ei-b2" x="40" y="27" width="16" height="53" rx="2"/>
+    <rect class="ei-book ei-b3" x="60" y="41" width="12" height="39" rx="2" transform="rotate(14 66 80)"/>
+    <path d="M28 46h6M28 70h6M44 37h8M44 71h8"/>
+    <circle class="ei-badge" cx="90" cy="36" r="17"/>
+    <g class="ei-badge-icon" transform="translate(78 24)">${badge}</g>
+  </svg>`;
+}
+
 export function renderEmptyState({
   title, text, actionHref = '', actionLabel = '',
-  secondaryHref = '', secondaryLabel = ''
+  secondaryHref = '', secondaryLabel = '', kind = 'books'
 } = {}) {
   const textLine = String(text || '').trim()
     ? `<span class="muted">${escapeHtml(text)}</span>`
@@ -711,7 +738,7 @@ export function renderEmptyState({
     : '';
   return `
     <div class="empty-state">
-      <span class="empty-state-icon"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="10" width="36" height="28" rx="4"/><path d="M6 18h36"/><circle cx="14" cy="30" r="3"/><path d="M22 28h12M22 34h8"/></svg></span>
+      <span class="empty-state-icon">${renderEmptyStateIllustration(kind)}</span>
       <strong>${escapeHtml(title)}</strong>
       ${textLine}
       ${actions}

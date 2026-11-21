@@ -465,6 +465,7 @@ export function renderSearchOverview({
         ? `<ul class="search-overview-list">${list}</ul>
            <p class="list-context-hint">${escapeHtml(t('search.overviewHint'))}</p>`
         : renderEmptyState({
+            kind: 'search',
             title: t('search.overviewEmptyTitle'),
             text: t('search.overviewEmptyText'),
             actionHref: '/catalog',
@@ -578,6 +579,7 @@ export function renderCatalog({
     return `<div class="list-context-hint list-context-hint-spacious">${line}</div>`;
   })();
   const catalogEmpty = renderEmptyState({
+    kind: 'search',
     title: hasFilterDims ? t('catalog.emptyFiltersTitle') : t('catalog.emptyTitle'),
     text: hasFilterDims ? t('catalog.emptyFiltersText') : t('catalog.emptyText'),
     actionHref: '/catalog',
@@ -834,6 +836,7 @@ export function renderLibraryView({
     <div class="list-context-hint list-context-hint-spacious">${escapeHtml(countHintLabel)}: <strong>${totalNum}</strong> ${totalBookWord}${page > 1 ? ` ${escapeHtml(t('library.pageSep'))} <strong>${formatLocaleInt(page)}</strong>` : ''}</div>
     <section class="library-shelf library-shelf-primary">
       ${renderEmptyState({
+        kind: view === 'bookmarks' || view === 'following' ? 'heart' : 'books',
         title: emptyStates[view]?.title || t('library.empty.genericTitle'),
         text: emptyStates[view]?.text || t('library.empty.genericText'),
         actionHref: emptyStates[view]?.actionHref || '/library/recent',
@@ -1092,7 +1095,7 @@ export function renderFavorites({
         ${books.length ? `<div class="actions">${renderSortControl({ action: '/favorites', sort, order, options: bookSortOptions, extraHidden: { view: 'books' } })}</div>` : ''}
       </div>
       ${pageHint}
-      ${books.length ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderFavoriteBookGrid(books, { batchSelect: true, user, readBookIds })}</div>${booksPagination}` : renderEmptyState({ title: t('favorites.emptyBooksTitle'), text: t('favorites.emptyBooksText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog'), secondaryHref: '/library/recent', secondaryLabel: t('library.openRecent') })}
+      ${books.length ? `<div class="batch-select-scope">${renderBatchDownloadToolbar({ adhoc: true }, { user })}${renderFavoriteBookGrid(books, { batchSelect: true, user, readBookIds })}</div>${booksPagination}` : renderEmptyState({ kind: 'heart', title: t('favorites.emptyBooksTitle'), text: t('favorites.emptyBooksText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog'), secondaryHref: '/library/recent', secondaryLabel: t('library.openRecent') })}
     </section>`;
   const readSection = `
     <section class="library-shelf library-shelf-secondary favorites-section favorites-section-books">
@@ -1129,7 +1132,7 @@ export function renderFavorites({
             </a>
             ${renderListRemoveBtn({ extraAttrs: `data-favorite-author="${escapeHtml(item.name)}"` })}
           </div>`;
-        }).join('') || renderEmptyState({ title: t('favorites.emptyAuthorsTitle'), text: t('favorites.emptyAuthorsText'), actionHref: '/authors', actionLabel: t('favorites.openAuthors') })}
+        }).join('') || renderEmptyState({ kind: 'heart', title: t('favorites.emptyAuthorsTitle'), text: t('favorites.emptyAuthorsText'), actionHref: '/authors', actionLabel: t('favorites.openAuthors') })}
       </div>
     </section>`;
   const seriesSection = `
@@ -1157,7 +1160,7 @@ export function renderFavorites({
             </a>
             ${renderListRemoveBtn({ extraAttrs: `data-favorite-series="${escapeHtml(item.name)}"` })}
           </div>`;
-        }).join('') || renderEmptyState({ title: t('favorites.emptySeriesTitle'), text: t('favorites.emptySeriesText'), actionHref: '/series', actionLabel: t('favorites.openSeries') })}
+        }).join('') || renderEmptyState({ kind: 'heart', title: t('favorites.emptySeriesTitle'), text: t('favorites.emptySeriesText'), actionHref: '/series', actionLabel: t('favorites.openSeries') })}
       </div>
     </section>`;
   const sectionContent = currentView === 'authors'
@@ -1414,9 +1417,9 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
   const bodyBlock = isEntityView
     ? (entityItems && entityItems.length
         ? renderEntityGrid(entityItems, entityBasePath, t('browse.empty'))
-        : renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: facetPath, actionLabel: t('facet.viewBooks') }))
+        : renderEmptyState({ kind: 'search', title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: facetPath, actionLabel: t('facet.viewBooks') }))
     : !items.length
-      ? renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: '/', actionLabel: t('facet.toCatalog') })
+      ? renderEmptyState({ kind: 'search', title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: '/', actionLabel: t('facet.toCatalog') })
       : (listView
         ? renderBookFlibustaList(items, { user, batchSelect: showBatch })
         : renderBookGrid(items, { isAuthenticated: Boolean(user), batchSelect: showBatch, user, readBookIds, seriesContext: facet === 'series' ? facetValue : null }));
@@ -1678,6 +1681,7 @@ export function renderAuthorFacetPage({
 
   const booksInner = !anyBooks
     ? renderEmptyState({
+        kind: 'search',
         title: t('facet.emptyTitle'),
         text: t('facet.emptyText'),
         actionHref: '/',
@@ -1767,7 +1771,7 @@ export function renderAuthorOutsideSeriesPage({
     ? (listView
       ? renderBookFlibustaList(books, { user, batchSelect: outsideBatch })
       : renderBookGrid(books, { isAuthenticated: Boolean(user), batchSelect: outsideBatch, user, readBookIds }))
-    : renderEmptyState({ title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: `/facet/authors/${encodeURIComponent(facetValue)}`, actionLabel: t('facet.toCatalog') });
+    : renderEmptyState({ kind: 'search', title: t('facet.emptyTitle'), text: t('facet.emptyText'), actionHref: `/facet/authors/${encodeURIComponent(facetValue)}`, actionLabel: t('facet.toCatalog') });
   const outsideInner = `
     ${controls}
     ${outsideBatch ? renderBatchDownloadToolbar({ adhoc: true }, { user }) : ''}
@@ -1884,7 +1888,7 @@ export function renderShelves({ shelves = [], smartShelves = [], shelfOrder = []
         <div class="table-list entity-list"${sortable ? ' data-sortable data-sort-url="/shelves/order"' : ''}>
           ${all.map((shelf) => renderShelfListRow(shelf, { sortable, csrfToken })).join('')}
         </div>
-      ` : renderEmptyState({ title: t('shelves.emptyTitle'), text: t('shelves.emptyText') })}
+      ` : renderEmptyState({ kind: 'shelf', title: t('shelves.emptyTitle'), text: t('shelves.emptyText') })}
     </section>`;
   return pageShell({ title: t('shelves.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('shelves.title') }], currentPath: '/shelves', csrfToken });
 }
@@ -1923,7 +1927,7 @@ export function renderCollections({ collections = [], user, stats, indexStatus, 
       ${sortable ? `<p class="muted shelf-sort-hint">${escapeHtml(t('collections.sortHint'))}</p>` : ''}
       ${collections.length
         ? `<div class="table-list entity-list"${sortable ? ' data-sortable data-sort-url="/collections/order"' : ''}>${rows}</div>`
-        : renderEmptyState({ title: t('collections.emptyTitle'), text: t('collections.emptyText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog') })}
+        : renderEmptyState({ kind: 'shelf', title: t('collections.emptyTitle'), text: t('collections.emptyText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog') })}
     </section>`;
   return pageShell({ title: t('collections.title'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('collections.title') }], currentPath: '/collections', csrfToken });
 }
@@ -2019,7 +2023,7 @@ export function renderShelfDetail({ shelf, books = [], user, stats, indexStatus,
           </article>
         `).join('')}
       </div>
-    ` : renderEmptyState({ title: t('shelfDetail.emptyTitle'), text: t('shelfDetail.emptyText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog'), secondaryHref: '/shelves', secondaryLabel: t('shelves.listTitle') })}
+    ` : renderEmptyState({ kind: 'shelf', title: t('shelfDetail.emptyTitle'), text: t('shelfDetail.emptyText'), actionHref: '/catalog', actionLabel: t('favorites.toCatalog'), secondaryHref: '/shelves', secondaryLabel: t('shelves.listTitle') })}
     ${shelfBatch ? '</div>' : ''}`;
   return pageShell({ title: shelf.name, content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('shelves.title'), href: '/shelves' }, { label: shelf.name }], currentPath: '/shelves', csrfToken, readBookIds });
 }

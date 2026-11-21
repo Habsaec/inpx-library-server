@@ -8178,11 +8178,24 @@ html[data-theme="light"] .page-link-active {
 .empty-state-icon {
   display: block;
   margin: 0 auto 14px;
-  width: 48px;
-  height: 48px;
-  color: var(--muted);
-  opacity: 0.45;
+  width: 132px;
+  height: 106px;
+  color: color-mix(in srgb, var(--muted) 75%, transparent);
 }
+
+/* Empty-state scene (renderEmptyStateIllustration): accent-tinted books, a badge on the surface. */
+.empty-state-art .ei-shadow { fill: color-mix(in srgb, var(--muted) 14%, transparent); }
+.empty-state-art .ei-b1 { fill: color-mix(in srgb, var(--accent) 16%, transparent); }
+.empty-state-art .ei-b2 { fill: color-mix(in srgb, var(--accent) 30%, transparent); }
+.empty-state-art .ei-b3 { fill: color-mix(in srgb, var(--accent) 10%, transparent); }
+.empty-state-art .ei-badge {
+  fill: var(--surface);
+  stroke: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.empty-state-art .ei-badge-icon { stroke: var(--accent-text, var(--accent)); }
+
+html[data-eink="1"] .empty-state-art [class^="ei-b"],
+html[data-eink="1"] .empty-state-art .ei-shadow { fill: none; }
 
 .empty-state-icon svg {
   width: 100%;
