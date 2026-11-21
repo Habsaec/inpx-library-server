@@ -108,7 +108,6 @@ import {
   renderMyLibrary,
   renderReaderBookmarksPage,
   renderReaderNotesPage,
-  renderYearReview,
   renderAdminSmtp,
   renderAdminTelegram,
   renderAdminUpdate,
@@ -1129,7 +1128,7 @@ registerLibraryRoutes(app, {
     renderHome, renderCatalog, renderSearchOverview, renderLibraryView, renderBrowsePage,
     renderFacetBooks, renderAuthorFacetPage, renderAuthorOutsideSeriesPage,
     renderBook, renderFavorites, renderShelves, renderShelfDetail, renderReader,
-    renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage, renderYearReview
+    renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage
   }
 });
 

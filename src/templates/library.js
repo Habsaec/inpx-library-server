@@ -2541,85 +2541,6 @@ function yearCoverTile(book, extraClass = '') {
   return `<a class="year-cover${extraClass}" href="${bookPagePath(book.id)}" title="${escapeHtml(book.title)}"${tone || lqip ? ` style="${tone}${lqip}"` : ''}><img src="${escapeHtml(apiBookPath(book.id, 'cover-thumb'))}" alt="${escapeHtml(book.title)}" loading="lazy" draggable="false" onerror="this.remove()"></a>`;
 }
 
-/** «Итоги года»: /library/year?year= (data: getUserYearReview, same as GET /api/reading-stats/year). */
-export function renderYearReview({ review, user, stats, indexStatus, csrfToken = '' }) {
-  const year = Number(review.year) || new Date().getFullYear();
-  const total = Math.max(0, Number(review.total) || 0);
-  const count = (n) => countLabel('book', n);
-  const monthName = (m) => new Date(2000, m - 1, 1).toLocaleString(getLocale(), { month: 'long' });
-  const monthShort = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleString(getLocale(), { month: 'short' }));
-  const years = [...new Set([year, ...(review.years || [])])].sort((a, b) => b - a);
-  const yearNav = years.length > 1
-    ? `<nav class="year-switch" aria-label="${escapeHtml(t('yearReview.years'))}">${years.map((y) => (y === year
-      ? `<span class="year-switch-item is-active" aria-current="page">${y}</span>`
-      : `<a class="year-switch-item" href="/library/year?year=${y}">${y}</a>`)).join('')}</nav>`
-    : '';
-
-  if (!total) {
-    const content = `
-      <section class="page-intro page-intro-slim"><div class="page-intro-copy"><h1>${escapeHtml(tp('yearReview.title', { year }))}</h1></div></section>
-      ${yearNav}
-      ${renderEmptyState({ kind: 'books', title: tp('yearReview.emptyTitle', { year }), text: t('yearReview.emptyText'), actionHref: '/library/continue', actionLabel: t('yearReview.emptyAction') })}`;
-    return pageShell({ title: tp('yearReview.title', { year }), content, user, stats, indexStatus, csrfToken, breadcrumbs: [{ label: t('nav.myLibrary'), href: '/library/my' }, { label: tp('yearReview.title', { year }) }], currentPath: '/library/my' });
-  }
-
-  const goal = Math.max(0, Number(review.goal) || 0);
-  const goalLine = goal
-    ? (total >= goal
-      ? tp('yearReview.goalDone', { goal: count(goal) })
-      : tp('yearReview.goalProgress', { pct: Math.round((total / goal) * 100), goal: count(goal) }))
-    : '';
-  const byMonth = Array.isArray(review.byMonth) ? review.byMonth : [];
-  const maxMonth = Math.max(1, ...byMonth.map((n) => Number(n) || 0));
-  const monthBars = `
-      <div class="profile-months year-months" aria-label="${escapeHtml(tp('profile.goal.byMonth', { year }))}">
-        ${byMonth.map((n, i) => `<div class="profile-month${review.busiestMonth === i + 1 ? ' is-peak' : ''}" title="${escapeHtml(`${monthShort[i]}: ${count(n)}`)}">
-          <span class="profile-month-bar"><span style="height:${n ? Math.max(6, Math.round(((Number(n) || 0) / maxMonth) * 100)) : 0}%"></span></span>
-          <span class="profile-month-label">${escapeHtml(monthShort[i])}</span>
-        </div>`).join('')}
-      </div>`;
-
-  const bookLine = (book) => (book
-    ? `<a href="${bookPagePath(book.id)}">${escapeHtml(book.title)}</a>${book.authors ? `<span class="muted"> · ${escapeHtml(formatAuthorLabel(book.authors))}</span>` : ''}`
-    : '');
-  const facts = [
-    review.busiestMonth ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.busiestMonth'))}</span><strong>${escapeHtml(monthName(review.busiestMonth))}</strong><span class="muted">${escapeHtml(count(byMonth[review.busiestMonth - 1] || 0))}</span></div>` : '',
-    review.first ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.firstBook'))}</span>${bookLine(review.first)}</div>` : '',
-    review.last && review.last.id !== review.first?.id ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.lastBook'))}</span>${bookLine(review.last)}</div>` : '',
-    review.favorite ? `<div class="year-fact year-fact-favorite">${yearCoverTile(review.favorite, ' year-cover-favorite')}<div><span class="year-fact-label">${escapeHtml(t('yearReview.favorite'))}</span>${bookLine(review.favorite)}</div></div>` : '',
-    review.averageRating ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.averageRating'))}</span><strong>${escapeHtml(String(review.averageRating))} ★</strong><span class="muted">${escapeHtml(tp('yearReview.ratedCount', { n: review.ratedCount }))}</span></div>` : '',
-  ].filter(Boolean).join('');
-
-  const topList = (title, items, hrefOf, labelOf) => (items?.length
-    ? `<section class="year-top"><h3>${escapeHtml(title)}</h3><ol>${items.map((it) => `<li><a href="${hrefOf(it)}">${escapeHtml(labelOf(it))}</a><span class="muted">${escapeHtml(count(it.count))}</span></li>`).join('')}</ol></section>`
-    : '');
-  const tops = [
-    topList(t('yearReview.topAuthors'), review.topAuthors, (a) => `/facet/authors/${encodeURIComponent(a.name)}`, (a) => formatAuthorLabel(a.displayName || a.name)),
-    topList(t('yearReview.topGenres'), review.topGenres, (g) => `/facet/genres/${encodeURIComponent(g.name)}`, (g) => localizeGenreLabel(g.name, g.displayName)),
-    topList(t('yearReview.topSeries'), review.topSeries, (s) => `/facet/series/${encodeURIComponent(s.name)}`, (s) => s.displayName || s.name),
-  ].filter(Boolean).join('');
-
-  const covers = (review.covers || []).map((b) => yearCoverTile(b)).join('');
-  const content = `
-    <section class="year-hero">
-      <p class="year-hero-kicker">${escapeHtml(tp('yearReview.title', { year }))}</p>
-      <h1 class="year-hero-number">${formatLocaleInt(total)}</h1>
-      <p class="year-hero-caption">${escapeHtml(tp('yearReview.booksRead', { books: plural('book', total) }))}</p>
-      ${goalLine ? `<p class="year-hero-goal">${escapeHtml(goalLine)}</p>` : ''}
-      ${yearNav}
-    </section>
-    <section class="year-mosaic" aria-label="${escapeHtml(t('yearReview.mosaic'))}">${covers}</section>
-    ${total > (review.covers || []).length ? `<p class="muted year-mosaic-more"><a href="/library/read">${escapeHtml(tp('yearReview.allRead', { n: formatLocaleInt(total) }))}</a></p>` : ''}
-    <section class="year-panel">${monthBars}</section>
-    ${facts ? `<section class="year-facts">${facts}</section>` : ''}
-    ${tops ? `<section class="year-tops">${tops}</section>` : ''}`;
-  return pageShell({
-    title: tp('yearReview.title', { year }), content, user, stats, indexStatus, csrfToken,
-    breadcrumbs: [{ label: t('nav.myLibrary'), href: '/library/my' }, { label: tp('yearReview.title', { year }) }],
-    currentPath: '/library/my',
-  });
-}
-
 export function renderReaderNotesPage({
   items = [], total = 0, page = 1, pageSize = 50, filter = {}, facets = null, user, stats, indexStatus, csrfToken = ''
 }) {
@@ -2754,11 +2675,97 @@ export function renderMyLibrary({ user, stats, indexStatus, userStats, csrfToken
   return pageShell({ title: t('nav.myLibrary'), content, user, stats, indexStatus, breadcrumbs: [{ label: t('nav.home'), href: '/' }, { label: t('nav.myLibrary') }], currentPath: '/library/my', csrfToken });
 }
 
-export function renderProfile({ user, stats, indexStatus, userStats, readingStats = null, csrfToken = '' }) {
-  const rs = readingStats || {};
-  const readByYear = Array.isArray(rs.readByYear) ? rs.readByYear : [];
-  const topAuthors = Array.isArray(rs.topAuthors) ? rs.topAuthors : [];
-  const topGenres = Array.isArray(rs.topGenres) ? rs.topGenres : [];
+/**
+ * Body of «Итоги года» — the profile statistics tab (`renderProfile`): the big number, year chips
+ * («Всё время» + every year with reads), a cover mosaic, a bar per month (a bar per year for 'all'),
+ * facts and top lists. Data: getUserYearReview (same as GET /api/reading-stats/year).
+ * `yearHref(y)` builds the chip links (`y` = a year or 'all').
+ */
+export function renderYearReviewBody(review, { yearHref = (y) => `/profile?year=${y}` } = {}) {
+  const allTime = review.allTime === true || review.year === 'all';
+  const year = allTime ? 'all' : (Number(review.year) || new Date().getFullYear());
+  const total = Math.max(0, Number(review.total) || 0);
+  const count = (n) => countLabel('book', n);
+  const monthName = (m) => new Date(2000, m - 1, 1).toLocaleString(getLocale(), { month: 'long' });
+  const monthShort = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleString(getLocale(), { month: 'short' }));
+  const title = allTime ? t('yearReview.titleAll') : tp('yearReview.title', { year });
+  const years = [...new Set([...(allTime ? [] : [year]), ...(review.years || [])])].sort((a, b) => b - a);
+  const chip = (y, label) => (y === year
+    ? `<span class="year-switch-item is-active" aria-current="page">${escapeHtml(label)}</span>`
+    : `<a class="year-switch-item" href="${escapeHtml(yearHref(y))}">${escapeHtml(label)}</a>`);
+  const yearNav = years.length
+    ? `<nav class="year-switch" aria-label="${escapeHtml(t('yearReview.years'))}">${chip('all', t('yearReview.allTime'))}${years.map((y) => chip(y, String(y))).join('')}</nav>`
+    : '';
+
+  if (!total) {
+    return `
+      <section class="year-hero">
+        <p class="year-hero-kicker">${escapeHtml(title)}</p>
+        ${yearNav}
+      </section>
+      ${renderEmptyState({ kind: 'books', title: allTime ? t('profile.stats.empty') : tp('yearReview.emptyTitle', { year }), text: t('yearReview.emptyText'), actionHref: '/library/continue', actionLabel: t('yearReview.emptyAction') })}`;
+  }
+
+  const goal = Math.max(0, Number(review.goal) || 0);
+  const goalLine = goal
+    ? (total >= goal
+      ? tp('yearReview.goalDone', { goal: count(goal) })
+      : tp('yearReview.goalProgress', { pct: Math.round((total / goal) * 100), goal: count(goal) }))
+    : '';
+  const bars = allTime
+    ? (review.byYear || []).map((r) => ({ label: String(r.year), n: Number(r.count) || 0, peak: r.year === review.busiestYear, href: yearHref(r.year) }))
+    : (review.byMonth || []).map((n, i) => ({ label: monthShort[i], n: Number(n) || 0, peak: review.busiestMonth === i + 1 }));
+  const maxBar = Math.max(1, ...bars.map((b) => b.n));
+  const barsHtml = bars.length ? `
+      <div class="profile-months year-months${allTime ? ' year-months--years' : ''}" style="--bars:${bars.length}" aria-label="${escapeHtml(allTime ? t('profile.stats.byYear') : tp('profile.goal.byMonth', { year }))}">
+        ${bars.map((b) => {
+    const inner = `<span class="profile-month-bar"><span style="height:${b.n ? Math.max(6, Math.round((b.n / maxBar) * 100)) : 0}%"></span></span>
+          <span class="profile-month-label">${escapeHtml(b.label)}</span>`;
+    return b.href
+      ? `<a class="profile-month${b.peak ? ' is-peak' : ''}" href="${escapeHtml(b.href)}" title="${escapeHtml(`${b.label}: ${count(b.n)}`)}">${inner}</a>`
+      : `<div class="profile-month${b.peak ? ' is-peak' : ''}" title="${escapeHtml(`${b.label}: ${count(b.n)}`)}">${inner}</div>`;
+  }).join('')}
+      </div>` : '';
+
+  const bookLine = (book) => (book
+    ? `<a href="${bookPagePath(book.id)}">${escapeHtml(book.title)}</a>${book.authors ? `<span class="muted"> · ${escapeHtml(formatAuthorLabel(book.authors))}</span>` : ''}`
+    : '');
+  const facts = [
+    !allTime && review.busiestMonth ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.busiestMonth'))}</span><strong>${escapeHtml(monthName(review.busiestMonth))}</strong><span class="muted">${escapeHtml(count((review.byMonth || [])[review.busiestMonth - 1] || 0))}</span></div>` : '',
+    allTime && review.busiestYear ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.busiestYear'))}</span><strong><a href="${escapeHtml(yearHref(review.busiestYear))}">${escapeHtml(String(review.busiestYear))}</a></strong><span class="muted">${escapeHtml(count((review.byYear || []).find((r) => r.year === review.busiestYear)?.count || 0))}</span></div>` : '',
+    review.first ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(allTime ? t('yearReview.firstEver') : t('yearReview.firstBook'))}</span>${bookLine(review.first)}</div>` : '',
+    review.last && review.last.id !== review.first?.id ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.lastBook'))}</span>${bookLine(review.last)}</div>` : '',
+    review.favorite ? `<div class="year-fact year-fact-favorite">${yearCoverTile(review.favorite, ' year-cover-favorite')}<div><span class="year-fact-label">${escapeHtml(t('yearReview.favorite'))}</span>${bookLine(review.favorite)}</div></div>` : '',
+    review.averageRating ? `<div class="year-fact"><span class="year-fact-label">${escapeHtml(t('yearReview.averageRating'))}</span><strong>${escapeHtml(String(review.averageRating))} ★</strong><span class="muted">${escapeHtml(tp('yearReview.ratedCount', { n: review.ratedCount }))}</span></div>` : '',
+  ].filter(Boolean).join('');
+
+  const topList = (heading, items, hrefOf, labelOf) => (items?.length
+    ? `<section class="year-top"><h3>${escapeHtml(heading)}</h3><ol>${items.map((it) => `<li><a href="${hrefOf(it)}">${escapeHtml(labelOf(it))}</a><span class="muted">${escapeHtml(count(it.count))}</span></li>`).join('')}</ol></section>`
+    : '');
+  const tops = [
+    topList(allTime ? t('profile.stats.topAuthors') : t('yearReview.topAuthors'), review.topAuthors, (a) => `/facet/authors/${encodeURIComponent(a.name)}`, (a) => formatAuthorLabel(a.displayName || a.name)),
+    topList(allTime ? t('profile.stats.topGenres') : t('yearReview.topGenres'), review.topGenres, (g) => `/facet/genres/${encodeURIComponent(g.name)}`, (g) => localizeGenreLabel(g.name, g.displayName)),
+    topList(allTime ? t('yearReview.topSeriesAll') : t('yearReview.topSeries'), review.topSeries, (s) => `/facet/series/${encodeURIComponent(s.name)}`, (s) => s.displayName || s.name),
+  ].filter(Boolean).join('');
+
+  const covers = (review.covers || []).map((b) => yearCoverTile(b)).join('');
+  return `
+    <section class="year-hero">
+      <p class="year-hero-kicker">${escapeHtml(title)}</p>
+      <p class="year-hero-number">${formatLocaleInt(total)}</p>
+      <p class="year-hero-caption">${escapeHtml(tp(allTime ? 'yearReview.booksAll' : 'yearReview.booksRead', { books: plural('book', total) }))}</p>
+      ${goalLine ? `<p class="year-hero-goal">${escapeHtml(goalLine)}</p>` : ''}
+      ${yearNav}
+    </section>
+    <section class="year-mosaic" aria-label="${escapeHtml(t('yearReview.mosaic'))}">${covers}</section>
+    ${total > (review.covers || []).length ? `<p class="muted year-mosaic-more"><a href="/library/read">${escapeHtml(tp('yearReview.allRead', { n: formatLocaleInt(total) }))}</a></p>` : ''}
+    ${barsHtml ? `<section class="year-panel">${barsHtml}</section>` : ''}
+    ${facts ? `<section class="year-facts">${facts}</section>` : ''}
+    ${tops ? `<section class="year-tops">${tops}</section>` : ''}`;
+}
+
+/** Profile → «Статистика»: the year review, the yearly goal (current year) and the collection tiles. */
+export function renderProfile({ user, stats, indexStatus, userStats, review = null, csrfToken = '' }) {
   const count = (v) => formatLocaleInt(Math.max(0, Math.floor(Number(v) || 0)));
   const tiles = [
     { href: '/library/continue', label: t('nav.reading'), value: userStats.readingCount },
@@ -2778,88 +2785,33 @@ export function renderProfile({ user, stats, indexStatus, userStats, readingStat
           <span class="profile-stat-label">${escapeHtml(tile.label)}</span>
         </a>`).join('');
 
-  const maxYear = Math.max(1, ...readByYear.map((y) => Number(y.count) || 0));
-  const yearRows = readByYear.map((y) => `
-          <div class="profile-bar-row">
-            <span class="profile-bar-label">${escapeHtml(String(y.year))}</span>
-            <span class="profile-bar" aria-hidden="true"><span class="profile-bar-fill" style="width:${Math.max(4, Math.round(((Number(y.count) || 0) / maxYear) * 100))}%"></span></span>
-            <span class="profile-bar-value">${count(y.count)}</span>
-          </div>`).join('');
-  const topRow = (href, label, n) => `
-          <a class="profile-top-row" href="${href}">
-            <span class="profile-top-name">${escapeHtml(label)}</span>
-            <span class="muted">${count(n)}</span>
-          </a>`;
-  const authorRows = topAuthors.map((a) => topRow(
-    `/facet/authors/${encodeURIComponent(a.name)}`,
-    formatAuthorLabel(a.displayName || a.name) || a.displayName || a.name,
-    a.count
-  )).join('');
-  const genreRows = topGenres.map((g) => topRow(
-    `/facet/genres/${encodeURIComponent(g.name)}`,
-    formatGenreLabel(g.name),
-    g.count
-  )).join('');
-  const section = (titleKey, body) => `
-        <section class="profile-section">
-          <div class="profile-section-head"><h3>${escapeHtml(t(titleKey))}</h3></div>
-          <div class="profile-list">${body}</div>
-        </section>`;
-  const statsBlock = yearRows || authorRows || genreRows
-    ? `
-      <div class="profile-activity-grid">
-        ${yearRows ? section('profile.stats.byYear', yearRows) : ''}
-        ${authorRows ? section('profile.stats.topAuthors', authorRows) : ''}
-        ${genreRows ? section('profile.stats.topGenres', genreRows) : ''}
-      </div>`
-    : `<div class="profile-empty">${escapeHtml(t('profile.stats.empty'))}</div>`;
-
-  // Yearly goal + this year by month.
-  const year = Number(rs.year) || new Date().getFullYear();
-  const goal = Math.max(0, Math.floor(Number(rs.goal) || 0));
-  const readThisYear = Math.max(0, Math.floor(Number(rs.readThisYear) || 0));
-  const byMonth = Array.isArray(rs.byMonth) ? rs.byMonth : [];
-  const maxMonth = Math.max(1, ...byMonth.map((n) => Number(n) || 0));
-  const monthNames = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleString(getLocale(), { month: 'short' }));
-  const monthBars = byMonth.length ? `
-        <div class="profile-months" aria-label="${escapeHtml(tp('profile.goal.byMonth', { year }))}">
-          ${byMonth.map((n, i) => `<div class="profile-month" title="${escapeHtml(`${monthNames[i]}: ${count(n)}`)}">
-            <span class="profile-month-bar"><span style="height:${n ? Math.max(6, Math.round(((Number(n) || 0) / maxMonth) * 100)) : 0}%"></span></span>
-            <span class="profile-month-label">${escapeHtml(monthNames[i])}</span>
-          </div>`).join('')}
-        </div>` : '';
-  const goalPct = goal ? Math.min(100, Math.round((readThisYear / goal) * 100)) : 0;
-  const goalBlock = `
+  const r = review || { year: new Date().getFullYear(), total: 0, covers: [], years: [] };
+  const thisYear = new Date().getFullYear();
+  /* the goal belongs to the current year: its form shows only there (progress is in the hero) */
+  const goalForm = r.year === thisYear ? `
       <section class="profile-section profile-section-wide profile-goal">
-        <div class="profile-section-head"><h3>${escapeHtml(tp('profile.goal.title', { year }))}</h3></div>
-        <p class="profile-goal-line">${goal
-          ? escapeHtml(tp('profile.goal.progress', { read: count(readThisYear), goal: count(goal) }))
-          : escapeHtml(tp('profile.goal.noGoal', { read: count(readThisYear) }))}</p>
-        ${goal ? `<div class="profile-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${Math.min(readThisYear, goal)}"><span style="width:${goalPct}%"></span></div>` : ''}
-        ${monthBars}
-        ${readThisYear ? `<p class="profile-goal-review"><a class="button" href="/library/year?year=${year}">${escapeHtml(tp('yearReview.open', { year }))}</a></p>` : ''}
         <form method="post" action="/profile/reading-goal" class="profile-goal-form">
           ${csrfHiddenField(csrfToken)}
-          <input type="hidden" name="year" value="${year}">
-          <label>${escapeHtml(t('profile.goal.set'))}
-            <input type="number" name="goal" min="0" max="1000" step="1" value="${goal || ''}" placeholder="${escapeHtml(t('profile.goal.placeholder'))}">
+          <input type="hidden" name="year" value="${thisYear}">
+          <label>${escapeHtml(tp('profile.goal.title', { year: thisYear }))}
+            <input type="number" name="goal" min="0" max="1000" step="1" value="${Number(r.goal) || ''}" placeholder="${escapeHtml(t('profile.goal.placeholder'))}">
           </label>
           <button type="submit" class="button">${escapeHtml(t('profile.save'))}</button>
         </form>
-      </section>`;
+      </section>` : '';
 
   const content = `
     <div class="profile-shell">
     ${renderProfileIdentityHeader(user, userStats)}
     ${renderProfileNav('stats')}
-    <div class="profile-activity">
-      ${goalBlock}
+    <div class="profile-activity profile-year-review">
+      ${renderYearReviewBody(r)}
+      ${goalForm}
       <section class="profile-section profile-section-wide">
         <div class="profile-section-head"><h3>${escapeHtml(t('profile.stats.collection'))}</h3></div>
         <div class="profile-stat-grid">${tilesHtml}
         </div>
       </section>
-      ${statsBlock}
     </div>
     </div>
   `;

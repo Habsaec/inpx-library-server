@@ -39,6 +39,16 @@ test('year review: totals, months, first / last, favourite, other years', () => 
   assert.deepEqual(r.years, [2025, 2023]);
   assert.equal(r.covers.length, 3);
 
+  const all = getUserYearReview('yr-user', 'all');
+  assert.equal(all.allTime, true);
+  assert.equal(all.year, 'all');
+  assert.equal(all.total, 4);
+  assert.equal(all.byMonth, null);
+  assert.deepEqual(all.byYear, [{ year: 2023, count: 1 }, { year: 2025, count: 3 }]);
+  assert.equal(all.busiestYear, 2025);
+  assert.equal(all.first.title, 'Old');
+  assert.equal(all.goal, 0);
+
   const empty = getUserYearReview('yr-user', 2024);
   assert.equal(empty.total, 0);
   assert.equal(empty.first, null);

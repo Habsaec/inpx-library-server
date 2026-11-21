@@ -5483,13 +5483,15 @@ const YEAR_REVIEW_COVERS = 60;
  * the caller adds cover tones.
  */
 export function getUserYearReview(username, year = new Date().getFullYear()) {
-  const y = String(Math.trunc(Number(year)) || new Date().getFullYear());
+  /* 'all' = every year: the same picture with a bar per year instead of a bar per month */
+  const allTime = year === 'all';
+  const y = allTime ? '' : String(Math.trunc(Number(year)) || new Date().getFullYear());
   _yearReviewStmts ??= {
     books: db.prepare(`
       SELECT b.id AS id, b.title AS title, b.authors AS authors, rb.created_at AS readAt
       FROM read_books rb
       JOIN active_books b ON b.id = rb.book_id
-      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      WHERE rb.username = ? AND (? = '' OR substr(rb.created_at, 1, 4) = ?)
       ORDER BY rb.created_at DESC, b.id
     `),
     authors: db.prepare(`
@@ -5498,7 +5500,7 @@ export function getUserYearReview(username, year = new Date().getFullYear()) {
       JOIN active_books b ON b.id = rb.book_id
       JOIN book_authors ba ON ba.book_id = rb.book_id
       JOIN authors a ON a.id = ba.author_id
-      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      WHERE rb.username = ? AND (? = '' OR substr(rb.created_at, 1, 4) = ?)
       GROUP BY a.id ORDER BY count DESC, a.name LIMIT 5
     `),
     genres: db.prepare(`
@@ -5507,7 +5509,7 @@ export function getUserYearReview(username, year = new Date().getFullYear()) {
       JOIN active_books b ON b.id = rb.book_id
       JOIN book_genres bg ON bg.book_id = rb.book_id
       JOIN genres_catalog g ON g.id = bg.genre_id
-      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      WHERE rb.username = ? AND (? = '' OR substr(rb.created_at, 1, 4) = ?)
       GROUP BY g.id ORDER BY count DESC, g.name LIMIT 5
     `),
     series: db.prepare(`
@@ -5516,7 +5518,7 @@ export function getUserYearReview(username, year = new Date().getFullYear()) {
       JOIN active_books b ON b.id = rb.book_id
       JOIN book_series bs ON bs.book_id = rb.book_id
       JOIN series_catalog sc ON sc.id = bs.series_id
-      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      WHERE rb.username = ? AND (? = '' OR substr(rb.created_at, 1, 4) = ?)
       GROUP BY sc.id HAVING count > 1 ORDER BY count DESC, sc.name LIMIT 3
     `),
     ratings: db.prepare(`
@@ -5524,7 +5526,7 @@ export function getUserYearReview(username, year = new Date().getFullYear()) {
       FROM read_books rb
       JOIN active_books b ON b.id = rb.book_id
       JOIN book_ratings br ON br.username = rb.username AND br.book_id = rb.book_id
-      WHERE rb.username = ? AND substr(rb.created_at, 1, 4) = ?
+      WHERE rb.username = ? AND (? = '' OR substr(rb.created_at, 1, 4) = ?)
       ORDER BY br.rating DESC, rb.created_at DESC
     `),
     years: db.prepare(`
@@ -5535,28 +5537,38 @@ export function getUserYearReview(username, year = new Date().getFullYear()) {
       LIMIT 20
     `),
   };
-  const books = _yearReviewStmts.books.all(username, y);
+  const books = _yearReviewStmts.books.all(username, y, y);
   const byMonth = Array.from({ length: 12 }, () => 0);
   for (const book of books) {
     const month = Number(String(book.readAt || '').slice(5, 7));
     if (month >= 1 && month <= 12) byMonth[month - 1] += 1;
   }
   const busiest = byMonth.reduce((best, n, i) => (n > byMonth[best] ? i : best), 0);
-  const ratings = _yearReviewStmts.ratings.all(username, y);
+  /* all-time: books per year, oldest first (≤ 12 latest years) */
+  const perYear = new Map();
+  for (const book of books) {
+    const by = Number(String(book.readAt || '').slice(0, 4));
+    if (by >= 1900) perYear.set(by, (perYear.get(by) || 0) + 1);
+  }
+  const byYear = [...perYear.entries()].sort((a, b) => a[0] - b[0]).slice(-12).map(([yr, count]) => ({ year: yr, count }));
+  const ratings = _yearReviewStmts.ratings.all(username, y, y);
   const brief = (b) => (b ? { id: b.id, title: b.title, authors: b.authors || '' } : null);
   const byId = new Map(books.map((b) => [b.id, b]));
   return {
-    year: Number(y),
+    year: allTime ? 'all' : Number(y),
+    allTime,
     total: books.length,
-    goal: getReadingGoal(username, Number(y)),
-    byMonth,
-    busiestMonth: books.length ? busiest + 1 : null,
+    goal: allTime ? 0 : getReadingGoal(username, Number(y)),
+    byMonth: allTime ? null : byMonth,
+    busiestMonth: !allTime && books.length ? busiest + 1 : null,
+    byYear: allTime ? byYear : null,
+    busiestYear: allTime && byYear.length ? byYear.reduce((best, r) => (r.count > best.count ? r : best)).year : null,
     first: brief(books[books.length - 1]),
     last: brief(books[0]),
     covers: books.slice(0, YEAR_REVIEW_COVERS).map(brief),
-    topAuthors: _yearReviewStmts.authors.all(username, y),
-    topGenres: withGenreNameEn(_yearReviewStmts.genres.all(username, y).map((g) => ({ ...g, displayName: formatGenreLabel(g.name) }))),
-    topSeries: _yearReviewStmts.series.all(username, y),
+    topAuthors: _yearReviewStmts.authors.all(username, y, y),
+    topGenres: withGenreNameEn(_yearReviewStmts.genres.all(username, y, y).map((g) => ({ ...g, displayName: formatGenreLabel(g.name) }))),
+    topSeries: _yearReviewStmts.series.all(username, y, y),
     ratedCount: ratings.length,
     averageRating: ratings.length ? Math.round((ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length) * 10) / 10 : null,
     favorite: ratings.length && ratings[0].rating >= 4 ? brief(byId.get(ratings[0].id)) : null,

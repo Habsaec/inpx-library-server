@@ -130,19 +130,24 @@ test('bottom navigation points to the library hub instead of favorites', () => {
   assert.ok(!html.includes('class="bottom-nav-item" href="/favorites"'));
 });
 
-test('profile page shows statistics and settings tabs, not personal lists', () => {
+test('profile statistics tab is the year review: chips, tops, collection tiles and settings tab', () => {
   const html = renderProfile({
     user: alice, stats, indexStatus: {}, userStats,
-    readingStats: {
-      readByYear: [{ year: '2025', count: 2 }],
+    review: {
+      year: 'all', allTime: true, total: 2, goal: 0, byMonth: null, busiestMonth: null,
+      byYear: [{ year: 2025, count: 2 }], busiestYear: 2025,
+      first: { id: '1:1', title: 'A', authors: 'Ivanov,Ivan' }, last: { id: '1:2', title: 'B', authors: '' }, favorite: null,
+      covers: [{ id: '1:1', title: 'A', authors: '' }],
       topAuthors: [{ name: 'Ivanov,Ivan', displayName: 'Ivanov Ivan', count: 2 }],
-      topGenres: [{ name: 'sf', count: 2 }]
+      topGenres: [{ name: 'sf', count: 2 }], topSeries: [], ratedCount: 0, averageRating: null, years: [2025],
     }
   });
   assert.ok(html.includes('profile-stat-grid'));
-  assert.ok(html.includes('profile-bar-fill'));
+  assert.ok(html.includes('year-hero-number'));
+  assert.ok(html.includes('href="/profile?year=2025"'), 'year chip and year bar link to that year');
   assert.ok(html.includes('/facet/authors/Ivanov%2CIvan'));
   assert.ok(html.includes('/facet/genres/sf'));
+  assert.ok(!html.includes('profile-goal-form'), 'the goal form belongs to the current year only');
   assert.ok(html.includes('href="/profile/settings"'));
   assert.ok(!html.includes('data-remove-bookmark'));
   const tabs = tabsOf(html);
@@ -150,10 +155,12 @@ test('profile page shows statistics and settings tabs, not personal lists', () =
   assert.ok(!tabs.includes('/favorites'), 'favorites are not a profile tab');
 });
 
-test('profile page without reading stats shows an empty hint', () => {
-  const html = renderProfile({ user: alice, stats, indexStatus: {}, userStats, readingStats: { readByYear: [], topAuthors: [], topGenres: [] } });
-  assert.ok(html.includes('profile-empty'));
-  assert.ok(!html.includes('profile-bar-fill'));
+test('profile statistics for the current year with nothing read: empty state and the goal form', () => {
+  const year = new Date().getFullYear();
+  const html = renderProfile({ user: alice, stats, indexStatus: {}, userStats, review: { year, total: 0, goal: 0, covers: [], years: [] } });
+  assert.ok(html.includes('empty-state'));
+  assert.ok(html.includes('profile-goal-form'));
+  assert.ok(!html.includes('year-hero-number'));
 });
 
 test('favorites page tabs cover books, series and authors only', () => {

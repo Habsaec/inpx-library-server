@@ -3677,6 +3677,27 @@ html[data-eink="1"] .ui-decor {
   background: var(--accent);
 }
 
+/* «Всё время»: a bar per year (≤ 12), each a link to that year */
+.year-months--years {
+  grid-template-columns: repeat(var(--bars, 12), minmax(0, 56px));
+  justify-content: center;
+}
+
+.year-months a.profile-month {
+  color: inherit;
+  text-decoration: none;
+}
+
+.year-months a.profile-month:hover .profile-month-bar > span,
+.year-months a.profile-month:focus-visible .profile-month-bar > span {
+  background: var(--accent);
+}
+
+/* profile statistics tab: the review sits in the profile column */
+.profile-year-review .year-hero {
+  padding-top: 8px;
+}
+
 .year-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

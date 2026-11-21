@@ -14,7 +14,7 @@ import {
   getUserByUsername, getSetting, createUser, changePassword,
   setEreaderEmail, getEreaderEmail, setUserAccountEmail, getUserStats,
   getUserBrowseViewPrefs, setUserBrowseViewPrefs,
-  getUserReadingStats, decryptValue,
+  getUserYearReview, decryptValue,
   createTelegramLinkToken, unlinkTelegram, getTelegramBotUsername, resolveTelegramRuntimeConfig, resolveTelegramApiBase, setMeta,
   isTelegramBotAllowedForUser,
   isEreaderEmailAllowedForUser,
@@ -28,6 +28,7 @@ import {
   getUserHideRead, setUserHideRead, getUserDownloadFormat, setUserDownloadFormat,
   getUserTelegramDigest, setUserTelegramDigest, setReadingGoal
 } from '../db.js';
+import { attachCoverTones } from '../services/cover-tones.js';
 import { getConfiguredDownloadFormats, isDownloadFormatEnabled, FORMAT_LABELS } from '../download-formats.js';
 import { invalidateUserPageCaches } from '../services/cache.js';
 
@@ -117,13 +118,16 @@ async function verifyRecaptcha(token, secretKey) {
 export function registerAuthRoutes(app, deps) {
   const { getCachedStats } = deps;
 
-  function buildProfileData(user, flash = '', csrfToken = '') {
+  function buildProfileData(user, flash = '', csrfToken = '', year = new Date().getFullYear()) {
+    /* statistics tab = «Итоги года» for the chosen year or 'all' (GET /api/reading-stats/year data) */
+    const review = getUserYearReview(user.username, year);
+    attachCoverTones([...review.covers, review.first, review.last, review.favorite].filter(Boolean));
     return {
       user,
       stats: getCachedStats(),
       indexStatus: getIndexStatus(),
       userStats: getUserStats(user.username),
-      readingStats: getUserReadingStats(user.username),
+      review,
       flash,
       csrfToken
     };
@@ -396,7 +400,8 @@ export function registerAuthRoutes(app, deps) {
   // --- Profile ---
 
   app.get('/profile', requireWebAuth, (req, res) => {
-    res.send(renderProfile(buildProfileData(req.user, '', req.csrfToken || '')));
+    const year = req.query.year === 'all' ? 'all' : (Number(req.query.year) || new Date().getFullYear());
+    res.send(renderProfile(buildProfileData(req.user, '', req.csrfToken || '', year)));
   });
 
   app.post('/profile/reading-goal', requireWebAuth, (req, res) => {

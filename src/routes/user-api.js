@@ -254,7 +254,7 @@ export function registerUserApiRoutes(app, deps) {
 
   /* «Итоги года»: GET /api/reading-stats/year?year= (default this year). Books carry cover tones. */
   app.get('/api/reading-stats/year', requireApiAuth, (req, res) => {
-    const review = getUserYearReview(req.user.username, Number(req.query.year) || new Date().getFullYear());
+    const review = getUserYearReview(req.user.username, req.query.year === 'all' ? 'all' : (Number(req.query.year) || new Date().getFullYear()));
     attachCoverTones([...review.covers, review.first, review.last, review.favorite].filter(Boolean));
     res.json(review);
   });

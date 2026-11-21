@@ -45,9 +45,8 @@ import {
   getUserShelves, getShelfById, getShelfBooks, setShelfOnHome, getSetting, getReadBookIdSet, getFullyReadSeriesNames, getUserStats,
   getAllReaderBookmarksPage, queryReaderAnnotations, getReaderAnnotationFacets,
   getUserByUsername, resolveTelegramRuntimeConfig, isTelegramBotAllowedForUser,
-  getBookRating, getUserYearReview
+  getBookRating
 } from '../db.js';
-import { attachCoverTones } from '../services/cover-tones.js';
 import { parseNotesFilter } from '../services/reader-notes.js';
 import { isListBrowseView, resolveAuthorFacetView, resolveFacetBookLayout } from '../browse-view-prefs.js';
 import { effectiveContentLangs, resolveContentLangFilter, contentLangCacheKey, listEnabledContentLangs } from '../user-content-langs.js';
@@ -395,7 +394,7 @@ export function registerLibraryRoutes(app, deps) {
       renderHome, renderCatalog, renderLibraryView, renderBrowsePage,
       renderFacetBooks, renderAuthorFacetPage, renderAuthorOutsideSeriesPage,
       renderBook, renderFavorites, renderShelves, renderShelfDetail, renderReader,
-      renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage, renderYearReview
+      renderMyLibrary, renderReaderBookmarksPage, renderReaderNotesPage
     }
   } = deps;
 
@@ -1261,13 +1260,10 @@ export function registerLibraryRoutes(app, deps) {
     }));
   });
 
-  /* «Итоги года» (web): the same data as GET /api/reading-stats/year. */
+  /* «Итоги года» now live on the profile statistics tab; old links keep working. */
   app.get('/library/year', requireWebAuth, (req, res) => {
-    const review = getUserYearReview(req.user.username, Number(req.query.year) || new Date().getFullYear());
-    attachCoverTones([...review.covers, review.first, review.last, review.favorite].filter(Boolean));
-    res.send(renderYearReview({
-      review, user: req.user, stats: getCachedStats(), indexStatus: getIndexStatus(), csrfToken: req.csrfToken || ''
-    }));
+    const year = req.query.year === 'all' ? 'all' : (Number(req.query.year) || '');
+    res.redirect(302, year ? `/profile?year=${year}` : '/profile');
   });
 
   app.get('/library/notes', requireWebAuth, (req, res) => {
