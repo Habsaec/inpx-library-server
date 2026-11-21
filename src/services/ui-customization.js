@@ -389,12 +389,15 @@ function clampInt(value, min, max, fallback) {
    files replaced by hand (or by another cluster worker). */
 const UI_FILE_URL_TTL_MS = 10_000;
 const _uiFileUrlCache = new Map(); // fileName -> { url, at }
+/** `?s=` value of a main-look file URL (a set id is 8 hex chars, so they never collide). */
+export const MAIN_LOOK_ASSET_ID = 'main';
 let _uiDirReady = false;
 
 function fileMtimeUrl(basePath, fileName) {
   const now = Date.now();
-  /* A theme set's file gets `&s=<set id>`: the URL names the exact bytes, so a picture cached under
-     one set is never answered with another set's file when the schedule switches. */
+  /* Every URL names the exact bytes: a theme set's file gets `&s=<set id>`, the main look's `&s=main`.
+     Without the marker a main-look URL (admin appearance page, base context) was answered with the
+     scheduled / previewed set's picture, so a newly uploaded main background never showed up there. */
   const { full, setId } = themeSetAssetPath(fileName);
   const cacheKey = `${setId}:${fileName}`;
   const cached = _uiFileUrlCache.get(cacheKey);
@@ -403,7 +406,7 @@ function fileMtimeUrl(basePath, fileName) {
   try {
     if (full) {
       const st = fs.statSync(full);
-      url = `${basePath}?v=${Math.trunc(st.mtimeMs)}${setId ? `&s=${setId}` : ''}`;
+      url = `${basePath}?v=${Math.trunc(st.mtimeMs)}&s=${setId || MAIN_LOOK_ASSET_ID}`;
     }
   } catch {
     url = null;
@@ -1742,7 +1745,10 @@ export function removeUiAsset(asset) {
   invalidateUiCustomizationCache();
 }
 
-/** `setId` = the `?s=` of the URL (a theme set's file); empty = whatever the site shows now. */
+/**
+ * `setId` = the `?s=` of the URL: a theme set's id → that set's file, `main` → the main look's file
+ * (whatever set is active), empty (old URLs) → whatever the site shows now.
+ */
 export function serveUiAsset(asset, res, setId = '') {
   if (asset === 'font') {
     const ext = readCustomFontExt();
@@ -1757,7 +1763,9 @@ export function serveUiAsset(asset, res, setId = '') {
   }
   const spec = SERVE_MAP[asset];
   if (!spec) return false;
-  const { full } = themeSetAssetPath(spec.file, /^[a-f0-9]{8}$/.test(String(setId)) ? String(setId) : '');
+  const { full } = String(setId) === MAIN_LOOK_ASSET_ID
+    ? { full: path.join(UI_DIR, spec.file) }
+    : themeSetAssetPath(spec.file, /^[a-f0-9]{8}$/.test(String(setId)) ? String(setId) : '');
   if (!full || !fs.existsSync(full)) return false;
   res.type(spec.type);
   res.setHeader('Cache-Control', 'public, max-age=3600');

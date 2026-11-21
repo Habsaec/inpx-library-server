@@ -26,7 +26,7 @@ import {
   currentThemeSetPreview,
   THEME_SET_ALL_KEYS,
 } from '../src/services/theme-sets.js';
-import { getUiCustomization, getPublicUiSettingsJson, invalidateUiCustomizationCache, saveUiSettings } from '../src/services/ui-customization.js';
+import { getUiCustomization, getPublicUiSettingsJson, invalidateUiCustomizationCache, saveUiSettings, serveUiAsset } from '../src/services/ui-customization.js';
 
 const uiDir = path.join(config.dataDir, 'ui');
 const KEYS = ['ui_glass_color_dark', 'ui_accent_dark', 'ui_show_logo', 'ui_header_height'];
@@ -124,8 +124,19 @@ test('a scheduled set overrides appearance reads; admin (base) context sees the 
     assert.equal(themeSetSetting('ui_glass_color_dark'), '#101010');
     const base = getUiCustomization();
     assert.equal(base.glassColorDark, '#101010');
-    assert.doesNotMatch(base.headerUrl, /&s=/);
+    assert.match(base.headerUrl, /&s=main$/, 'a main-look URL says so');
   });
+
+  /* the admin page shows the main picture even while a set is on the site (it showed the set's) */
+  const sent = (setId) => {
+    let file = '';
+    const res = { type() {}, setHeader() {}, sendFile(f) { file = f; } };
+    assert.ok(serveUiAsset('header', res, setId));
+    return fs.readFileSync(file, 'utf8');
+  };
+  assert.equal(sent('main'), 'new-main-header');
+  assert.equal(sent(set.id), 'main-header');
+  assert.equal(sent(''), 'main-header', 'an old URL without a marker follows the active set');
 
   saveThemeSchedule({ mode: 'off' });
   invalidateUiCustomizationCache();

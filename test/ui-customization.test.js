@@ -68,7 +68,7 @@ test('saveUiAsset stores logo and exposes cache-busted URL', async () => {
   await saveUiAsset('logo', await tinyPngBuffer());
   const ui = getUiCustomization();
   assert.ok(ui.hasLogo);
-  assert.match(ui.logoUrl, /^\/custom\/ui\/logo\?v=\d+$/);
+  assert.match(ui.logoUrl, /^\/custom\/ui\/logo\?v=\d+&s=main$/);
   assert.ok(fs.existsSync(path.join(uiDir, 'logo.png')));
 });
 
@@ -116,7 +116,7 @@ test('saveUiAsset stores header banner and public UI exposes it', async () => {
   saveUiSettings({ headerHeight: 280, headerPosition: 'top', headerSize: 'cover' });
   const ui = getUiCustomization();
   assert.ok(ui.hasHeader);
-  assert.match(ui.headerUrl, /^\/custom\/ui\/header\?v=\d+$/);
+  assert.match(ui.headerUrl, /^\/custom\/ui\/header\?v=\d+&s=main$/);
   assert.equal(ui.headerHeight, 280);
   assert.equal(ui.headerPosition, 'top');
   assert.equal(ui.headerSize, 'cover');
@@ -131,7 +131,7 @@ test('saveUiAsset stores header banner and public UI exposes it', async () => {
   assert.equal(pub.headerHeight, 280);
   assert.equal(pub.headerPosition, 'top');
   assert.equal(pub.headerSize, 'cover');
-  assert.match(pub.headerUrl, /^\/custom\/ui\/header\?v=\d+$/);
+  assert.match(pub.headerUrl, /^\/custom\/ui\/header\?v=\d+&s=main$/);
   removeUiAsset('header');
   saveUiSettings({ headerHeight: 180, headerPosition: 'center', headerSize: 'cover' });
 });
