@@ -3464,6 +3464,51 @@ html[data-theme="light"] .cover {
   opacity: 1;
 }
 
+/* Blurred 8×12 placeholder (cover tones): above the leather plate, under the real image. The browser's
+   smooth upscaling is the blur; no `filter` — dozens of filtered layers per page cost weak GPUs. */
+.cover-lqip {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  image-rendering: auto;
+  pointer-events: none;
+}
+
+html[data-eink="1"] .cover-lqip {
+  display: none;
+}
+
+/* Book page: a soft wash of the cover's vivid color from where the cover sits (centred on top on
+   phones, on the left in the wide layout). */
+.book-detail-shell.has-cover-tone .book-detail-main {
+  --cover-tone-at: 50% 12%;
+  --cover-tone-size: 95% 55%;
+  --cover-tone-mix: 30%;
+  background:
+    radial-gradient(ellipse var(--cover-tone-size) at var(--cover-tone-at), color-mix(in srgb, var(--cover-tone) var(--cover-tone-mix), transparent) 0%, transparent 72%),
+    color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+html[data-theme="light"] .book-detail-shell.has-cover-tone .book-detail-main {
+  --cover-tone-mix: 20%;
+}
+
+@media (min-width: 901px) {
+  .book-detail-shell.has-cover-tone .book-detail-main {
+    --cover-tone-at: 14% 32%;
+    --cover-tone-size: 60% 95%;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .book-detail-shell.has-cover-tone .book-detail-main {
+    background: var(--surface);
+  }
+}
+
 /*
  * Two-state cover model:
  *   - .cover-fallback is ALWAYS rendered visible (z-index:1, beneath the img).

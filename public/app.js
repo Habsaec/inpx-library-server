@@ -886,6 +886,7 @@ function _flushCoverFallbacks() {
     if (img.complete) {
       _coverFallbackPending.delete(img);
       if (img.naturalWidth > 0) img.classList.add('is-loaded');
+      else dropCoverLqip(img);
       setCoverFallbackState(entry.host, !(img.naturalWidth > 0));
       continue;
     }
@@ -895,6 +896,11 @@ function _flushCoverFallbacks() {
     }
   }
   _scheduleCoverFallbackFlush();
+}
+
+/** A cover that failed to load keeps the leather plate with its title, not the blurred placeholder. */
+function dropCoverLqip(img) {
+  img.closest('.cover')?.querySelector('.cover-lqip')?.remove();
 }
 
 /** Декоративная обложка в разметке; при error /cover-thumb (404 без обложки) и при coverAvailable=false не подменяем заглушкой с API. */
@@ -914,11 +920,13 @@ function attachCoverErrorFallback(scope = document) {
     }, { once: true });
     img.addEventListener('error', () => {
       removePending();
+      dropCoverLqip(img);
       setCoverFallbackState(host, true);
     }, { once: true });
     if (img.complete) {
       removePending();
       if (img.naturalWidth > 0) img.classList.add('is-loaded');
+      else dropCoverLqip(img);
       setCoverFallbackState(host, !(img.naturalWidth > 0));
     } else {
       _coverFallbackPending.set(img, { host, deadline: performance.now() + 2000 });

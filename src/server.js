@@ -19,6 +19,7 @@ import { runWithLocale, t, setDefaultLocale } from './i18n.js';
 import { ApiErrorCode, apiFail } from './api-errors.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerBrowseApiRoutes } from './routes/browse-api.js';
+import { attachCoverTonesToBody } from './services/cover-tones.js';
 import { registerProfileApiRoutes } from './routes/profile-api.js';
 import { registerOpdsRoutes } from './routes/opds.js';
 import { registerOpdsV2Routes } from './routes/opds-v2.js';
@@ -800,6 +801,17 @@ app.use('/opds', (req, res, next) => {
 });
 
 app.use(browseLimiter);
+
+/* Cover tones (additive `coverColor` / `coverLqip`) are attached when a book list is sent: list
+   results are cached, often from before the server saw the cover. One query per response. */
+app.use('/api', (req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    try { attachCoverTonesToBody(body); } catch { /* tones are decoration only */ }
+    return json(body);
+  };
+  next();
+});
 
 // Публичные диагностические маршруты — до express.static, чтобы не пересекаться с файлами из public/.
 registerHealthRoutes(app, { getCachedStats, getServiceValidation, getPerfSnapshot });

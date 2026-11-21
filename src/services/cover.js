@@ -4,6 +4,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { getSetting } from '../db.js';
 import { getSharp } from './sharp-loader.js';
+import { deleteCoverTone } from './cover-tones.js';
 
 // --- Sharp concurrency limiter ---
 
@@ -199,6 +200,8 @@ export function coverThumbCacheKey(bookId, hd = false) {
 export function invalidateCoverThumbCaches(bookId) {
   const key = String(bookId || '').trim();
   if (!key) return;
+  deleteCoverTone(key); // the color / placeholder came from this cover
+
   for (const k of [key, coverThumbCacheKey(key, true)]) {
     coverThumbCache.delete(k);
     try {

@@ -13,6 +13,7 @@ import { config } from '../config.js';
 import { BATCH_ZIP_MAX, TELEGRAM_BATCH_MAX } from '../constants.js';
 import { bookPagePath, readPagePath, apiBookPath, downloadBookPath, liteBookPagePath, liteReadPagePath, encodeBookRef, bookIdNeedsSafeUrl } from '../utils/book-ref.js';
 import { formatSingleAuthorName, splitAuthorValues, getFollowingNewCount, getInProgressBookMap } from '../inpx.js';
+import { attachCoverTones } from '../services/cover-tones.js';
 import { effectiveContentLangs } from '../user-content-langs.js';
 import {
   t,
@@ -177,7 +178,27 @@ export function renderCoverFallbackImage() {
   return `<img class="cover-fallback-image cover-fallback-image--dark" draggable="false" src="${escapeHtml(dark)}" alt=""><img class="cover-fallback-image cover-fallback-image--light" draggable="false" src="${escapeHtml(light)}" alt="">`;
 }
 
+const COVER_TONE_RE = /^#[0-9a-f]{6}$/;
+const COVER_LQIP_RE = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/;
+
+/** ` style="--cover-tone:#rrggbb"` when the cover's dominant color is known (src/services/cover-tones.js). */
+export function coverToneStyle(book) {
+  return COVER_TONE_RE.test(String(book?.coverColor || '')) ? ` style="--cover-tone:${book.coverColor}"` : '';
+}
+
+/**
+ * Blurred 8×12 placeholder shown while the real cover loads: it hides the leather plate with the title,
+ * which only books with a known real cover have. The browser's smooth upscaling does the blur — no CSS
+ * filter (dozens of filtered layers per page were costly on weak GPUs).
+ */
+export function renderCoverLqip(book) {
+  const lqip = String(book?.coverLqip || '');
+  return COVER_LQIP_RE.test(lqip) ? `<span class="cover-lqip" style="background-image:url(${lqip})" aria-hidden="true"></span>` : '';
+}
+
 export function renderCover(book, { readBookIds = null } = {}) {
+  /* Lists come from caches built before a tone existed: look it up at render time (grids batch it). */
+  if (book && book.coverColor === undefined) attachCoverTones([book]);
   const readBadge = readBookIds && readBookIds.has(book.id) ? `<span class="read-badge">${READ_CHECK_SVG}</span>` : '';
   const deletedBadge = Number(book.deleted)
     ? `<span class="deleted-badge" title="${escapeHtml(t('book.deletedHint'))}">${escapeHtml(t('book.deletedBadge'))}</span>`
@@ -188,7 +209,7 @@ export function renderCover(book, { readBookIds = null } = {}) {
     ? `<span class="cover-rating-wrapper"><span class="cover-rating-badge cover-rating-${_libRateClamped}">${Array.from({ length: _libRateClamped }, () => '<span>★</span>').join('')}</span></span>`
     : '';
   return `
-    <a class="cover" href="${bookPagePath(book.id)}" data-role="cover">
+    <a class="cover" href="${bookPagePath(book.id)}" data-role="cover"${coverToneStyle(book)}>
       <span class="cover-fallback">
         ${renderCoverFallbackImage()}
         <span class="cover-fallback-overlay"></span>
@@ -197,6 +218,7 @@ export function renderCover(book, { readBookIds = null } = {}) {
           <span class="cover-fallback-author">${escapeHtml(formatAuthorLabel(book.authors) || t('book.authorUnknown'))}</span>
         </span>
       </span>
+      ${renderCoverLqip(book)}
       <img class="cover-image" loading="lazy" draggable="false" src="${apiBookPath(book.id, 'cover-thumb')}" data-cover-src="${apiBookPath(book.id, 'cover-thumb')}" alt="${escapeHtml(book.title)}">
       ${readBadge}
       ${deletedBadge}
@@ -1041,6 +1063,7 @@ function renderWantRemoveButton(book, className) {
 
 export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetails = false, batchSelect = false, user = null, hideDownloads = false, readBookIds = null, seriesContext = null, removeReading = false, removeWant = false } = {}) {
   const uniqueItems = uniqueBooksById(items);
+  attachCoverTones(uniqueItems.filter((b) => b && !b.coverColor));
   const effectiveBatch = batchSelect && !hideDownloads;
   const canDl = canDownloadInUi(user);
   // Flags string encodes rendering-affecting state for cache key
@@ -1060,7 +1083,7 @@ export function renderBookGrid(items = [], { isAuthenticated = false, lazyDetail
        без прогресса (на каталоге), переиспользуется на /library/continue,
        где прогресс реально присутствует — и полоска не появляется. */
     const progressKey = Math.round(Number(book.readProgress) || 0);
-    const cacheKey = _cardCacheKey(book, `${flags}${isRead ? '1' : '0'}${book.libRate || 0}|p${progressKey}|d${Number(book.deleted) ? 1 : 0}`);
+    const cacheKey = _cardCacheKey(book, `${flags}${isRead ? '1' : '0'}${book.libRate || 0}|p${progressKey}|d${Number(book.deleted) ? 1 : 0}|t${book.coverColor ? 1 : 0}`);
     // The reading page card embeds per-user open history, so it is never shared through the cache.
     const cached = removeReading || removeWant ? null : getCachedCardHtml(cacheKey);
     if (cached) return cached;

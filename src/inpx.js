@@ -80,6 +80,7 @@ import { parseEnvTimeoutMs, promiseWithTimeout } from './utils/async-timeout.js'
 import { resolveIndexImportMode } from './index-import-mode.js';
 import { getBulkIndexLabelKey } from './index-stage-i18n.js';
 import { resolveLibraryArchiveFile } from './flibusta-sidecar.js';
+import { attachCoverTones } from './services/cover-tones.js';
 
 /** Уступка циклу событий между тяжёлыми синхронными участками (чтобы HTTP не «замирал»).
  *  Используем setImmediate без фиксированной задержки: на больших библиотеках setTimeout(2) давал
@@ -3785,8 +3786,11 @@ function mapBookListRow(row) {
   };
 }
 
+/* Also the batch point for per-book extras every list needs: cover tones (additive `coverColor` /
+   `coverLqip`, src/services/cover-tones.js) ride the same call. */
 function attachSeriesListsToBooks(books) {
   if (!books || books.length === 0) return;
+  attachCoverTones(books);
   const placeholders = books.map(() => '?').join(',');
   const rows = db.prepare(`
     SELECT bs.book_id AS bookId, sc.name, COALESCE(sc.display_name, sc.name) AS displayName, bs.series_no AS seriesNo

@@ -16,7 +16,7 @@ import {
   browseTotalLine, canDownloadInUi, canSendToEmailInUi, renderAuthorLinks, renderSeriesLinks, renderWelcomeQuoteAuthor, isWelcomeQuoteAuthorLinkable,
   STATIC_ASSET_VERSION, siteTitleForDisplay, READ_CHECK_SVG, renderFaviconLinks, canOpenInWebReader,
   bookPagePath, readPagePath, apiBookPath, liteBookPagePath, liteReadPagePath,
-  renderCoverFallbackImage,
+  renderCoverFallbackImage, renderCoverLqip,
   t, tp, getLocale, plural, countLabel, formatLocaleInt,
   formatLocaleDateLong, clientI18nScriptUrl,
   formatAuthorLabel, authorInitials, formatLanguageLabel,
@@ -890,7 +890,8 @@ export function renderBook({
 }) {
   const similar = similarBooks || { title: t('book.similar'), items: [] };
   const isAuthenticated = Boolean(user);
-  const hasRealCover = Boolean(details?.cover?.data?.length || details?.cover?.hasData);
+  /* A stored cover tone means the server has already seen a real cover (the details may not know yet). */
+  const hasRealCover = Boolean(details?.cover?.data?.length || details?.cover?.hasData || book.coverLqip);
   const primaryAuthor = book.authorsList?.[0] || firstAuthorValue(book.authors);
   const genreCodesSummary = book.genres ? parseGenreCodes(book.genres).slice(0, 3) : [];
   const genreSummaryHtml = genreCodesSummary.length
@@ -921,10 +922,11 @@ export function renderBook({
       ? tp('book.authorPrefix', { name: formatAuthorLabel(book.authors) })
       : t('nav.recent');
   const content = `
-    <section class="book-detail-shell" style="--detail-cover:url('${escapeHtml(apiBookPath(book.id, 'cover'))}')">
+    <section class="book-detail-shell${/^#[0-9a-f]{6}$/.test(String(book.coverColor || '')) ? ' has-cover-tone' : ''}" style="--detail-cover:url('${escapeHtml(apiBookPath(book.id, 'cover'))}')${/^#[0-9a-f]{6}$/.test(String(book.coverColor || '')) ? `;--cover-tone:${book.coverColor}` : ''}">
       <div class="book-detail-main card-detail-panel">
         <div class="book-detail-cover book-3d" ${bookIdDataAttr(book.id)}><div class="book-3d-body">
           <div class="cover ${hasRealCover ? '' : 'cover-fallback-active'}">
+            ${hasRealCover ? renderCoverLqip(book) : ''}
             <img class="cover-image" src="${apiBookPath(book.id, 'cover')}" alt="${escapeHtml(book.title)}">
             <span class="cover-fallback" ${hasRealCover ? 'hidden' : ''} aria-hidden="${hasRealCover ? 'true' : 'false'}">
               ${renderCoverFallbackImage()}

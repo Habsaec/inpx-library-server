@@ -381,6 +381,9 @@ export function registerBrowseApiRoutes(app) {
       libRate: book.libRate,
       size: book.size,
       downloadFormats: book.downloadFormats || [],
+      // additive, only once the cover has been seen: dominant color + 8×12 blurred placeholder
+      ...(book.coverColor ? { coverColor: book.coverColor } : {}),
+      ...(book.coverLqip ? { coverLqip: book.coverLqip } : {}),
     });
   });
 }

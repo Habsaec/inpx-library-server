@@ -17,7 +17,16 @@ import {
   getCoverWidth,
   getCoverHeight
 } from '../services/cover.js';
+import { scheduleCoverTone, setCoverToneSource } from '../services/cover-tones.js';
 import { config } from '../config.js';
+
+/* Cover tones are computed through the same sharp slots as thumbs (one at a time, in the background). */
+const SHARP_SLOTS = { acquire: acquireSharpSlot, release: releaseSharpSlot };
+/* Lists schedule missing tones from the disk thumb cache (covers cached by the browser / app never come back). */
+setCoverToneSource({
+  ...SHARP_SLOTS,
+  loadCached: async (bookId) => (await getDiskCachedCoverThumb(coverThumbCacheKey(bookId)))?.data || null,
+});
 import { t, tp, getLocale } from '../i18n.js';
 import { ApiErrorCode, apiFail } from '../api-errors.js';
 import { requireApiAuth, requireBrowseAuth, requireBrowseOrOpds, requireWebAuth, requireAdminWeb } from '../middleware/auth.js';
@@ -1393,6 +1402,7 @@ export function registerLibraryRoutes(app, deps) {
       // 1. Check in-memory cache FIRST (cheapest). HD thumbs skip it: ~4× larger, disk is enough.
       const cached = hd ? null : getCachedCoverThumb(cacheKey);
       if (cached?.data?.length) {
+        scheduleCoverTone(bookId, async () => cached.data, SHARP_SLOTS);
         res.set('Cache-Control', 'private, max-age=86400');
         res.type(cached.contentType || 'image/webp');
         return res.send(cached.data);
@@ -1401,7 +1411,10 @@ export function registerLibraryRoutes(app, deps) {
       // 2. Check disk cache BEFORE expensive cover resolution
       const diskCached = await getDiskCachedCoverThumb(cacheKey);
       if (diskCached?.data?.length) {
-        if (!hd) setCachedCoverThumb(cacheKey, diskCached.contentType, diskCached.data);
+        if (!hd) {
+          setCachedCoverThumb(cacheKey, diskCached.contentType, diskCached.data);
+          scheduleCoverTone(bookId, async () => diskCached.data, SHARP_SLOTS);
+        }
         res.set('Cache-Control', 'private, max-age=86400');
         res.type(diskCached.contentType || 'image/webp');
         return res.send(diskCached.data);
@@ -1455,7 +1468,11 @@ export function registerLibraryRoutes(app, deps) {
         outBuf = coverBuffer;
       }
 
-      if (!hd) setCachedCoverThumb(book.id, outType, outBuf);
+      if (!hd) {
+        setCachedCoverThumb(book.id, outType, outBuf);
+        const thumb = outBuf;
+        scheduleCoverTone(book.id, async () => thumb, SHARP_SLOTS);
+      }
       setDiskCachedCoverThumb(coverThumbCacheKey(book.id, hd), outType, outBuf);
       res.set('Cache-Control', 'private, max-age=86400');
       res.type(outType);

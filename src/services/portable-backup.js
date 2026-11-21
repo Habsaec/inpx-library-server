@@ -55,7 +55,7 @@ export const PORTABLE_EXPORTED_TABLES = new Set([
 export const PORTABLE_SKIPPED_TABLES = new Set([
   // catalog / derived: rebuilt by indexing
   'books', 'authors', 'series_catalog', 'genres_catalog', 'book_authors', 'book_series', 'book_genres',
-  'book_details_cache', 'book_files', 'book_reviews', 'calibre_book_state', 'catalog_lang_counts',
+  'book_details_cache', 'cover_tones', 'book_files', 'book_reviews', 'calibre_book_state', 'catalog_lang_counts',
   'author_name_tokens', 'series_name_tokens', 'search_title_tokens', 'active_book_ids',
   'active_books_projection_state', 'library_dedup_projection', 'duplicate_scan_keys',
   'flibusta_author_portrait', 'flibusta_author_shard', 'suppressed_books',
