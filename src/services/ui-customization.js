@@ -545,15 +545,16 @@ function hasCustomFontFile() {
 /** Совместимость: раньше был in-process кэш, теперь читаем файлы с диска каждый раз. */
 /**
  * Seasonal decoration: any combination of these effects, stored as a comma list in canonical order
- * ('' = none; old single values 'snow' / 'leaves' are valid lists). Part of theme sets (THEME_SET_KEYS).
+ * ('' = none; old single values 'snow' / 'leaves' are valid lists; the retired 'drifts' is dropped).
+ * Part of theme sets (THEME_SET_KEYS).
  */
-export const UI_DECOR_PRESETS = ['snow', 'leaves', 'garland', 'drifts'];
+export const UI_DECOR_PRESETS = ['snow', 'leaves', 'garland'];
 function normalizeDecor(raw) {
   const values = new Set(String(raw || '').split(/[\s,]+/).map((v) => v.trim()).filter(Boolean));
   return UI_DECOR_PRESETS.filter((v) => values.has(v)).join(',');
 }
 
-/** Decoration list from the four admin checkboxes (form / live preview draft fields decorSnow …). */
+/** Decoration list from the admin checkboxes (form / live preview draft fields decorSnow …). */
 function decorFromFlags(flags) {
   return normalizeDecor(UI_DECOR_PRESETS.filter((v) => {
     const raw = flags[`decor${v[0].toUpperCase()}${v.slice(1)}`];

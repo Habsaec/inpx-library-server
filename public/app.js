@@ -3797,6 +3797,25 @@ function attachConfirmedFormSubmits() {
   }
 }
 
+/**
+ * A submit button with its own data-confirm (e.g. a theme set action that posts the appearance form
+ * through `formaction`): ask first, then submit the form with that button as the submitter.
+ */
+function attachConfirmedButtonSubmits() {
+  for (const btn of document.querySelectorAll('button[type="submit"][data-confirm]')) {
+    btn.addEventListener('click', async (event) => {
+      const form = btn.form;
+      if (!form || btn.dataset.confirmed === '1') return;
+      event.preventDefault();
+      if (!(await confirmAction(btn.getAttribute('data-confirm'), { danger: btn.hasAttribute('data-confirm-danger') }))) return;
+      btn.dataset.confirmed = '1';
+      if (form.requestSubmit) form.requestSubmit(btn);
+      else btn.click();
+      btn.dataset.confirmed = '';
+    });
+  }
+}
+
 /** Add inline btn-spinner to all regular form submit buttons (forms without data-confirm). */
 function attachFormSubmitSpinners() {
   const forms = [...document.querySelectorAll('form[action][method="post"], form[action][method="POST"]')];
@@ -8417,6 +8436,7 @@ attachPointerSpotlight();
 attachLoadMore();
 attachBatchDownloadSelection();
 attachConfirmedFormSubmits();
+attachConfirmedButtonSubmits();
 attachFormSubmitSpinners();
 attachShelfActions();
 attachAddToShelfButtons();

@@ -53,15 +53,17 @@ import {
   resetUiThemeShape, resetUiThemeTypography,
   saveUiShapeSettings, saveUiTypographySettings,
   refreshBgThemePaletteForAdmin, refreshBgThemePaletteFromFile,
-  getPublicUiSettingsJson, getThemePreviewFromDraft, getUiAppearanceFormState, decorFromFlags
+  getPublicUiSettingsJson, getThemePreviewFromDraft, getUiAppearanceFormState, decorFromFlags,
+  invalidateUiCustomizationCache,
 } from '../services/ui-customization.js';
 import {
   baseAppearanceMiddleware, listThemeSets, getThemeSchedule, saveThemeSchedule,
   createThemeSetFromCurrent, updateThemeSet, replaceThemeSetFromCurrent, deleteThemeSet, moveThemeSet,
-  applyThemeSetToBase, resolveThemeSetAt, upcomingThemeSetChanges,
+  applyThemeSetToBase, resolveThemeSetAt, upcomingThemeSetChanges, getThemeSet,
+  THEME_SET_ALL_KEYS, THEME_SET_PREVIEW_COOKIE,
 } from '../services/theme-sets.js';
 import {
-  setSetting, getSetting, encryptValue, decryptValue, getSources, getSourceById,
+  setSetting, getSetting, dryRunSettings, encryptValue, decryptValue, getSources, getSourceById,
   addSource, updateSource, deleteSourceProgressive, forceDetachSourceRowUnsafe, convertFolderSourceToCalibre,
   getSmtpSettings, setSmtpSettings, getTelegramSettings, setTelegramSettings, resolveTelegramTokenForAdmin, resolveTelegramApiBase, syncTelegramChatsFromLinkedUsers, hasAdminUser, listUsers, countAdminUsers,
   isPasswordResetEnabled, getPublicBaseUrlSetting, setPasswordResetSettings,
@@ -201,6 +203,56 @@ function readAdminAccountUsername(body) {
   const raw = body?.accountUsername ?? body?.username;
   if (Array.isArray(raw)) return String(raw[0] ?? '').trim();
   return String(raw ?? '').trim();
+}
+
+/** The appearance form (main «Сохранить», or the live preview state posted to a theme set action) → saveUiSettings input. */
+function uiSettingsInputFromForm(body, dynamicThemeFromBg = isFormFlagEnabled(body.dynamicThemeFromBg)) {
+  return {
+    bgBlur: lastFormFieldValue(body.bgBlur),
+    bgOverlay: lastFormFieldValue(body.bgOverlay),
+    surfaceOpacity: lastFormFieldValue(body.surfaceOpacity),
+    surfaceBlur: lastFormFieldValue(body.surfaceBlur),
+    dynamicThemeFromBg,
+    glassColorDark: lastFormFieldValue(body.glassColorDark),
+    glassColorLight: lastFormFieldValue(body.glassColorLight),
+    glassTextDark: lastFormFieldValue(body.glassTextDark),
+    glassTextLight: lastFormFieldValue(body.glassTextLight),
+    glassTextAutoDark: isFormFlagEnabled(body.glassTextAutoDark),
+    glassTextAutoLight: isFormFlagEnabled(body.glassTextAutoLight),
+    glassMutedDark: lastFormFieldValue(body.glassMutedDark),
+    glassMutedLight: lastFormFieldValue(body.glassMutedLight),
+    glassMutedAutoDark: isFormFlagEnabled(body.glassMutedAutoDark),
+    glassMutedAutoLight: isFormFlagEnabled(body.glassMutedAutoLight),
+    glassLinkDark: lastFormFieldValue(body.glassLinkDark),
+    glassLinkLight: lastFormFieldValue(body.glassLinkLight),
+    glassLinkAutoDark: isFormFlagEnabled(body.glassLinkAutoDark),
+    glassLinkAutoLight: isFormFlagEnabled(body.glassLinkAutoLight),
+    accentDark: lastFormFieldValue(body.accentDark),
+    accentLight: lastFormFieldValue(body.accentLight),
+    accentAutoDark: isFormFlagEnabled(body.accentAutoDark),
+    accentAutoLight: isFormFlagEnabled(body.accentAutoLight),
+    overlayColorDark: lastFormFieldValue(body.overlayColorDark),
+    overlayColorLight: lastFormFieldValue(body.overlayColorLight),
+    overlayColorAutoDark: isFormFlagEnabled(body.overlayColorAutoDark),
+    overlayColorAutoLight: isFormFlagEnabled(body.overlayColorAutoLight),
+    bgSize: lastFormFieldValue(body.bgSize),
+    bgPosition: lastFormFieldValue(body.bgPosition),
+    headerHeight: lastFormFieldValue(body.headerHeight),
+    headerPosition: lastFormFieldValue(body.headerPosition),
+    headerSize: lastFormFieldValue(body.headerSize),
+    showHeader: isFormFlagEnabled(body.showHeader),
+    showLogo: isFormFlagEnabled(body.showLogo),
+    showLogoOnLogin: isFormFlagEnabled(body.showLogoOnLogin),
+    manuscriptWash: isFormFlagEnabled(body.manuscriptWash),
+    book3d: isFormFlagEnabled(body.book3d),
+    pageTransitions: isFormFlagEnabled(body.pageTransitions),
+    decor: decorFromFlags({
+      decorSnow: isFormFlagEnabled(body.decorSnow),
+      decorLeaves: isFormFlagEnabled(body.decorLeaves),
+      decorGarland: isFormFlagEnabled(body.decorGarland),
+    }),
+    coverDim: isFormFlagEnabled(body.coverDim),
+  };
 }
 
 /** Exported for tests: scoped TG/email fields were hydrated in the browser before submit. */
@@ -847,53 +899,7 @@ export function registerAdminRoutes(app, deps) {
       if (dynamicThemeFromBg) {
         await refreshBgThemePaletteFromFile();
       }
-      saveUiSettings({
-        bgBlur: lastFormFieldValue(req.body.bgBlur),
-        bgOverlay: lastFormFieldValue(req.body.bgOverlay),
-        surfaceOpacity: lastFormFieldValue(req.body.surfaceOpacity),
-        surfaceBlur: lastFormFieldValue(req.body.surfaceBlur),
-        dynamicThemeFromBg,
-        glassColorDark: lastFormFieldValue(req.body.glassColorDark),
-        glassColorLight: lastFormFieldValue(req.body.glassColorLight),
-        glassTextDark: lastFormFieldValue(req.body.glassTextDark),
-        glassTextLight: lastFormFieldValue(req.body.glassTextLight),
-        glassTextAutoDark: isFormFlagEnabled(req.body.glassTextAutoDark),
-        glassTextAutoLight: isFormFlagEnabled(req.body.glassTextAutoLight),
-        glassMutedDark: lastFormFieldValue(req.body.glassMutedDark),
-        glassMutedLight: lastFormFieldValue(req.body.glassMutedLight),
-        glassMutedAutoDark: isFormFlagEnabled(req.body.glassMutedAutoDark),
-        glassMutedAutoLight: isFormFlagEnabled(req.body.glassMutedAutoLight),
-        glassLinkDark: lastFormFieldValue(req.body.glassLinkDark),
-        glassLinkLight: lastFormFieldValue(req.body.glassLinkLight),
-        glassLinkAutoDark: isFormFlagEnabled(req.body.glassLinkAutoDark),
-        glassLinkAutoLight: isFormFlagEnabled(req.body.glassLinkAutoLight),
-        accentDark: lastFormFieldValue(req.body.accentDark),
-        accentLight: lastFormFieldValue(req.body.accentLight),
-        accentAutoDark: isFormFlagEnabled(req.body.accentAutoDark),
-        accentAutoLight: isFormFlagEnabled(req.body.accentAutoLight),
-        overlayColorDark: lastFormFieldValue(req.body.overlayColorDark),
-        overlayColorLight: lastFormFieldValue(req.body.overlayColorLight),
-        overlayColorAutoDark: isFormFlagEnabled(req.body.overlayColorAutoDark),
-        overlayColorAutoLight: isFormFlagEnabled(req.body.overlayColorAutoLight),
-        bgSize: lastFormFieldValue(req.body.bgSize),
-        bgPosition: lastFormFieldValue(req.body.bgPosition),
-        headerHeight: lastFormFieldValue(req.body.headerHeight),
-        headerPosition: lastFormFieldValue(req.body.headerPosition),
-        headerSize: lastFormFieldValue(req.body.headerSize),
-        showHeader: isFormFlagEnabled(req.body.showHeader),
-        showLogo: isFormFlagEnabled(req.body.showLogo),
-        showLogoOnLogin: isFormFlagEnabled(req.body.showLogoOnLogin),
-        manuscriptWash: isFormFlagEnabled(req.body.manuscriptWash),
-        book3d: isFormFlagEnabled(req.body.book3d),
-        pageTransitions: isFormFlagEnabled(req.body.pageTransitions),
-        decor: decorFromFlags({
-          decorSnow: isFormFlagEnabled(req.body.decorSnow),
-          decorLeaves: isFormFlagEnabled(req.body.decorLeaves),
-          decorGarland: isFormFlagEnabled(req.body.decorGarland),
-          decorDrifts: isFormFlagEnabled(req.body.decorDrifts),
-        }),
-        coverDim: isFormFlagEnabled(req.body.coverDim),
-      });
+      saveUiSettings(uiSettingsInputFromForm(req.body, dynamicThemeFromBg));
       saveCoverFallbackSettings({
         coverTitleFont: lastFormFieldValue(req.body.coverTitleFont),
         coverTitleSize: lastFormFieldValue(req.body.coverTitleSize),
@@ -952,20 +958,54 @@ export function registerAdminRoutes(app, deps) {
     } catch (error) { setsError(res, error); }
   });
 
-  app.post('/admin/settings/ui/sets/create', requireAdminWeb, (req, res) => {
+  /**
+   * A set action submitted with the appearance form (button `fromPreview=1` inside #ui-main-form):
+   * the unsaved live-preview state, normalized by the real save code in a rolled-back transaction, so
+   * the set gets exactly what «Сохранить» would store — and the main look stays as it is.
+   */
+  const settingsFromPreview = async (body) => {
+    if (lastFormFieldValue(body.fromPreview) !== '1') return null;
+    const input = uiSettingsInputFromForm(body);
+    if (input.dynamicThemeFromBg && !getSetting('ui_bg_palette_dark')) await refreshBgThemePaletteFromFile();
+    const values = dryRunSettings(() => {
+      saveUiSettings(input);
+      return Object.fromEntries(THEME_SET_ALL_KEYS.map((key) => [key, getSetting(key)]));
+    });
+    invalidateUiCustomizationCache();
+    return values;
+  };
+  const previewCookieOptions = { httpOnly: true, sameSite: 'lax', path: '/' };
+
+  app.post('/admin/settings/ui/sets/create', requireAdminWeb, asyncHandler(async (req, res) => {
     try {
+      const settings = await settingsFromPreview(req.body);
+      const typedName = String(lastFormFieldValue(req.body.setName ?? req.body.name) || '').trim();
       const set = createThemeSetFromCurrent({
-        name: lastFormFieldValue(req.body.name),
-        includeLogo: isFormFlagEnabled(req.body.includeLogo),
-        from: lastFormFieldValue(req.body.from),
-        to: lastFormFieldValue(req.body.to),
+        name: typedName || tp('admin.ui.sets.defaultName', { n: listThemeSets().length + 1 }),
+        includeLogo: isFormFlagEnabled(req.body.setIncludeLogo ?? req.body.includeLogo),
+        from: lastFormFieldValue(req.body.setFrom ?? req.body.from),
+        to: lastFormFieldValue(req.body.setTo ?? req.body.to),
+        settings,
       });
       afterSetsChange(req, 'created', { id: set.id, name: set.name });
       setsRedirect(res, 'admin.ui.sets.flashCreated');
     } catch (error) { setsError(res, error); }
+  }));
+
+  /* «Посмотреть»: the admin's own requests show this set on the real site (cookie, until closed) */
+  app.get('/admin/settings/ui/sets/preview-stop', requireAdminWeb, (req, res) => {
+    res.clearCookie(THEME_SET_PREVIEW_COOKIE, previewCookieOptions);
+    res.redirect('/admin/appearance#sets');
   });
 
-  app.post('/admin/settings/ui/sets/:id/:action', requireAdminWeb, (req, res) => {
+  app.get('/admin/settings/ui/sets/:id/preview', requireAdminWeb, (req, res) => {
+    const set = getThemeSet(req.params.id);
+    if (!set) return setsError(res, new Error('admin.ui.sets.errorNotFound'));
+    res.cookie(THEME_SET_PREVIEW_COOKIE, set.id, previewCookieOptions);
+    res.redirect('/');
+  });
+
+  app.post('/admin/settings/ui/sets/:id/:action', requireAdminWeb, asyncHandler(async (req, res) => {
     const id = String(req.params.id || '');
     const action = String(req.params.action || '');
     try {
@@ -974,10 +1014,19 @@ export function registerAdminRoutes(app, deps) {
           name: lastFormFieldValue(req.body.name),
           from: lastFormFieldValue(req.body.from),
           to: lastFormFieldValue(req.body.to),
+          /* the row's seasonal decoration checkboxes (marker: an unchecked box sends nothing) */
+          decor: lastFormFieldValue(req.body.decorForm) === '1'
+            ? decorFromFlags({
+              decorSnow: isFormFlagEnabled(req.body.decorSnow),
+              decorLeaves: isFormFlagEnabled(req.body.decorLeaves),
+              decorGarland: isFormFlagEnabled(req.body.decorGarland),
+            })
+            : undefined,
         });
       } else if (action === 'replace') {
-        replaceThemeSetFromCurrent(id);
+        replaceThemeSetFromCurrent(id, { settings: await settingsFromPreview(req.body) });
       } else if (action === 'apply') {
+        res.clearCookie(THEME_SET_PREVIEW_COOKIE, previewCookieOptions);
         const { logoChanged } = applyThemeSetToBase(id);
         if (logoChanged) {
           void syncTelegramBotProfilePhoto({ force: true }).catch((err) => {
@@ -994,7 +1043,7 @@ export function registerAdminRoutes(app, deps) {
       afterSetsChange(req, action, { id });
       setsRedirect(res, `admin.ui.sets.flash_${action === 'up' || action === 'down' ? 'move' : action}`);
     } catch (error) { setsError(res, error); }
-  });
+  }));
 
   app.post('/admin/settings/ui/remove', requireAdminWeb, (req, res) => {
     try {

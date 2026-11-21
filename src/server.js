@@ -12,6 +12,7 @@ import { getClientI18nScript } from './i18n.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import { themeSetPreviewMiddleware } from './services/theme-sets.js';
 import compression from 'compression';
 
 import { config } from './config.js';
@@ -752,6 +753,8 @@ app.get('/set-lang', (req, res) => {
   res.redirect('/');
 });
 app.use(attachSessionUser);
+/* an admin previewing a theme set sees it on every page of his own requests (Admin → Appearance → Наборы) */
+app.use(themeSetPreviewMiddleware);
 app.use(bookRefUrlRewrite);
 app.use(csrfGuard);
 

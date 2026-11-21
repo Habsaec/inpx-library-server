@@ -12,7 +12,9 @@
  * The active set is a pure function of the clock and those settings (no timers, no writes), so every
  * cluster worker shows the same set. ui-customization reads its appearance settings and files through
  * `themeSetSetting()` / `themeSetAssetPath()`; admin appearance routes run inside
- * `runWithBaseAppearance()` and always see and edit the main look. The Telegram bot avatar reads
+ * `runWithBaseAppearance()` and always see and edit the main look. An admin can look at one set on
+ * the real site before using it (`runWithThemeSetPreview`, cookie `inpx_ui_preview`): it wins over
+ * the schedule for that admin's own requests only. The Telegram bot avatar reads
  * `data/ui/logo.png` directly and is never switched by a schedule.
  */
 import fs from 'node:fs';
@@ -70,6 +72,32 @@ export function baseAppearanceMiddleware(req, res, next) {
 
 export function isBaseAppearanceContext() {
   return baseStore.getStore() === true;
+}
+
+/* ── Admin preview of one set ── */
+
+export const THEME_SET_PREVIEW_COOKIE = 'inpx_ui_preview';
+const previewStore = new AsyncLocalStorage();
+
+/** Runs `fn` with `set` shown instead of the scheduled look (outside the base-appearance context). */
+export function runWithThemeSetPreview(set, fn) {
+  return previewStore.run(set, fn);
+}
+
+/** The set an admin is previewing in this request, or null. */
+export function currentThemeSetPreview() {
+  return previewStore.getStore() || null;
+}
+
+/**
+ * Express middleware (after the session user is attached): an admin with the preview cookie of an
+ * existing set sees that set for the rest of the request. Anyone else, or a stale id, is untouched.
+ */
+export function themeSetPreviewMiddleware(req, res, next) {
+  const id = req.user?.role === 'admin' ? String(req.cookies?.[THEME_SET_PREVIEW_COOKIE] || '') : '';
+  const set = id ? getThemeSet(id) : null;
+  if (!set) return next();
+  return previewStore.run(set, next);
 }
 
 /* ── Parsing ── */
@@ -259,6 +287,8 @@ export function upcomingThemeSetChanges(date = new Date(), count = 3, schedule =
 /** Set whose values the site shows right now; null in the base context or when the main look is on. */
 export function activeThemeSetOverride() {
   if (isBaseAppearanceContext()) return null;
+  const preview = previewStore.getStore();
+  if (preview) return preview;
   return resolveThemeSetAt(new Date());
 }
 
@@ -267,6 +297,9 @@ export function activeThemeSetOverride() {
 function setKeys(set) {
   return set.includeLogo ? [...THEME_SET_KEYS, ...THEME_SET_LOGO_KEYS] : THEME_SET_KEYS;
 }
+
+/** Every setting a set may carry (with the logo option), e.g. to read them out of a dry-run save. */
+export const THEME_SET_ALL_KEYS = Object.freeze([...THEME_SET_KEYS, ...THEME_SET_LOGO_KEYS]);
 
 function setCoversFile(set, fileName) {
   return THEME_SET_FILES.includes(fileName) || (set.includeLogo && THEME_SET_LOGO_FILES.includes(fileName));
@@ -308,10 +341,17 @@ function newSetId(existing) {
   }
 }
 
-function snapshotInto(set) {
+/**
+ * Copies the look into `set`: the settings from `values` (key → value, e.g. the unsaved live preview
+ * normalized by a dry-run save) or, without it, the saved main look; the pictures always from the main
+ * look (uploads are saved at once, there is no unsaved picture).
+ */
+function snapshotInto(set, values = null) {
   fs.mkdirSync(UI_DIR, { recursive: true });
   const settings = {};
-  for (const key of setKeys(set)) settings[key] = getSetting(key);
+  for (const key of setKeys(set)) {
+    settings[key] = values && typeof values[key] === 'string' ? values[key] : getSetting(key);
+  }
   const files = [];
   const allFiles = set.includeLogo ? [...THEME_SET_FILES, ...THEME_SET_LOGO_FILES] : THEME_SET_FILES;
   for (const fileName of allFiles) {
@@ -334,8 +374,11 @@ function removeSetFiles(id) {
   }
 }
 
-/** Saves the main look as a new set. Throws `admin.ui.sets.errorLimit` at MAX_THEME_SETS. */
-export function createThemeSetFromCurrent({ name = '', includeLogo = false, from = '', to = '' } = {}) {
+/**
+ * Saves the look as a new set: `settings` (key → value, the unsaved preview) or the saved main look.
+ * Throws `admin.ui.sets.errorLimit` at MAX_THEME_SETS.
+ */
+export function createThemeSetFromCurrent({ name = '', includeLogo = false, from = '', to = '', settings = null } = {}) {
   const list = listThemeSets();
   if (list.length >= MAX_THEME_SETS) throw new Error('admin.ui.sets.errorLimit');
   const now = new Date().toISOString();
@@ -346,14 +389,17 @@ export function createThemeSetFromCurrent({ name = '', includeLogo = false, from
     from: normalizeMonthDay(from),
     to: normalizeMonthDay(to),
     createdAt: now,
-  });
+  }, settings);
   const clean = sanitizeSet(set);
   saveThemeSets([...list, clean]);
   return clean;
 }
 
-/** Renames a set / changes its day range. */
-export function updateThemeSet(id, { name, from, to } = {}) {
+/**
+ * Renames a set / changes its day range / its seasonal decoration (`decor` = the normalized
+ * comma list from the caller, e.g. decorFromFlags of the set row checkboxes).
+ */
+export function updateThemeSet(id, { name, from, to, decor } = {}) {
   const list = listThemeSets();
   const idx = list.findIndex((s) => s.id === id);
   if (idx < 0) throw new Error('admin.ui.sets.errorNotFound');
@@ -361,19 +407,23 @@ export function updateThemeSet(id, { name, from, to } = {}) {
   if (name !== undefined) next.name = String(name || '').trim().slice(0, MAX_THEME_SET_NAME) || list[idx].name;
   if (from !== undefined) next.from = normalizeMonthDay(from);
   if (to !== undefined) next.to = normalizeMonthDay(to);
+  if (decor !== undefined) next.settings = { ...list[idx].settings, ui_decor: String(decor || '') };
   const updated = [...list];
   updated[idx] = sanitizeSet(next);
   saveThemeSets(updated);
   return updated[idx];
 }
 
-/** Replaces a set's contents with the current main look (name, dates and logo option stay). */
-export function replaceThemeSetFromCurrent(id) {
+/**
+ * Replaces a set's contents with the look (`settings` = the unsaved preview, else the saved main look);
+ * name, dates and logo option stay.
+ */
+export function replaceThemeSetFromCurrent(id, { settings = null } = {}) {
   const list = listThemeSets();
   const idx = list.findIndex((s) => s.id === id);
   if (idx < 0) throw new Error('admin.ui.sets.errorNotFound');
   const updated = [...list];
-  updated[idx] = sanitizeSet(snapshotInto(list[idx]));
+  updated[idx] = sanitizeSet(snapshotInto(list[idx], settings));
   saveThemeSets(updated);
   return updated[idx];
 }
@@ -396,7 +446,7 @@ export function deleteThemeSet(id) {
 }
 
 /**
- * Copies a set into the main look (to edit it there and save it back with «Обновить из текущего»).
+ * Copies a set into the main look (to edit it there and save it back with «Записать предпросмотр»).
  * Returns `{ logoChanged }` so the caller can resync the Telegram bot avatar.
  */
 export function applyThemeSetToBase(id) {

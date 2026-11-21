@@ -3658,6 +3658,29 @@ export function getSetting(key) {
   return value;
 }
 
+/**
+ * Runs `fn` against the settings as if its writes happened, then rolls every write back (one
+ * transaction, never committed — other cluster workers see nothing). Returns what `fn` returned.
+ * Used to turn an unsaved form (e.g. the appearance live preview) into normalized setting values
+ * through the very same save code. The settings cache is dropped afterwards (it saw the rolled-back
+ * values).
+ */
+export function dryRunSettings(fn) {
+  const ROLLBACK = Symbol('rollback');
+  let out;
+  try {
+    db.transaction(() => {
+      out = fn();
+      throw ROLLBACK;
+    })();
+  } catch (error) {
+    if (error !== ROLLBACK) throw error;
+  } finally {
+    _settingCache.clear();
+  }
+  return out;
+}
+
 let _stmtSetSetting = null;
 export function setSetting(key, value) {
   _stmtSetSetting ??= db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');

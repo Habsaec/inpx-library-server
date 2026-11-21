@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../src/config.js';
-import { getSetting, setSetting } from '../src/db.js';
+import { getSetting, setSetting, dryRunSettings } from '../src/db.js';
 import {
   normalizeMonthDay,
   monthDayInRange,
@@ -22,8 +22,11 @@ import {
   themeSetSetting,
   themeSetAssetPath,
   themeSetFileName,
+  runWithThemeSetPreview,
+  currentThemeSetPreview,
+  THEME_SET_ALL_KEYS,
 } from '../src/services/theme-sets.js';
-import { getUiCustomization, getPublicUiSettingsJson, invalidateUiCustomizationCache } from '../src/services/ui-customization.js';
+import { getUiCustomization, getPublicUiSettingsJson, invalidateUiCustomizationCache, saveUiSettings } from '../src/services/ui-customization.js';
 
 const uiDir = path.join(config.dataDir, 'ui');
 const KEYS = ['ui_glass_color_dark', 'ui_accent_dark', 'ui_show_logo', 'ui_header_height'];
@@ -177,8 +180,48 @@ test('seasonal decoration is an appearance setting carried by theme sets', async
   assert.equal(getUiCustomization().decor, 'snow');
   saveUiSettings({ decor: 'drifts, snow,garland,bogus' });
   invalidateUiCustomizationCache();
-  assert.equal(getUiCustomization().decor, 'snow,garland,drifts', 'any combination, canonical order, unknown names dropped');
+  assert.equal(getUiCustomization().decor, 'snow,garland', 'any combination, canonical order, unknown and retired (drifts) names dropped');
   saveUiSettings({ decor: '<script>' });
   invalidateUiCustomizationCache();
   assert.equal(getUiCustomization().decor, '', 'unknown values are dropped');
+});
+
+test('a set can be saved from the unsaved preview: dry-run save, the main look stays', () => {
+  resetAll();
+  setSetting('ui_accent_dark', '#112233');
+  const values = dryRunSettings(() => {
+    saveUiSettings({ accentDark: '#AA5500', headerHeight: '300', decor: 'snow,garland' });
+    return Object.fromEntries(THEME_SET_ALL_KEYS.map((key) => [key, getSetting(key)]));
+  });
+  assert.equal(values.ui_accent_dark, '#aa5500', 'normalized by the real save code');
+  assert.equal(values.ui_header_height, '300');
+  assert.equal(values.ui_decor, 'snow,garland');
+  assert.equal(getSetting('ui_accent_dark'), '#112233', 'rolled back: the main look is untouched');
+  assert.equal(getSetting('ui_header_height'), '');
+
+  const set = createThemeSetFromCurrent({ name: 'Preview', settings: values });
+  assert.equal(set.settings.ui_accent_dark, '#aa5500');
+  assert.equal(set.settings.ui_decor, 'snow,garland');
+  const replaced = replaceThemeSetFromCurrent(set.id, { settings: { ...values, ui_accent_dark: '#00ff00' } });
+  assert.equal(replaced.settings.ui_accent_dark, '#00ff00');
+  assert.equal(updateThemeSet(set.id, { decor: 'leaves' }).settings.ui_decor, 'leaves', 'a set row can change its decoration');
+  assert.equal(updateThemeSet(set.id, { name: 'Renamed' }).settings.ui_decor, 'leaves', 'renaming keeps it');
+  const fromSaved = replaceThemeSetFromCurrent(set.id);
+  assert.equal(fromSaved.settings.ui_accent_dark, '#112233', 'without values: the saved main look, as before');
+  resetAll();
+});
+
+test('an admin preview of a set wins over the schedule, but not in the admin (base) context', () => {
+  resetAll();
+  setSetting('ui_accent_dark', '#112233');
+  const set = createThemeSetFromCurrent({ name: 'P' });
+  const withAccent = replaceThemeSetFromCurrent(set.id, { settings: { ui_accent_dark: '#445566' } });
+  assert.equal(themeSetSetting('ui_accent_dark'), '#112233', 'schedule off: main look');
+  runWithThemeSetPreview(withAccent, () => {
+    assert.equal(currentThemeSetPreview()?.id, set.id);
+    assert.equal(themeSetSetting('ui_accent_dark'), '#445566');
+    runWithBaseAppearance(() => assert.equal(themeSetSetting('ui_accent_dark'), '#112233'));
+  });
+  assert.equal(currentThemeSetPreview(), null);
+  resetAll();
 });

@@ -33,6 +33,8 @@ import { canOpenInWebReader } from '../utils/book-format.js';
 import { getUiCustomization, getThemeCssVars, coverFallbackToCssVars, manuscriptToCssVars, hasUiThemeColorsConfigured, usesPanelGlass, hasUiThemeShapeConfigured, hasUiThemeTypographyConfigured, FONT_FAMILY_WEBFONT, DISPLAY_FONT_WEBFONT, COVER_TITLE_FONTS, bundledCoverUrl } from '../services/ui-customization.js';
 import { balanceHtmlFragment, stripFlibustaMediaPlaceholders, unwrapEscapedMarkup } from '../html-sanitize.js';
 import { APP_DOWNLOAD_URL, appDownloadQrSvg } from '../app-download-qr.js';
+import { currentThemeSetPreview } from '../services/theme-sets.js';
+import { csrfTokenForSession } from '../services/session.js';
 
 export { t, tp, getLocale, plural, countLabel, formatLocaleInt, formatLocaleDateShort, formatLocaleDateTimeShort, formatLocaleDateLong, serializeClientI18n, clientI18nScriptUrl };
 export { formatAuthorLabel, authorInitials, formatLanguageLabel, parseGenreCodes, localizeGenreLabel };
@@ -1904,6 +1906,26 @@ function renderReadProgressJson(user, isAdmin) {
     : '';
 }
 
+/**
+ * Admin previewing a theme set (cookie, Admin → Appearance → Наборы → «Посмотреть»): a bar on top of
+ * every page with «Применить» (make it the main look) and «Закрыть». Only the admin sees the set.
+ */
+function renderThemeSetPreviewBanner(user, csrfToken = '') {
+  const set = currentThemeSetPreview();
+  if (!set) return '';
+  const token = csrfToken || csrfTokenForSession(user.username, user.sessionGen || 0);
+  return `<div class="theme-set-preview-bar" role="status">
+    <span class="theme-set-preview-bar-text">${escapeHtml(tp('admin.ui.sets.previewBanner', { name: set.name }))}</span>
+    <span class="theme-set-preview-bar-actions">
+      <form method="post" action="/admin/settings/ui/sets/${escapeHtml(set.id)}/apply" data-confirm="${escapeHtml(t('admin.ui.sets.confirmApply'))}">
+        ${csrfHiddenField(token)}
+        <button type="submit" class="button button-primary">${escapeHtml(t('admin.ui.sets.apply'))}</button>
+      </form>
+      <a class="button" href="/admin/settings/ui/sets/preview-stop">${escapeHtml(t('admin.ui.sets.previewClose'))}</a>
+    </span>
+  </div>`;
+}
+
 export function pageShell({ title, content, user, query = '', field = 'all', stats, flash = '', indexStatus, breadcrumbs = [], mode = 'user', currentPath = '', csrfToken = '', readBookIds = null }) {
   const isAdmin = mode === 'admin';
   const isAuthenticated = Boolean(user);
@@ -1977,7 +1999,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
     ${flash ? renderAlert('success', flash) : ''}
     ${renderBreadcrumbs(breadcrumbs)}
     <div class="layout">
-      <main id="main-content" class="panel">${content}</main>
+      <main id="main-content" class="panel">${canAccessAdmin ? renderThemeSetPreviewBanner(user, csrfToken) : ''}${content}</main>
     </div>
     </div>
   </div>

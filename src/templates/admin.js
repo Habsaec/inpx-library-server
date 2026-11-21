@@ -1791,6 +1791,15 @@ function renderThemeSetsPanel({ sets = [], schedule = {}, active = null, upcomin
             <input type="text" name="name" value="${escapeHtml(set.name)}" maxlength="60" aria-label="${escapeHtml(t('admin.ui.sets.name'))}" required>
             ${active?.id === set.id ? `<span class="ui-theme-set-badge">${escapeHtml(t('admin.ui.sets.activeBadge'))}</span>` : ''}
           </div>
+          <div class="ui-theme-set-decor">
+            <input type="hidden" name="decorForm" value="1">
+            <span>${escapeHtml(t('admin.ui.decor'))}:</span>
+            ${['snow', 'leaves', 'garland'].map((v) => {
+    const key = `${v[0].toUpperCase()}${v.slice(1)}`;
+    const on = String(set.settings?.ui_decor || '').split(',').includes(v);
+    return `<label class="admin-checkbox-label"><input type="checkbox" name="decor${key}" value="1" ${on ? 'checked' : ''}> ${escapeHtml(t(`admin.ui.decor${key}`))}</label>`;
+  }).join('')}
+          </div>
           <div class="ui-theme-set-dates">
             <label>${escapeHtml(t('admin.ui.sets.from'))} <input type="text" name="from" value="${escapeHtml(md(set.from))}" placeholder="20.12" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
             <label>${escapeHtml(t('admin.ui.sets.to'))} <input type="text" name="to" value="${escapeHtml(md(set.to))}" placeholder="10.01" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
@@ -1801,8 +1810,9 @@ function renderThemeSetsPanel({ sets = [], schedule = {}, active = null, upcomin
         <div class="ui-theme-set-actions">
           ${index > 0 ? action(set, 'up', '↑') : ''}
           ${index < sets.length - 1 ? action(set, 'down', '↓') : ''}
+          <a class="button" href="/admin/settings/ui/sets/${escapeHtml(set.id)}/preview">${escapeHtml(t('admin.ui.sets.preview'))}</a>
           ${action(set, 'apply', t('admin.ui.sets.apply'))}
-          ${action(set, 'replace', t('admin.ui.sets.replace'))}
+          <button type="submit" class="button" form="ui-main-form" formaction="/admin/settings/ui/sets/${escapeHtml(set.id)}/replace" name="fromPreview" value="1" data-confirm="${escapeHtml(t('admin.ui.sets.confirmReplace'))}">${escapeHtml(t('admin.ui.sets.replace'))}</button>
           ${action(set, 'delete', t('admin.ui.sets.delete'), 'button-danger')}
         </div>
       </div>
@@ -1848,17 +1858,17 @@ function renderThemeSetsPanel({ sets = [], schedule = {}, active = null, upcomin
       <div class="admin-card">
         <div class="admin-card-title">${escapeHtml(t('admin.ui.sets.createTitle'))}</div>
         <p class="admin-card-subtitle">${escapeHtml(t('admin.ui.sets.createHint'))}</p>
-        <form method="post" action="/admin/settings/ui/sets/create" class="ui-theme-set-create">
-          ${csrfHiddenField(csrfToken)}
-          <input type="text" name="name" maxlength="60" placeholder="${escapeHtml(t('admin.ui.sets.namePlaceholder'))}" required aria-label="${escapeHtml(t('admin.ui.sets.name'))}">
-          <label>${escapeHtml(t('admin.ui.sets.from'))} <input type="text" name="from" placeholder="20.12" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
-          <label>${escapeHtml(t('admin.ui.sets.to'))} <input type="text" name="to" placeholder="10.01" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
+        <!-- fields belong to #ui-main-form: the button posts the unsaved live preview to the set action -->
+        <div class="ui-theme-set-create">
+          <input type="text" name="setName" form="ui-main-form" maxlength="60" placeholder="${escapeHtml(t('admin.ui.sets.namePlaceholder'))}" aria-label="${escapeHtml(t('admin.ui.sets.name'))}">
+          <label>${escapeHtml(t('admin.ui.sets.from'))} <input type="text" name="setFrom" form="ui-main-form" placeholder="20.12" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
+          <label>${escapeHtml(t('admin.ui.sets.to'))} <input type="text" name="setTo" form="ui-main-form" placeholder="10.01" pattern="\\d{1,2}\\.\\d{1,2}" inputmode="decimal" size="5"></label>
           <label class="admin-checkbox-label">
-            <input type="checkbox" name="includeLogo" value="1">
+            <input type="checkbox" name="setIncludeLogo" form="ui-main-form" value="1">
             ${escapeHtml(t('admin.ui.sets.includeLogo'))}
           </label>
-          <button type="submit" class="button button-primary">${escapeHtml(t('admin.ui.sets.create'))}</button>
-        </form>
+          <button type="submit" class="button button-primary" form="ui-main-form" formaction="/admin/settings/ui/sets/create" name="fromPreview" value="1">${escapeHtml(t('admin.ui.sets.create'))}</button>
+        </div>
         <span class="admin-field-hint">${escapeHtml(t('admin.ui.sets.logoHint'))}</span>
       </div>
 
@@ -2292,7 +2302,7 @@ export function renderAdminAppearance({
         <div class="admin-field-group admin-field-group--compact">
           <span class="admin-field-label">${escapeHtml(t('admin.ui.decor'))}</span>
           <div class="ui-decor-options">
-            ${['snow', 'leaves', 'garland', 'drifts'].map((v) => {
+            ${['snow', 'leaves', 'garland'].map((v) => {
     const name = `decor${v[0].toUpperCase()}${v.slice(1)}`;
     const on = String(ui.decor || '').split(',').includes(v);
     return `<label class="admin-checkbox-label">
