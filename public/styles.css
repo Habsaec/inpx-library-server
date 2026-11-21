@@ -3478,8 +3478,7 @@ html[data-theme="dark"]:not([data-ui-cover-dim="0"]) .card:hover .cover::after {
 }
 
 /* ── Seasonal decoration (Admin → Appearance → Effects, part of theme sets) ──
-   One fixed layer under the content; particles are tiled radial gradients on two pseudo-elements twice
-   the viewport tall, moved by `transform` only (compositor work, no per-frame repaint). */
+   public/decor.js draws snow / tumbling leaves on a canvas inside this fixed layer under the content. */
 .ui-decor {
   display: none;
 }
@@ -3494,74 +3493,10 @@ html[data-ui-decor="leaves"] .ui-decor {
   pointer-events: none;
 }
 
-html[data-ui-decor] .ui-decor::before,
-html[data-ui-decor] .ui-decor::after {
-  content: '';
+.ui-decor-canvas {
   position: absolute;
-  /* one tile above the viewport: falling exactly one tile per loop is seamless */
-  top: calc(-1 * var(--tile));
-  bottom: 0;
-  left: -10%;
-  right: -10%;
-  background-size: var(--tile) var(--tile);
-  animation: ui-decor-fall var(--dur) linear infinite;
-  will-change: transform;
-}
-
-html[data-ui-decor="snow"] .ui-decor::before {
-  --tile: 220px;
-  --dur: 9s;
-  background-image:
-    radial-gradient(circle at 20% 30%, var(--decor-flake, rgba(255, 255, 255, 0.85)) 0 2px, transparent 3px),
-    radial-gradient(circle at 70% 60%, var(--decor-flake-2, rgba(255, 255, 255, 0.7)) 0 1.5px, transparent 2.5px),
-    radial-gradient(circle at 45% 85%, var(--decor-flake-3, rgba(255, 255, 255, 0.6)) 0 1px, transparent 2px);
-}
-
-html[data-ui-decor="snow"] .ui-decor::after {
-  --tile: 340px;
-  --dur: 19s;
-  background-image:
-    radial-gradient(circle at 35% 20%, var(--decor-flake, rgba(255, 255, 255, 0.9)) 0 2.5px, transparent 3.5px),
-    radial-gradient(circle at 80% 75%, var(--decor-flake-2, rgba(255, 255, 255, 0.65)) 0 1.5px, transparent 2.5px);
-  animation: ui-decor-fall var(--dur) linear infinite, ui-decor-sway 7s ease-in-out infinite alternate;
-  opacity: 0.8;
-}
-
-/* white flakes vanish on parchment: a cool blue-grey reads as snow there */
-html[data-theme="light"][data-ui-decor="snow"] .ui-decor {
-  --decor-flake: rgba(120, 145, 175, 0.5);
-  --decor-flake-2: rgba(120, 145, 175, 0.4);
-  --decor-flake-3: rgba(120, 145, 175, 0.32);
-}
-
-html[data-ui-decor="leaves"] .ui-decor::before {
-  --tile: 240px;
-  --dur: 16s;
-  background-image:
-    radial-gradient(ellipse 12px 6px at 25% 25%, rgba(224, 128, 44, 0.85) 0 65%, transparent 100%),
-    radial-gradient(ellipse 10px 5px at 75% 65%, rgba(190, 64, 38, 0.8) 0 65%, transparent 100%),
-    radial-gradient(ellipse 9px 4.5px at 50% 90%, rgba(236, 182, 64, 0.75) 0 65%, transparent 100%);
-  animation: ui-decor-fall var(--dur) linear infinite, ui-decor-sway 9s ease-in-out infinite alternate;
-}
-
-html[data-ui-decor="leaves"] .ui-decor::after {
-  --tile: 360px;
-  --dur: 27s;
-  background-image:
-    radial-gradient(ellipse 14px 7px at 55% 40%, rgba(232, 176, 62, 0.8) 0 65%, transparent 100%),
-    radial-gradient(ellipse 9px 4.5px at 15% 80%, rgba(168, 98, 42, 0.75) 0 65%, transparent 100%);
-  opacity: 0.85;
-}
-
-@keyframes ui-decor-fall {
-  from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(0, var(--tile), 0); }
-}
-
-/* the independent `translate` property: sways without fighting the fall's transform */
-@keyframes ui-decor-sway {
-  from { translate: -14px 0; }
-  to { translate: 14px 0; }
+  inset: 0;
+  display: block;
 }
 
 @media (prefers-reduced-motion: reduce) {

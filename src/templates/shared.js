@@ -82,6 +82,7 @@ const READER_JS_PATH = path.join(config.publicDir, 'reader.js');
 const READER_CSS_PATH = path.join(config.publicDir, 'reader.css');
 const TAP_ZONES_PATH = path.join(config.publicDir, 'tap-zones.js');
 const BOOK_REF_PATH = path.join(config.publicDir, 'book-ref.js');
+const DECOR_PATH = path.join(config.publicDir, 'decor.js');
 const POSITION_SYNC_PATH = path.join(config.publicDir, 'position-sync.js');
 const READER_SHARED_DIR = path.join(config.publicDir, 'reader-shared');
 const FOLIATE_DIR = path.join(config.publicDir, 'foliate');
@@ -144,9 +145,9 @@ function listReaderSharedAssetPaths() {
 function computeStaticAssetVersion() {
   const readerShared = listReaderSharedAssetPaths();
   const files = USE_MINIFIED_ASSETS
-    ? [APP_MIN_PATH, CSS_MIN_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH,
+    ? [APP_MIN_PATH, CSS_MIN_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH, DECOR_PATH,
       ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH]
-    : [APP_SRC_PATH, CSS_SRC_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH,
+    : [APP_SRC_PATH, CSS_SRC_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH, DECOR_PATH,
       ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH];
   const hash = crypto.createHash('md5');
   for (const p of files) {
@@ -1983,6 +1984,7 @@ export function pageShell({ title, content, user, query = '', field = 'all', sta
   <button class="scroll-to-top" type="button" data-scroll-top aria-label="${escapeHtml(t('scrollTop'))}">↑</button>
   <script src="/book-ref.js?v=${STATIC_ASSET_VERSION}" defer></script>
   <script src="/${APP_ASSET_FILE}?v=${STATIC_ASSET_VERSION}" defer></script>
+  <script src="/decor.js?v=${STATIC_ASSET_VERSION}" defer></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
