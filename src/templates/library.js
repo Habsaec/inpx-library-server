@@ -26,6 +26,7 @@ import { pickHomeWelcomeQuote, getHomeWelcomeQuotePool } from '../home-welcome-q
 import { formatSingleAuthorName } from '../inpx.js';
 import { encodeBookRef } from '../utils/book-ref.js';
 import { getUserHideRead } from '../db.js';
+import { attachCoverTones } from '../services/cover-tones.js';
 import { normalizeHomeLayout, isHomeSectionVisible, orderShelves, WEB_HOME_SECTION_IDS } from '../home-layout.js';
 import { READER_ICONS, READER_THEMES, READER_EINK_UA_RE, readerQuickTile, readerSettingsRow } from './reader-chrome.js';
 
@@ -1513,6 +1514,33 @@ export function renderFacetBooks({ title, items, total, page, pageSize, user, st
   return pageShell({ title, content, user, stats, indexStatus, breadcrumbs, currentPath: sectionPath, csrfToken, readBookIds });
 }
 
+const AUTHOR_FAN_MAX = 5;
+
+/**
+ * Up to five covers of an author's books fanned out (author page without a portrait). Books whose cover
+ * tone is known come first — the server has seen a real cover — and the tone is the backdrop while the
+ * thumb loads; a thumb that fails removes itself. Empty string when the author has no books here.
+ */
+export function renderAuthorCoverFan(books = []) {
+  const seen = new Set();
+  const pool = [];
+  for (const book of books) {
+    if (!book?.id || seen.has(book.id)) continue;
+    seen.add(book.id);
+    pool.push(book);
+    if (pool.length >= 60) break;
+  }
+  if (!pool.length) return '';
+  attachCoverTones(pool.filter((b) => !b.coverColor));
+  const picked = [...pool.filter((b) => b.coverColor), ...pool.filter((b) => !b.coverColor)].slice(0, AUTHOR_FAN_MAX);
+  const n = picked.length;
+  return `<span class="author-cover-fan" style="--n:${n}" aria-hidden="true">${picked.map((book, i) => {
+    const tone = /^#[0-9a-f]{6}$/.test(String(book.coverColor || '')) ? `;background-color:${book.coverColor}` : '';
+    const lqip = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/.test(String(book.coverLqip || '')) ? `;background-image:url(${book.coverLqip});background-size:100% 100%` : '';
+    return `<img class="author-cover-fan-item" style="--i:${i}${tone}${lqip}" src="${escapeHtml(apiBookPath(book.id, 'cover-thumb'))}" alt="" loading="lazy" draggable="false" onerror="this.remove()">`;
+  }).join('')}</span>`;
+}
+
 export function renderAuthorFacetPage({
   title,
   displayName,
@@ -1547,8 +1575,10 @@ export function renderAuthorFacetPage({
   const heroPortrait = authorPortraitUrl
     ? `<img class="cover-image is-loaded author-facet-portrait" src="${escapeHtml(authorPortraitUrl)}" alt="" loading="lazy">`
     : '';
-  const heroFallback = authorPortraitUrl
-    ? ''
+  /* No portrait: a fan of the author's covers instead of the leather plate with the name. */
+  const fanHtml = authorPortraitUrl ? '' : renderAuthorCoverFan([...standaloneBooks, ...series.flatMap((s) => s.books || [])]);
+  const heroFallback = authorPortraitUrl || fanHtml
+    ? fanHtml
     : `<span class="cover-fallback author-facet-fallback" aria-hidden="true">
               ${renderCoverFallbackImage()}
         <span class="cover-fallback-overlay"></span>
@@ -1572,8 +1602,8 @@ export function renderAuthorFacetPage({
   const hero = `
     <section class="book-detail-shell author-facet-hero">
       <div class="book-detail-main card-detail-panel">
-        <div class="book-detail-cover">
-          <div class="cover ${authorPortraitUrl ? '' : 'cover-fallback-active'}">
+        <div class="book-detail-cover${fanHtml ? ' has-cover-fan' : ''}">
+          <div class="cover ${authorPortraitUrl || fanHtml ? '' : 'cover-fallback-active'}">
             ${heroPortrait}
             ${heroFallback}
           </div>

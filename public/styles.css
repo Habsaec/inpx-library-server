@@ -3464,6 +3464,54 @@ html[data-theme="light"] .cover {
   opacity: 1;
 }
 
+/* ── Author page without a portrait: a fan of the author's covers ── */
+.book-detail-cover.has-cover-fan .cover {
+  overflow: visible;
+  background: none;
+  box-shadow: none;
+}
+
+.book-detail-cover.has-cover-fan .cover::before,
+.book-detail-cover.has-cover-fan .cover::after {
+  display: none;
+}
+
+.author-cover-fan {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.author-cover-fan-item {
+  --mid: calc((var(--n) - 1) / 2);
+  --off: calc(var(--i) - var(--mid));
+  /* one cover nearly fills the box, a full fan of five leaves room for the tilt */
+  --w: calc(86% - min(var(--n) - 1, 2) * 12%);
+  position: absolute;
+  left: 50%;
+  /* the box and the cover share the 2:3 shape, so width % and height % line up */
+  bottom: calc((100% - var(--w)) / 2 - min(var(--n) - 1, 2) * 3%);
+  width: var(--w);
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-sm, 4px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+  transform-origin: 50% 110%;
+  transform: translateX(calc(-50% + var(--off) * 11%)) rotate(calc(var(--off) * 8deg));
+  /* the middle card on top, the outer ones under it */
+  z-index: calc(10 - max(var(--off), -1 * var(--off)) * 2);
+  background-color: var(--surface-hover);
+}
+
+html[data-theme="light"] .author-cover-fan-item {
+  box-shadow: 0 6px 16px rgba(55, 40, 24, 0.22), 0 1px 3px rgba(55, 40, 24, 0.2);
+}
+
+html[data-eink="1"] .author-cover-fan-item {
+  box-shadow: none;
+  border: 1px solid #000;
+}
+
 /* ── Page transitions (cross-document View Transitions, Chrome 126+) ──
    The book page cover is always named; the list card is named by the head boot script (pageswap /
    pagereveal) only for the one book being opened or returned to. Browsers without support ignore all of

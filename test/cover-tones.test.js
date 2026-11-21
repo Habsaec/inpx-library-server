@@ -64,3 +64,25 @@ test('stored tones ride on book payloads and cover markup; invalidation drops th
   assert.equal(hasCoverTone(id), false);
   db.prepare('DELETE FROM books WHERE id = ?').run(id);
 });
+
+test('author cover fan: books with a known tone first, at most five, safe styles only', async () => {
+  const { renderAuthorCoverFan } = await import('../src/templates/library.js');
+  assert.equal(renderAuthorCoverFan([]), '');
+  const books = Array.from({ length: 8 }, (_, i) => ({ id: `fan-${i}`, title: `B${i}` }));
+  books[6].coverColor = '#336699';
+  books[6].coverLqip = 'data:image/webp;base64,AAAA';
+  books[7].coverColor = 'red;}';
+  const html = renderAuthorCoverFan(books);
+  assert.equal((html.match(/author-cover-fan-item/g) || []).length, 5);
+  assert.ok(html.indexOf('fan-6') < html.indexOf('fan-0'), 'the book with a tone leads');
+  assert.match(html, /background-color:#336699/);
+  assert.doesNotMatch(html, /red;\}/);
+});
+
+test('API tone hook also covers the author grouped shape', async () => {
+  const { attachCoverTonesToBody } = await import('../src/services/cover-tones.js');
+  const body = { series: [{ name: 's', books: [{ id: 'x1', title: 'a' }] }], standaloneBooks: [{ id: 'x2', title: 'b' }] };
+  assert.doesNotThrow(() => attachCoverTonesToBody(body));
+  assert.doesNotThrow(() => attachCoverTonesToBody(null));
+  assert.doesNotThrow(() => attachCoverTonesToBody({ items: 'nope' }));
+});

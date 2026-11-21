@@ -106,19 +106,26 @@ const looksLikeBook = (x) => x && typeof x === 'object' && typeof x.id === 'stri
 /**
  * Tones for an API response body at send time (list results are cached, often built before a tone
  * existed): `items[]` of books, plus one level of nesting — `items[].items[]` (home shelves) and
- * `items[].book` (collections). One query for the whole body.
+ * `items[].book` (collections) — and the author grouped shape. One query for the whole body.
  */
 export function attachCoverTonesToBody(body) {
-  if (!body || typeof body !== 'object' || !Array.isArray(body.items)) return;
+  if (!body || typeof body !== 'object') return;
   const books = [];
-  for (const item of body.items) {
-    if (looksLikeBook(item)) books.push(item);
-    else if (item && typeof item === 'object') {
-      if (Array.isArray(item.items)) for (const b of item.items) if (looksLikeBook(b)) books.push(b);
-      if (looksLikeBook(item.book)) books.push(item.book);
+  const take = (list) => { if (Array.isArray(list)) for (const b of list) if (looksLikeBook(b)) books.push(b); };
+  if (Array.isArray(body.items)) {
+    for (const item of body.items) {
+      if (looksLikeBook(item)) books.push(item);
+      else if (item && typeof item === 'object') {
+        take(item.items);
+        if (looksLikeBook(item.book)) books.push(item.book);
+      }
     }
   }
-  attachCoverTones(books.filter((b) => !b.coverColor));
+  /* author grouped: `standaloneBooks`, `books`, `series[].books` */
+  take(body.standaloneBooks);
+  take(body.books);
+  if (Array.isArray(body.series)) for (const s of body.series) take(s?.books);
+  if (books.length) attachCoverTones(books.filter((b) => !b.coverColor));
 }
 
 export function setCoverTone(bookId, color, lqip = '') {
