@@ -303,17 +303,50 @@ export const makeFB2 = async blob => {
     })
 
     /**
-     * Paper-book flow: keep the fiction body as one Foliate document so the next
-     * chapter can start on the same page. Notes stay a separate non-linear section.
+     * Paper-book flow: the fiction body used to be stitched into ONE Foliate
+     * document so the next chapter could start on the same page. On large books
+     * that made the paginator lay out the whole book up front — a 3.3 MB novel
+     * took ~43 s before the first page appeared.
+     *
+     * Now the body is split into buckets of whole top-level blocks, and the
+     * paginator lays out one bucket at a time, so reading starts in seconds.
+     * Buckets are byte-bounded so a single huge chapter still splits, and they
+     * never break a chapter unless the chapter itself exceeds the limit.
      */
+    const STITCH_MAX_BYTES = 220 * 1024
+    const blockBytes = (el) => {
+        try { return (el.outerHTML || '').length } catch { return 0 }
+    }
     const stitchFictionEls = (parts) => {
         const els = parts.map(({ el }) => el).filter(Boolean)
-        if (!els.length) return null
-        if (els.length === 1) return els[0]
-        const wrap = els[0].ownerDocument.createElement('div')
-        wrap.classList.add('fb2-body')
-        for (const el of els) wrap.appendChild(el)
-        return wrap
+        if (!els.length) return []
+        const total = els.reduce((sum, el) => sum + blockBytes(el), 0)
+        if (total <= STITCH_MAX_BYTES) {
+            if (els.length === 1) return [els[0]]
+            const single = els[0].ownerDocument.createElement('div')
+            single.classList.add('fb2-body')
+            for (const el of els) single.appendChild(el)
+            return [single]
+        }
+        const buckets = []
+        let current = null
+        for (const el of els) {
+            const size = blockBytes(el)
+            const fits = current && current.bytes + size <= STITCH_MAX_BYTES
+            /* A chapter that alone exceeds the limit still goes into its own
+               bucket; it simply cannot be split here. */
+            if (!fits) {
+                current = { bytes: 0, els: [], wrap: null }
+                buckets.push(current)
+            }
+            if (!current.wrap) {
+                current.wrap = el.ownerDocument.createElement('div')
+                current.wrap.classList.add('fb2-body')
+            }
+            current.wrap.appendChild(el)
+            current.bytes += size
+        }
+        return buckets.map(b => b.wrap)
     }
     const collectChapterTitles = (root) => {
         const titles = []
@@ -334,14 +367,14 @@ export const makeFB2 = async blob => {
     }
 
     const urls = []
-    const fictionEl = stitchFictionEls(bodyData[0]?.[0] ?? [])
-    const fictionTitles = collectChapterTitles(fictionEl)
+    const fictionEls = stitchFictionEls(bodyData[0]?.[0] ?? [])
+    const fictionBuckets = fictionEls.map(el => ({
+        ids: [el, ...el.querySelectorAll('[id]')].map(node => node.id),
+        titles: collectChapterTitles(el),
+        el,
+    }))
     const sectionData = [
-        ...(fictionEl ? [{
-            ids: [fictionEl, ...fictionEl.querySelectorAll('[id]')].map(node => node.id),
-            titles: fictionTitles.length ? fictionTitles : null,
-            el: fictionEl,
-        }] : []),
+        ...fictionBuckets,
         ...bodyData.slice(1).map(([sections, body]) => {
             const ids = sections.map(s => s.ids).flat()
             body.classList.add('notesBodyType')
