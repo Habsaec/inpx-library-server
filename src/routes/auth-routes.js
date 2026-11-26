@@ -175,7 +175,11 @@ export function registerAuthRoutes(app, deps) {
     return {
       registrationEnabled: getSetting('allow_registration') === '1' && !isOidcRegistrationBlocked(),
       passwordResetEnabled: isPasswordResetConfigured(),
-      oidcEnabled: isOidcConfigured(oidc)
+      oidcEnabled: isOidcConfigured(oidc),
+      /* The footer used to offer "browse without signing in" unconditionally,
+         so the link stayed visible after anonymous access was switched off and
+         only bounced the guest back to /login. */
+      browseCatalogEnabled: getSetting('allow_anonymous_browse') === '1'
     };
   }
 
