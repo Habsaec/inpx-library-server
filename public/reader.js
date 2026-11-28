@@ -1677,7 +1677,9 @@ import {
    */
   function releasePositionSessionOnLeave() {
     const base = globalThis.apiBookPath ? globalThis.apiBookPath(bookId) : `/api/books/${encodeURIComponent(bookId)}`;
-    const pending = syncTimer ? pendingPositionSave : null;
+    /* Not conditional on the debounce timer any more: an idle save is recorded without a timer,
+       and it is exactly the case that used to be dropped on close (issue #39). */
+    const pending = pendingPositionSave;
     clearTimeout(syncTimer);
     syncTimer = null;
     pendingPositionSave = null;
@@ -1708,9 +1710,13 @@ import {
     const epoch = positionSaveEpoch;
     const dirty = markPositionDirty(readPosSeenCtx(), body, changedAt);
     writePosSeenCtx(dirty);
-    if (isReaderSessionIdle()) return;
     const baseRevision = dirty.baseRevision;
+    /* Recorded BEFORE the idle check. An idle session must not schedule a save, but its last
+       position still has to survive a tab close: pagehide flushes `pendingPositionSave`. The old
+       order returned first, so there was nothing to flush and the position was lost silently
+       (issue #39). */
     pendingPositionSave = { body, baseRevision };
+    if (isReaderSessionIdle()) return;
     syncTimer = setTimeout(() => {
       syncTimer = null;
       pendingPositionSave = null;
