@@ -909,7 +909,9 @@ export function renderBook({
   const primarySeries = seriesList[0] || null;
   const summaryBits = [
     seriesSummaryHtml,
-    (book.lang || 'unknown') ? `<a href="/facet/languages/${encodeURIComponent(book.lang || 'unknown')}">${escapeHtml(formatLanguageLabel(book.lang || 'unknown'))}</a>` : '',
+    /* `book.lang || 'unknown'` is never empty, so this link is always rendered — the old ternary
+       kept a dead `: ''` branch that only looked like a conditional. */
+    `<a href="/facet/languages/${encodeURIComponent(book.lang || 'unknown')}">${escapeHtml(formatLanguageLabel(book.lang || 'unknown'))}</a>`,
     // Source format only: INPX SIZE matches neither the archive entry nor the delivered
     // file (Flibusta sidecar images are merged back into FB2/EPUB on download).
     book.ext ? escapeHtml(String(book.ext).toUpperCase()) : '',

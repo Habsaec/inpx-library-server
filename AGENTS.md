@@ -133,6 +133,13 @@ Coverage of the server code (`src/**` only, built-in Node reporter — no extra 
 npm run test:coverage
 ```
 
+Lint — a bug net, not a style police (`eslint.config.js` holds only rules that catch real defects:
+duplicate keys, code after a return, assignment to a constant). CI runs it before the tests:
+
+```
+npm run lint
+```
+
 Do not bypass existing npm scripts unless necessary.
 
 Prefer existing workflows and scripts.

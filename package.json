@@ -14,6 +14,7 @@
     "start": "node src/server-entry.js",
     "test": "node scripts/run-tests.js",
     "test:coverage": "node scripts/run-tests.js --coverage",
+    "lint": "eslint src",
     "dev": "node --watch src/server-entry.js",
     "build:assets": "node scripts/build-assets.js",
     "build:assets:watch": "node scripts/build-assets.js --watch",
@@ -70,5 +71,8 @@
     "zip-stream": {
       "brace-expansion": "5.0.9"
     }
+  },
+  "devDependencies": {
+    "eslint": "^10.16.0"
   }
 }
