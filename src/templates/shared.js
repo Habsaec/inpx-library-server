@@ -91,6 +91,9 @@ const FOLIATE_DIR = path.join(config.publicDir, 'foliate');
 const FOLIATE_PROGRESS_PATH = path.join(FOLIATE_DIR, 'progress.js');
 const FOLIATE_VIEW_PATH = path.join(FOLIATE_DIR, 'view.js');
 const FOLIATE_FB2_PATH = path.join(FOLIATE_DIR, 'fb2.js');
+/* Split out of fb2.js (#40): the bucketing rule must be in the asset hash too, otherwise
+   editing it would not change `?v=` and browsers would keep the old module. */
+const FOLIATE_FB2_SECTIONS_PATH = path.join(FOLIATE_DIR, 'fb2-sections.js');
 
 /**
  * Returns true only if the minified bundle is at least as new as its source.
@@ -148,9 +151,9 @@ function computeStaticAssetVersion() {
   const readerShared = listReaderSharedAssetPaths();
   const files = USE_MINIFIED_ASSETS
     ? [APP_MIN_PATH, CSS_MIN_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH, DECOR_PATH,
-      ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH]
+      ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH, FOLIATE_FB2_SECTIONS_PATH]
     : [APP_SRC_PATH, CSS_SRC_PATH, LITE_CSS_PATH, READER_JS_PATH, READER_CSS_PATH, TAP_ZONES_PATH, POSITION_SYNC_PATH, BOOK_REF_PATH, DECOR_PATH,
-      ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH];
+      ...readerShared, FOLIATE_PROGRESS_PATH, FOLIATE_VIEW_PATH, FOLIATE_FB2_PATH, FOLIATE_FB2_SECTIONS_PATH];
   const hash = crypto.createHash('md5');
   for (const p of files) {
     try {

@@ -72,7 +72,9 @@ test('parseXPointer: V1 / V2 forms, boxing nodes, text offsets', () => {
 test('xpointer → text anchor lands on the KOReader paragraph', () => {
   const text = EXPECTED_TEXT;
   const second = fb2XPointerToAnchor(FB2, '/FictionBook/body/section[1]/p[2]/text().0');
-  assert.equal(second.sectionIndex, 0);
+  /* null, not 0: the body is split into buckets (#40), so section 0 is only the first
+     220 KB. The anchor carries textOffset + textQuote and the reader re-locates the quote. */
+  assert.equal(second.sectionIndex, null);
   assert.equal(second.textOffset, text.indexOf('Долгий абзац'));
   assert.equal(second.textQuote, text.slice(second.textOffset, second.textOffset + 96));
   assert.equal(second.textSectionLength, text.length);
@@ -197,7 +199,10 @@ function describeBridge() {
     });
     assert.equal(result, 'saved');
     const pos = getReadingPosition(USER, BOOK_ID);
-    assert.equal(pos.sectionIndex, 0);
+    /* `sectionIndex` is deliberately null: the body is split into buckets (#40), so a
+       hardcoded 0 would point at the first 220 KB instead of this paragraph. The anchor
+       travels as textOffset + textQuote; the reader re-locates the quote. */
+    assert.equal(pos.sectionIndex, null);
     assert.equal(pos.textOffset, EXPECTED_TEXT.indexOf('Долгий абзац') + 40);
     assert.equal(pos.textSectionLength, EXPECTED_TEXT.length);
     assert.equal(pos.positionVersion, 4);

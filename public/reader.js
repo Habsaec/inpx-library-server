@@ -20,6 +20,7 @@ import {
   positionFromLocation as sharedPositionFromLocation,
 } from '/reader-shared/reader-position.js';
 import { createSuppressionCounter } from '/reader-shared/suppression-counter.js';
+import { needsRebucket, rebucketAnchor } from '/reader-shared/fb2-rebucket.js';
 import {
   acceptPositionSave,
   acceptServerPosition,
@@ -1850,17 +1851,35 @@ import {
         const textOffset = Number(saved.textOffset);
         const linearCount = (view?.book?.sections || []).filter((s) => s?.linear !== 'no').length;
         const staleExplodedSection = linearCount <= 1 && sectionIndex > 0;
+        /* #40: a position saved before the body was split into buckets says "offset N into
+           the whole body", but section 0 is now only the first bucket. Translate it through
+           the quote, which survives splitting byte for byte. If the quote cannot be found,
+           `rebucketAnchor` returns null and we fall through to the fraction below — the
+           coordinate that does not depend on the section layout at all. */
+        let restoreSection = sectionIndex;
+        let restoreOffset = textOffset;
+        if (needsRebucket(saved, linearCount)) {
+          const moved = rebucketAnchor(saved, (view?.book?.sections || []).map((s) => {
+            try { return s?.createDocument?.()?.body?.textContent || ''; } catch { return ''; }
+          }));
+          if (moved) {
+            restoreSection = moved.sectionIndex;
+            restoreOffset = moved.textOffset;
+          } else {
+            restoreSection = Number.NaN;
+          }
+        }
         let restoredByTextAnchor = false;
         if (
-          Number.isInteger(sectionIndex)
-          && sectionIndex >= 0
-          && Number.isInteger(textOffset)
-          && textOffset >= 0
+          Number.isInteger(restoreSection)
+          && restoreSection >= 0
+          && Number.isInteger(restoreOffset)
+          && restoreOffset >= 0
           && !staleExplodedSection
           && typeof view.goToTextAnchor === 'function'
         ) {
           try {
-            await view.goToTextAnchor(sectionIndex, textOffset, String(saved.textQuote || ''));
+            await view.goToTextAnchor(restoreSection, restoreOffset, String(saved.textQuote || ''));
             restoredByTextAnchor = true;
           } catch { /* fall through to fraction/href */ }
         }

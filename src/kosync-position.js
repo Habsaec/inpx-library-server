@@ -264,8 +264,15 @@ function quoteAt(text, offset) {
 
 /**
  * KOReader xpointer → reader v4 anchor
- * `{ sectionIndex: 0, textOffset, textQuote, textSectionLength, fraction }`, or null when the
+ * `{ sectionIndex, textOffset, textQuote, textSectionLength, fraction }`, or null when the
  * xpointer is not inside the first body of this FB2 (notes body, another format, stale path).
+ *
+ * `sectionIndex` used to be hardcoded to 0 because the whole first body was one reader
+ * section. After the body is split into buckets (#40) section 0 is only the first bucket,
+ * so a hardcoded 0 would point at the start of the book. The anchor therefore leaves
+ * `sectionIndex` null and carries `textOffset` + `textQuote` instead: the bridge locates
+ * the quote in the current buckets (`public/reader-shared/fb2-rebucket.js` does the same
+ * for saved positions) or falls back to `fraction`, which does not depend on the layout.
  */
 export function fb2XPointerToAnchor(xml, xpointer) {
   const parsed = parseXPointer(xpointer);
@@ -316,7 +323,7 @@ export function fb2XPointerToAnchor(xml, xpointer) {
   // `<p> Text` / `<p>&#160;Text` (leading space in the paragraph): anchor the first letter.
   while (offset + 1 < Math.min(text.length, blockEnd) && /\s/.test(text[offset])) offset++;
   return {
-    sectionIndex: 0,
+    sectionIndex: null,
     textOffset: offset,
     textQuote: quoteAt(text, offset),
     textSectionLength: text.length,

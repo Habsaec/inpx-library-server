@@ -85,7 +85,10 @@ function sqliteUtcSeconds(value) {
 
 function sameSpot(current, next) {
   if (!current) return false;
-  if (next.textOffset != null && current.sectionIndex === 0 && current.textOffset != null) {
+  /* Was `current.sectionIndex === 0`: that assumed the whole body was one section. Now the
+     body is bucketed (#40), so a stored anchor may sit in any bucket or carry no index at
+     all — what identifies the spot is `textOffset` and the block range it falls in. */
+  if (next.textOffset != null && current.textOffset != null) {
     // KOReader is in the paragraph the reader is in (e.g. it just jumped to the xpointer we served).
     return current.textOffset >= next.blockStart && current.textOffset < next.blockEnd;
   }
@@ -164,7 +167,13 @@ export async function readerProgressForKosync(username, document, stored = null)
   if (!pos || isBridgeWrite(pos) || pos.positionVersion < 4) return null;
   const timestamp = sqliteUtcSeconds(pos.updatedAt);
   if (!timestamp || (stored && timestamp <= Number(stored.timestamp || 0))) return null;
-  const useAnchor = pos.sectionIndex === 0 && pos.textOffset != null && !isEpubCfi(pos.position);
+  /* `sectionIndex === 0` used to mean "the single FB2 body". Now the body is split into
+     buckets (#40), so the anchor is identified by `textOffset` alone — the index is either
+     a bucket number or null (an anchor written before buckets existed). Requiring 0 would
+     silently drop every anchor we write. */
+  const useAnchor = pos.textOffset != null
+    && (pos.sectionIndex == null || Number.isFinite(Number(pos.sectionIndex)))
+    && !isEpubCfi(pos.position);
   if (!useAnchor && !(pos.fraction > 0)) return null;
   const xml = await loadFb2Body(book);
   if (!xml) return null;
