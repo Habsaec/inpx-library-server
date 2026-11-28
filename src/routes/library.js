@@ -845,7 +845,19 @@ export function registerLibraryRoutes(app, deps) {
       const sort = requestedSort === 'recent' ? 'recent' : 'title';
       const order = String(req.query.order || '');
       const stats = getCachedStats();
-      const value = String(req.params.value || '');
+      let value = String(req.params.value || '');
+      /* Same normalization as /facet/:facet/:value: authors.name is the lower-case key, so a
+         name pasted in its display spelling («Пелевин Виктор Олегович») must resolve first,
+         otherwise the page renders an empty list. */
+      const resolvedAuthor = resolveAuthorName(value);
+      if (resolvedAuthor && resolvedAuthor !== value) {
+        const qs = new URLSearchParams(req.query).toString();
+        const loc = `/facet/authors/${encodeURIComponent(resolvedAuthor)}/outside-series${qs ? `?${qs}` : ''}`;
+        return res.redirect(302, loc);
+      }
+      if (resolvedAuthor) {
+        value = resolvedAuthor;
+      }
       const displayValue = formatAuthorLabel(value);
       const username = req.user?.username || '';
       const favorite = username ? isFavoriteAuthor(username, value) : false;
