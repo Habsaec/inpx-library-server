@@ -7,7 +7,8 @@ export function renderLogin(error = '', {
   registrationEnabled = false,
   passwordResetEnabled = false,
   successMessage = '',
-  oidcEnabled = false
+  oidcEnabled = false,
+  browseCatalogEnabled = false
 } = {}) {
   const footerLinks = [];
   if (passwordResetEnabled) {
@@ -16,7 +17,11 @@ export function renderLogin(error = '', {
   if (registrationEnabled) {
     footerLinks.push(`<a href="/register" class="login-footer-link">${escapeHtml(t('login.register'))}</a>`);
   }
-  footerLinks.push(`<a href="/" class="login-footer-link">${escapeHtml(t('login.browseCatalog'))}</a>`);
+  /* Only offer the anonymous entry point when anonymous browse is actually
+     allowed; otherwise the link just loops back to /login. */
+  if (browseCatalogEnabled) {
+    footerLinks.push(`<a href="/" class="login-footer-link">${escapeHtml(t('login.browseCatalog'))}</a>`);
+  }
   const ssoBlock = oidcEnabled
     ? `<div class="login-sso-block">
         <a class="button login-sso-button" href="/auth/oidc/start">${escapeHtml(t('login.sso'))}</a>

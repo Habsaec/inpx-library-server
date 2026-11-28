@@ -73,6 +73,20 @@ test('renderLogin returns HTML with login form', async () => {
   assert.ok(html.includes('action="/login"'));
 });
 
+test('renderLogin omits the anonymous entry link when anonymous browse is off', async () => {
+  const { renderLogin } = await import('../src/templates/auth.js');
+  const html = renderLogin();
+  assert.ok(!html.includes('href="/" class="login-footer-link"'),
+    'login footer must not offer anonymous browse while it is disabled');
+});
+
+test('renderLogin shows the anonymous entry link when anonymous browse is on', async () => {
+  const { renderLogin } = await import('../src/templates/auth.js');
+  const html = renderLogin('', { browseCatalogEnabled: true });
+  assert.ok(html.includes('href="/" class="login-footer-link"'),
+    'login footer must offer anonymous browse when the setting is enabled');
+});
+
 test('renderLogin shows default logo when enabled and no custom logo uploaded', async () => {
   const { setSetting } = await import('../src/db.js');
   const { invalidateUiCustomizationCache, removeUiAsset } = await import('../src/services/ui-customization.js');
