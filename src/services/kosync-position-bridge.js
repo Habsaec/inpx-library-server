@@ -167,7 +167,13 @@ export async function readerProgressForKosync(username, document, stored = null)
   if (!pos || isBridgeWrite(pos) || pos.positionVersion < 4) return null;
   const timestamp = sqliteUtcSeconds(pos.updatedAt);
   if (!timestamp || (stored && timestamp <= Number(stored.timestamp || 0))) return null;
-  const useAnchor = pos.sectionIndex === 0 && pos.textOffset != null && !isEpubCfi(pos.position);
+  /* `sectionIndex === 0` used to mean "the single FB2 body". Now the body is split into
+     buckets (#40), so the anchor is identified by `textOffset` alone — the index is either
+     a bucket number or null (an anchor written before buckets existed). Requiring 0 would
+     silently drop every anchor we write. */
+  const useAnchor = pos.textOffset != null
+    && (pos.sectionIndex == null || Number.isFinite(Number(pos.sectionIndex)))
+    && !isEpubCfi(pos.position);
   if (!useAnchor && !(pos.fraction > 0)) return null;
   const xml = await loadFb2Body(book);
   if (!xml) return null;
