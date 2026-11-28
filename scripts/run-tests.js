@@ -38,6 +38,11 @@ function coverageArgs() {
     '--experimental-test-coverage',
     '--test-coverage-include=src/**',
     '--test-coverage-exclude=test/**',
+    /* A floor, not a target: the numbers now are ~73 / 68 / 73, so a drop of three points fails CI.
+       Raise them when the suite gets better, never lower to make a red build green. */
+    '--test-coverage-lines=70',
+    '--test-coverage-branches=66',
+    '--test-coverage-functions=69',
   ];
 }
 
