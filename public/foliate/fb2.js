@@ -1,3 +1,10 @@
+/**
+ * The bucketing rule lives in `fb2-sections.js` so this converter and
+ * `test/fb2-section-split.test.js` exercise the same function — a copy in the
+ * test would let production and test drift apart (#40 review).
+ */
+import { bucketizeBlocks } from './fb2-sections.js';
+
 const normalizeWhitespace = str => str ? str
     .replace(/[\t\n\f\r ]+/g, ' ')
     .replace(/^[\t\n\f\r ]+/, '')
@@ -313,40 +320,26 @@ export const makeFB2 = async blob => {
      * Buckets are byte-bounded so a single huge chapter still splits, and they
      * never break a chapter unless the chapter itself exceeds the limit.
      */
-    const STITCH_MAX_BYTES = 220 * 1024
-    const blockBytes = (el) => {
-        try { return (el.outerHTML || '').length } catch { return 0 }
-    }
     const stitchFictionEls = (parts) => {
         const els = parts.map(({ el }) => el).filter(Boolean)
         if (!els.length) return []
-        const total = els.reduce((sum, el) => sum + blockBytes(el), 0)
-        if (total <= STITCH_MAX_BYTES) {
-            if (els.length === 1) return [els[0]]
-            const single = els[0].ownerDocument.createElement('div')
+        const buckets = bucketizeBlocks(els)
+        /* One bucket: keep the old shape — a lone block is returned as is, and a
+           small body becomes a single wrapper div. */
+        if (buckets.length === 1) {
+            const list = buckets[0]
+            if (list.length === 1) return [list[0]]
+            const single = list[0].ownerDocument.createElement('div')
             single.classList.add('fb2-body')
-            for (const el of els) single.appendChild(el)
+            for (const el of list) single.appendChild(el)
             return [single]
         }
-        const buckets = []
-        let current = null
-        for (const el of els) {
-            const size = blockBytes(el)
-            const fits = current && current.bytes + size <= STITCH_MAX_BYTES
-            /* A chapter that alone exceeds the limit still goes into its own
-               bucket; it simply cannot be split here. */
-            if (!fits) {
-                current = { bytes: 0, els: [], wrap: null }
-                buckets.push(current)
-            }
-            if (!current.wrap) {
-                current.wrap = el.ownerDocument.createElement('div')
-                current.wrap.classList.add('fb2-body')
-            }
-            current.wrap.appendChild(el)
-            current.bytes += size
-        }
-        return buckets.map(b => b.wrap)
+        return buckets.map(list => {
+            const wrap = list[0].ownerDocument.createElement('div')
+            wrap.classList.add('fb2-body')
+            for (const el of list) wrap.appendChild(el)
+            return wrap
+        })
     }
     const collectChapterTitles = (root) => {
         const titles = []

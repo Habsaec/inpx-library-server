@@ -85,7 +85,10 @@ function sqliteUtcSeconds(value) {
 
 function sameSpot(current, next) {
   if (!current) return false;
-  if (next.textOffset != null && current.sectionIndex === 0 && current.textOffset != null) {
+  /* Was `current.sectionIndex === 0`: that assumed the whole body was one section. Now the
+     body is bucketed (#40), so a stored anchor may sit in any bucket or carry no index at
+     all — what identifies the spot is `textOffset` and the block range it falls in. */
+  if (next.textOffset != null && current.textOffset != null) {
     // KOReader is in the paragraph the reader is in (e.g. it just jumped to the xpointer we served).
     return current.textOffset >= next.blockStart && current.textOffset < next.blockEnd;
   }
