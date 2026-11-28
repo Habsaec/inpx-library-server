@@ -378,6 +378,12 @@ For performance-sensitive changes:
 * consider huge library scenarios
 * consider low RAM environments
 
+The route layer is the least covered part of the server: `src/routes/*` run at 6–65 % lines while the
+`src/*.js` logic files sit at a median of 89 %. A new or changed route module needs a smoke test that
+mounts it with the **real** templates over a minimal catalog — see `test/library-routes-smoke.test.js`
+(21 browser pages) and `test/opds-routes-smoke.test.js`. Stubs hide exactly the 500s such a test is
+for. Measure with `npm run test:coverage`.
+
 ---
 
 ## Git and Branch Workflow
