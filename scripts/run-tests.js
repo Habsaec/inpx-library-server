@@ -19,9 +19,25 @@ const result = spawnSync(
     '--import',
     testEnvUrl,
     '--test',
+    ...coverageArgs(),
     ...testFiles,
   ],
   { cwd: rootDir, stdio: 'inherit' }
 );
 
 process.exit(result.status ?? 1);
+
+/**
+ * `node scripts/run-tests.js --coverage` prints the built-in coverage report for the server
+ * code only (src/**), so the percentage means "the shipped code", not "the tests themselves".
+ * No extra dependency: Node 24 reports coverage natively.
+ */
+function coverageArgs() {
+  if (!process.argv.includes('--coverage')) return [];
+  return [
+    '--experimental-test-coverage',
+    '--test-coverage-include=src/**',
+    '--test-coverage-exclude=test/**',
+  ];
+}
+

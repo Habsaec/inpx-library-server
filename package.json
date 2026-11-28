@@ -13,6 +13,7 @@
     "prestart": "node scripts/build-assets.js --if-stale",
     "start": "node src/server-entry.js",
     "test": "node scripts/run-tests.js",
+    "test:coverage": "node scripts/run-tests.js --coverage",
     "dev": "node --watch src/server-entry.js",
     "build:assets": "node scripts/build-assets.js",
     "build:assets:watch": "node scripts/build-assets.js --watch",

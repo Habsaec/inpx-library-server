@@ -127,6 +127,12 @@ Tests:
 npm test
 ```
 
+Coverage of the server code (`src/**` only, built-in Node reporter — no extra dependency):
+
+```
+npm run test:coverage
+```
+
 Do not bypass existing npm scripts unless necessary.
 
 Prefer existing workflows and scripts.
