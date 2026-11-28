@@ -29,3 +29,8 @@ Before running commands:
 3. verify node_modules location
 
 The repository is NOT a monorepo.
+
+Documentation:
+- `AGENTS.md` — rules every task must follow (short, kept under the agent instruction budget)
+- `docs/agents/` — per-subsystem reference, one file per area; the map is in `AGENTS.md`
+- `docs/architecture/`, `docs/decisions/` — architecture notes and ADRs
