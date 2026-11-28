@@ -20,6 +20,7 @@ import {
   positionFromLocation as sharedPositionFromLocation,
 } from '/reader-shared/reader-position.js';
 import { createSuppressionCounter } from '/reader-shared/suppression-counter.js';
+import { createSectionPaginationCache, paginationLayoutKey } from '/reader-shared/pagination-cache.js';
 import {
   acceptPositionSave,
   acceptServerPosition,
@@ -422,25 +423,22 @@ import {
     }
   }
 
-  /** Индекс секции → число «экранов» (pages−2 у пагинатора); точные значения после прохода. */
-  const sectionPaginatorPages = new Map();
-  let bookPageLayoutKeyCached = '';
+  /** Индекс секции → число «экранов» (pages−2 у пагинатора); точные значения после прохода.
+   *  Ключ включает книгу (issue #38): иначе пагинация одной книги досталась бы другой. */
+  const sectionPaginatorPages = createSectionPaginationCache();
 
   function bookPageLayoutKey() {
-    return [S.font, S.fontSize, S.fontWeight, S.lineHeight, S.maxWidth, S.maxBlockSize, S.pageMargin, S.verticalMargin, S.columnGap, layoutMode(), innerWidth, innerHeight].join('|');
-  }
-
-  function invalidateBookPageCache() {
-    sectionPaginatorPages.clear();
-    bookPageLayoutKeyCached = '';
+    return paginationLayoutKey({
+      bookId,
+      settings: S,
+      layoutMode: layoutMode(),
+      width: innerWidth,
+      height: innerHeight
+    });
   }
 
   function ensureBookPageLayoutKey() {
-    const k = bookPageLayoutKey();
-    if (k !== bookPageLayoutKeyCached) {
-      sectionPaginatorPages.clear();
-      bookPageLayoutKeyCached = k;
-    }
+    sectionPaginatorPages.sync(bookPageLayoutKey());
   }
 
   /* ===== Settings ===== */
@@ -577,7 +575,9 @@ import {
 
   function applyRendererLayout() {
     if (!view?.renderer) return;
-    invalidateBookPageCache();
+    /* Only when the layout really changed: the key holds font, size, margins and window size.
+       Clearing unconditionally here re-paginated a long book on every open (issue #38). */
+    ensureBookPageLayoutKey();
     // Fixed layout (CBZ comics): foliate-fxl fits the page itself — paginator margins / columns /
     // side padding pushed the page off-centre and out of the screen (same branch as the Android reader).
     if (view.isFixedLayout) {
@@ -806,8 +806,7 @@ import {
 
     ensureBookPageLayoutKey();
     const tp = Math.max(0, pages - 2);
-    const prevTp = sectionPaginatorPages.get(index) ?? 0;
-    sectionPaginatorPages.set(index, Math.max(prevTp, tp));
+    sectionPaginatorPages.remember(index, tp);
 
     let screenInSection;
     if (page <= 0) screenInSection = 0;
@@ -826,7 +825,7 @@ import {
     function charsPerScreenGuess() {
       let sz = 0;
       let pg = 0;
-      for (const [idx, tpp] of sectionPaginatorPages) {
+      for (const [idx, tpp] of sectionPaginatorPages.entries()) {
         const s = secs[idx];
         if (!s || s.linear === 'no' || tpp <= 0) continue;
         sz += s.size || 0;
@@ -3683,7 +3682,9 @@ import {
   /* ===== Main ===== */
   async function loadBook() {
     stopReaderTts();
-    invalidateBookPageCache();
+    /* The key names the book, so switching books clears the cache and reopening the same book
+       keeps its page counts (issue #38). */
+    ensureBookPageLayoutKey();
     bookPagesEl?.classList.add('is-hidden');
     closeReaderFootnote();
     footnoteHandler = null;
